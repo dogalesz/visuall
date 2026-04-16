@@ -1,0 +1,25 @@
+## ════════════════════════════════════════════════════════════════════════════
+## Visuall Standard Library — sys module
+##
+## Usage:  import sys
+##         platform = sys.platform()
+## ════════════════════════════════════════════════════════════════════════════
+
+## Command-line arguments (populated at program start).
+args = __builtin_sys_get_args()
+
+## Exit the program with the given code.
+define exit(code: int) -> void:
+	__builtin_sys_exit(code)
+
+## Get an environment variable value. Returns null if not set.
+define env(key: str) -> str:
+	return __builtin_sys_env(key)
+
+## Get the current platform: "linux", "macos", or "windows".
+define platform() -> str:
+	return __builtin_sys_platform()
+
+## Get the current Unix timestamp as a float.
+define time() -> float:
+	return __builtin_sys_time()

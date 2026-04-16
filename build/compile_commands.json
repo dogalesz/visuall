@@ -1,0 +1,206 @@
+[
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\gcc.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_runtime.dir\\stdlib\\runtime.c.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\stdlib\\runtime.c",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/stdlib/runtime.c",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_runtime.dir/stdlib/runtime.c.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\gcc.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_runtime.dir\\stdlib\\gc.c.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\stdlib\\gc.c",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/stdlib/gc.c",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_runtime.dir/stdlib/gc.c.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\main.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\main.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/main.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/main.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\lexer.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\lexer.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/lexer.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/lexer.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\parser.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\parser.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/parser.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/parser.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\ast_printer.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\ast_printer.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/ast_printer.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/ast_printer.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\typechecker.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\typechecker.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/typechecker.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/typechecker.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\capture_analyzer.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\capture_analyzer.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/capture_analyzer.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/capture_analyzer.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\codegen.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\codegen.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/codegen.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/codegen.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\builtins.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\builtins.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/builtins.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/builtins.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\module_loader.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\module_loader.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/module_loader.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/module_loader.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuallc.dir\\src\\linker.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\linker.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/linker.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir/src/linker.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\test_main.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\test_main.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/test_main.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/test_main.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\test_lexer.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\test_lexer.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/test_lexer.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/test_lexer.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\test_parser.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\test_parser.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/test_parser.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/test_parser.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\typechecker_test.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\typechecker_test.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/typechecker_test.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/typechecker_test.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\codegen_test.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\codegen_test.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/codegen_test.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/codegen_test.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\operator_test.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\operator_test.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/operator_test.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/operator_test.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\syntax_test.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\syntax_test.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/syntax_test.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/syntax_test.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\typesystem_test.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\typesystem_test.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/typesystem_test.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/typesystem_test.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\closure_test.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\closure_test.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/closure_test.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/closure_test.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\module_loader_test.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\module_loader_test.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/module_loader_test.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/module_loader_test.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\tests\\gc_test.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\tests\\gc_test.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/tests/gc_test.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/tests/gc_test.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\src\\lexer.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\lexer.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/lexer.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/src/lexer.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\src\\parser.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\parser.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/parser.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/src/parser.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\src\\ast_printer.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\ast_printer.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/ast_printer.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/src/ast_printer.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\src\\typechecker.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\typechecker.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/typechecker.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/src/typechecker.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\src\\capture_analyzer.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\capture_analyzer.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/capture_analyzer.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/src/capture_analyzer.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\src\\codegen.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\codegen.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/codegen.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/src/codegen.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\src\\builtins.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\builtins.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/builtins.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/src/builtins.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\src\\module_loader.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\module_loader.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/module_loader.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/src/module_loader.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\src\\linker.cpp.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\src\\linker.cpp",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/src/linker.cpp",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/src/linker.cpp.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\gcc.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\stdlib\\gc.c.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\stdlib\\gc.c",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/stdlib/gc.c",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/stdlib/gc.c.obj"
+},
+{
+  "directory": "C:/Users/vir01/Documents/GitHub/visuall/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\gcc.exe -D_FILE_OFFSET_BITS=64 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -IC:/Users/vir01/Documents/GitHub/visuall/include -IC:/Users/vir01/Documents/GitHub/visuall/stdlib -O3 -DNDEBUG -Wall -Wextra -Wpedantic -o CMakeFiles\\visuall_tests.dir\\stdlib\\runtime.c.obj -c C:\\Users\\vir01\\Documents\\GitHub\\visuall\\stdlib\\runtime.c",
+  "file": "C:/Users/vir01/Documents/GitHub/visuall/stdlib/runtime.c",
+  "output": "C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir/stdlib/runtime.c.obj"
+}
+]

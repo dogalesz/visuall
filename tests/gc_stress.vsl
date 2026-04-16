@@ -1,0 +1,34 @@
+## GC Stress Test
+## Allocates thousands of strings in a loop, lets most go out of scope,
+## keeps a few in a list, and verifies the final list contents are correct.
+## Run with: visuallc --gc-stats tests/gc_stress.vsl -o gc_stress
+
+import string
+
+define main_stress() -> void
+	let kept = []
+	let i = 0
+	while i < 5000
+		let s = string.repeat("x", 10)
+		## Keep every 500th string
+		if i % 500 == 0
+			kept.push(s)
+		i = i + 1
+
+	## Verify kept list has 10 elements (0, 500, 1000, ..., 4500)
+	println(len(kept))
+
+	## Verify each kept string is "xxxxxxxxxx"
+	let j = 0
+	let all_ok = true
+	while j < len(kept)
+		if kept[j] != "xxxxxxxxxx"
+			all_ok = false
+		j = j + 1
+
+	if all_ok
+		println("PASS: all kept strings correct")
+	else
+		println("FAIL: some strings corrupted")
+
+main_stress()

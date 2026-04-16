@@ -1,0 +1,7 @@
+﻿class Animal:
+    def speak() -> str:
+        return "..."
+
+class Dog extends Animal:
+    def speak() -> str:
+        return "woof"

@@ -1,0 +1,62 @@
+## ════════════════════════════════════════════════════════════════════════════
+## Visuall Standard Library — math module
+##
+## Usage:  import math
+##         x = math.sqrt(2.0)
+## ════════════════════════════════════════════════════════════════════════════
+
+## Constants
+PI = 3.14159265358979323846
+E  = 2.71828182845904523536
+
+## Square root.
+define sqrt(x: float) -> float:
+	return __builtin_math_sqrt(x)
+
+## Power: base^exp.
+define pow(base: float, exp: float) -> float:
+	return __builtin_math_pow(base, exp)
+
+## Floor: largest integer <= x.
+define floor(x: float) -> int:
+	return __builtin_math_floor(x)
+
+## Ceiling: smallest integer >= x.
+define ceil(x: float) -> int:
+	return __builtin_math_ceil(x)
+
+## Absolute value.
+define abs(x: float) -> float:
+	return __builtin_math_abs(x)
+
+## Trigonometric sine.
+define sin(x: float) -> float:
+	return __builtin_math_sin(x)
+
+## Trigonometric cosine.
+define cos(x: float) -> float:
+	return __builtin_math_cos(x)
+
+## Trigonometric tangent.
+define tan(x: float) -> float:
+	return __builtin_math_tan(x)
+
+## Natural logarithm.
+define log(x: float) -> float:
+	return __builtin_math_log(x)
+
+## Base-2 logarithm.
+define log2(x: float) -> float:
+	return __builtin_math_log2(x)
+
+## Base-10 logarithm.
+define log10(x: float) -> float:
+	return __builtin_math_log10(x)
+
+## Clamp x between lo and hi.
+define clamp(x: float, lo: float, hi: float) -> float:
+	return __builtin_math_clamp(x, lo, hi)
+
+## Linear interpolation: a + (b - a) * t.
+define lerp(a: float, b: float, t: float) -> float:
+	return __builtin_math_lerp(a, b, t)

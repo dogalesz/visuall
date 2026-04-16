@@ -1,0 +1,34 @@
+## ════════════════════════════════════════════════════════════════════════════
+## Visuall Standard Library — io module
+##
+## Usage:  import io
+##         content = io.read_file("data.txt")
+## ════════════════════════════════════════════════════════════════════════════
+
+## Read an entire file into a string.
+define read_file(path: str) -> str:
+	return __builtin_io_read_file(path)
+
+## Write content to a file (overwrites existing).
+define write_file(path: str, content: str) -> void:
+	__builtin_io_write_file(path, content)
+
+## Append content to a file.
+define append_file(path: str, content: str) -> void:
+	__builtin_io_append_file(path, content)
+
+## Check if a file exists.
+define file_exists(path: str) -> bool:
+	return __builtin_io_file_exists(path)
+
+## Delete a file.
+define delete_file(path: str) -> void:
+	__builtin_io_delete_file(path)
+
+## List directory contents.
+define list_dir(path: str) -> list:
+	return __builtin_io_list_dir(path)
+
+## Create a directory.
+define make_dir(path: str) -> void:
+	__builtin_io_make_dir(path)

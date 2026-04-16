@@ -1,0 +1,392 @@
+=== Visuall Compiler Test Suite ===
+
+--- Lexer Tests ---
+  PASS: kw: define
+  PASS: kw: class
+  PASS: kw: init
+  PASS: kw: return
+  PASS: kw: if
+  PASS: kw: elsif
+  PASS: kw: else
+  PASS: kw: for
+  PASS: kw: while
+  PASS: kw: break
+  PASS: kw: continue
+  PASS: kw: import
+  PASS: kw: from
+  PASS: kw: try
+  PASS: kw: catch
+  PASS: kw: finally
+  PASS: kw: throw
+  PASS: kw: in
+  PASS: kw: not
+  PASS: kw: and
+  PASS: kw: or
+  PASS: kw: this
+  PASS: kw: pass
+  PASS: kw: true → BOOL_LITERAL
+  PASS: kw: true lexeme
+  PASS: kw: false → BOOL_LITERAL
+  PASS: kw: null → NULL_LITERAL
+  PASS: num: 42 is INT
+  PASS: num: 42 lexeme
+  PASS: num: 1_000 is INT
+  PASS: num: underscores stripped
+  PASS: num: 3.14 is FLOAT
+  PASS: num: 3.14 lexeme
+  PASS: num: 1e10 is FLOAT
+  PASS: num: 2.5e-3 is FLOAT
+  PASS: str: double-quoted type
+  PASS: str: double-quoted value
+  PASS: str: single-quoted type
+  PASS: str: single-quoted value
+  PASS: str: with escapes type
+  PASS: str: \n and \t expanded
+  PASS: fstr: double-quoted type
+  PASS: fstr: contains {name}
+  PASS: fstr: single-quoted type
+  PASS: fstr: contains {x + 1}
+  PASS: comment ##: stripped from tokens
+  PASS: comment ##: x present
+  PASS: comment ##: 1 present
+  PASS: comment ###: multi-line stripped
+  PASS: indent: INDENT emitted on tab increase
+  PASS: dedent: DEDENT emitted on tab decrease
+  PASS: multi-dedent: 2 DEDENTs emitted
+  PASS: indent-err: message mentions tabs
+  PASS: indent-err: space indentation throws
+  PASS: unterm-str: error message correct
+  PASS: unterm-str: throws LexError
+  PASS: unterm-comment: error message correct
+  PASS: unterm-comment: throws LexError
+  PASS: chain-cmp: 18
+  PASS: chain-cmp: first <=
+  PASS: chain-cmp: age
+  PASS: chain-cmp: second <=
+  PASS: chain-cmp: 65
+  PASS: chain-cmp: 65 lexeme
+  PASS: arrow: a
+  PASS: arrow: -> is ARROW
+  PASS: arrow: lexeme is ->
+  PASS: arrow: b
+  PASS: arrow: standalone - is MINUS
+  PASS: arrow: c
+  PASS: arrow: standalone > is GT
+  PASS: arrow: d
+  PASS: ellipsis: type
+  PASS: ellipsis: lexeme
+  PASS: blank-lines: no spurious INDENT
+  PASS: blank-lines: no spurious DEDENT
+  PASS: blank-lines: no consecutive NEWLINEs
+  PASS: eof-flush: last token is EOF
+  PASS: eof-flush: DEDENT emitted before EOF
+
+--- Parser Tests ---
+  PASS: funcdef: one statement
+  PASS: funcdef: is FuncDef
+  PASS: funcdef: name is 'add'
+  PASS: funcdef: two params
+  PASS: funcdef: first param 'a'
+  PASS: funcdef: param a type 'int'
+  PASS: funcdef: second param 'b'
+  PASS: funcdef: return type 'int'
+  PASS: funcdef: body has one stmt
+  PASS: funcdef: body is ReturnStmt
+  PASS: funcdef: return value is a+b
+  PASS: if-chain: one statement
+  PASS: if-chain: is IfStmt
+  PASS: if-chain: one elsif
+  PASS: if-chain: has else
+  PASS: if-chain: condition is x > 0
+  PASS: if-chain: then has one stmt
+  PASS: if-chain: elsif condition is x == 0
+  PASS: if-chain: else has one stmt
+  PASS: chained-cmp: is AssignStmt
+  PASS: chained-cmp: top is BinaryExpr
+  PASS: chained-cmp: top op is AND
+  PASS: chained-cmp: left is <=
+  PASS: chained-cmp: left.left is 18
+  PASS: chained-cmp: left.right is age
+  PASS: chained-cmp: right is <=
+  PASS: chained-cmp: right.left is age (cloned)
+  PASS: chained-cmp: right.right is 65
+  PASS: for: one statement
+  PASS: for: is ForStmt
+  PASS: for: variable is 'i'
+  PASS: for: iterable is 'items'
+  PASS: for: body has one stmt
+  PASS: while: one statement
+  PASS: while: is WhileStmt
+  PASS: while: condition is x > 0
+  PASS: while: body has one stmt
+  PASS: try: one statement
+  PASS: try: is TryStmt
+  PASS: try: body has one stmt
+  PASS: try: one catch clause
+  PASS: try: catch type is Error
+  PASS: try: catch var is 'e'
+  PASS: try: catch body has one stmt
+  PASS: try: has finally
+  PASS: try: finally has one stmt
+  PASS: lambda: is AssignStmt
+  PASS: lambda: value is LambdaExpr
+  PASS: lambda: one param
+  PASS: lambda: param is 'x'
+  PASS: lambda: body is x+1
+  PASS: class: one statement
+  PASS: class: is ClassDef
+  PASS: class: name is 'Foo'
+  PASS: class: body has 2 members
+  PASS: class: first member is InitDef
+  PASS: class: init has one param
+  PASS: class: init param is 'x'
+  PASS: class: init param type is 'int'
+  PASS: class: second member is FuncDef
+  PASS: class: method name is 'bar'
+  PASS: class: method returns int
+  PASS: nested-call: is ExprStmt
+  PASS: nested-call: outer is CallExpr
+  PASS: nested-call: outer callee is 'print'
+  PASS: nested-call: outer has one arg
+  PASS: nested-call: inner is CallExpr
+  PASS: nested-call: inner callee is 'len'
+  PASS: list: is AssignStmt
+  PASS: list: value is ListExpr
+  PASS: list: 3 elements
+  PASS: dict: is AssignStmt
+  PASS: dict: value is DictExpr
+  PASS: dict: 2 entries
+  PASS: missing-colon: message starts with ParseError
+  PASS: missing-colon: message includes filename
+  PASS: missing-colon: message is descriptive
+  PASS: missing-colon: throws ParseError
+  PASS: unclosed-block: parser succeeds gracefully
+
+--- Type Checker Tests ---
+  PASS: 1. Valid function call passes type check
+  PASS: 2a. Type mismatch assignment caught
+  PASS: 2b. Error mentions correct types
+  PASS: 3a. Undefined variable caught
+  PASS: 3b. Error names the variable
+  PASS: 4a. Return type mismatch caught
+  PASS: 4b. Error says return type mismatch
+  PASS: 4c. Error mentions int and str
+  PASS: 5a. 'this' outside class caught
+  PASS: 5b. Error mentions 'this' outside of class
+  PASS: 6. int + float promotion passes
+  PASS: 7. Chained comparison type checks pass
+  PASS: 8. Lambda type inferred without error
+  PASS: 9a. Nested scope re-assignment of different type caught
+  PASS: 9b. Error mentions type incompatibility
+  PASS: 10a. Use before declaration caught
+  PASS: 10b. Error names the undeclared variable
+  10/10 typechecker tests passed.
+
+--- Codegen Tests ---
+  PASS: 1a. Integer addition generates IR
+  PASS: 1b. IR contains 'add' instruction
+  PASS: 1c. IR contains constant 40
+  PASS: 1d. IR contains constant 2
+  PASS: 2a. Mixed arithmetic generates IR
+  PASS: 2b. IR contains sitofp promotion
+  PASS: 2c. IR contains fadd instruction
+  PASS: 3a. if/else generates IR
+  PASS: 3b. IR has 'if.then' block
+  PASS: 3c. IR has 'if.else' block
+  PASS: 3d. IR has 'if.end' merge block
+  PASS: 3e. IR contains conditional branch
+  PASS: 4a. while loop generates IR
+  PASS: 4b. IR has 'while.cond' block
+  PASS: 4c. IR has 'while.body' block
+  PASS: 4d. IR has 'while.end' exit block
+  PASS: 5a. Function call generates IR
+  PASS: 5b. IR defines the function
+  PASS: 5c. IR emits call to @add
+  PASS: 6a. print() generates IR
+  PASS: 6b. IR declares print function
+  PASS: 6c. IR calls printf via call i32
+  PASS: 6d. IR contains the string 'hello'
+  PASS: 7a. Bool constants generate IR
+  PASS: 7b. IR contains i1 true constant
+  PASS: 7c. IR contains i1 false constant
+  PASS: 8a. null literal generates IR
+  PASS: 8b. IR contains 'null' pointer constant
+  PASS: 9a. String literal generates IR
+  PASS: 9b. IR contains global string constant
+  PASS: 9c. IR contains the string 'world'
+  PASS: 10. Optimization passes run without error
+  10/10 codegen tests passed.
+
+--- Operator Tests ---
+  PASS: 1a. x += 1 parses
+  PASS: 1b. two statements
+  PASS: 1c. second stmt is AssignStmt
+  PASS: 1d. target is 'x'
+  PASS: 1e. value is BinaryExpr
+  PASS: 1f. op is Add
+  PASS: 1g. left is 'x'
+  PASS: 1h. right is 1
+  PASS: 2a. arr[0] += 1 parses
+  PASS: 2b. second stmt is AssignStmt
+  PASS: 2c. target is IndexExpr
+  PASS: 2d. value is Add expr
+  PASS: 2e. left is IndexExpr (clone of target)
+  PASS: 3a. this.count += 1 parses
+  PASS: 3b. is ClassDef
+  PASS: 3c. second member is method
+  PASS: 3d. body stmt is AssignStmt
+  PASS: 3e. target is MemberExpr
+  PASS: 3f. value is Add expr
+  PASS: 3g. left is MemberExpr (clone of target)
+  PASS: 4. augmented assign desugars: +=
+  PASS: 4. augmented assign desugars: -=
+  PASS: 4. augmented assign desugars: *=
+  PASS: 4. augmented assign desugars: /=
+  PASS: 4. augmented assign desugars: //=
+  PASS: 4. augmented assign desugars: %=
+  PASS: 4. augmented assign desugars: **=
+  PASS: 4. augmented assign desugars: &=
+  PASS: 4. augmented assign desugars: |=
+  PASS: 4. augmented assign desugars: ^=
+  PASS: 4. augmented assign desugars: <<=
+  PASS: 4. augmented assign desugars: >>=
+  PASS: 5a. at least 7 tokens
+  PASS: 5b. & is AMP
+  PASS: 5c. | is PIPE
+  PASS: 5d. ^ is CARET
+  PASS: 5e. ~ is TILDE
+  PASS: 5f. << is LSHIFT
+  PASS: 5g. >> is RSHIFT
+  PASS: 6a. at least 6 tokens
+  PASS: 6b. &= is AMP_EQ
+  PASS: 6c. |= is PIPE_EQ
+  PASS: 6d. ^= is CARET_EQ
+  PASS: 6e. <<= is LSHIFT_EQ
+  PASS: 6f. >>= is RSHIFT_EQ
+  PASS: 7a. bitwise AND generates IR
+  PASS: 7b. IR contains 'and' instruction
+  PASS: 8a. bitwise OR generates IR
+  PASS: 8b. IR contains 'or' instruction
+  PASS: 9a. left shift generates IR
+  PASS: 9b. IR contains 'shl' instruction
+  PASS: 10a. right shift generates IR
+  PASS: 10b. IR contains 'ashr' instruction
+  PASS: 11a. bitwise NOT generates IR
+  PASS: 11b. IR contains 'xor' (CreateNot)
+  PASS: 12a. & on float produces TypeError
+  PASS: 12b. ~ on float produces TypeError
+  PASS: 13a. precedence expr parses
+  PASS: 13b. fourth stmt is AssignStmt
+  PASS: 13c. top-level op is BitOr
+  PASS: 13d. right child is BitAnd (& binds tighter than |)
+  PASS: 14a. a <<= 2 parses
+  PASS: 14b. second stmt is AssignStmt
+  PASS: 14c. target is 'a'
+  PASS: 14d. op is Shl (<<)
+  PASS: 14e. left is 'a'
+  PASS: 14f. right is 2
+
+--- Syntax Tests ---
+  PASS: Default param: parses function
+  PASS: Default param: default marker present
+  PASS: Default param + type: x has type annotation
+  PASS: Default param + type: y has type and default
+  PASS: Default param + type: typechecks OK
+  PASS: Slice start:stop: AST contains Slice node
+  PASS: Slice start:stop:step: AST contains Slice node
+  PASS: List comprehension: AST contains ListComp
+  PASS: List comprehension filter: AST contains ListComp
+  PASS: Dict comprehension: AST contains DictComp
+  PASS: Tuple unpacking: AST contains TupleUnpack
+  PASS: Tuple unpacking: targets are a, b, c
+  PASS: Variadic: parses function
+  PASS: Variadic: variadic marker present
+  PASS: Decorator: function parsed
+  PASS: Decorator: decorator node present
+  PASS: Multi-decorator: first found
+  PASS: Multi-decorator: second found
+  PASS: Spread: AST contains spread node
+  PASS: Empty slice: AST contains Slice node
+  PASS: Dict comp filter: AST contains DictComp
+
+--- Type System Tests ---
+  PASS: 1. Dog extends Animal — speak() type checks
+  PASS: 2. super.init() resolves to base class
+  PASS: 3. Dog assignable to Animal param
+  PASS: 4. Override with wrong return type caught
+  PASS: 5. Circle implements Drawable — OK
+  PASS: 6. Missing interface method caught
+  PASS: 7. Interface as parameter type — OK
+  PASS: 8. identity<int>(42) returns int
+  PASS: 9. identity("hi") infers T=str
+  PASS: 10. Box<T> class definition type checks
+  PASS: 11. Two-param generic pair<int,str>
+  PASS: 12. int|null no-narrow does not crash
+  PASS: 13. int|null after null check narrowed
+  PASS: 14. ?str desugars to str|null
+  PASS: 15. Monomorphized identity__int and identity__str in IR
+
+--- Closure Tests ---
+  PASS: 1a. No-capture lambda generates IR
+  PASS: 1b. IR contains __lambda_ function
+  PASS: 1c. IR contains __visuall_closure type
+  PASS: 1d. No captures detected for non-capturing lambda
+  PASS: 2a. One capture detected
+  PASS: 2b. Captured variable is 'x'
+  PASS: 2c. Captured by value
+  PASS: 2d. Single-capture lambda generates IR
+  PASS: 2e. IR contains malloc for environment
+  PASS: 3a. Two captures detected
+  PASS: 3b. First capture is 'x'
+  PASS: 3c. Second capture is 'y'
+  PASS: 3d. Multi-capture lambda generates IR
+  PASS: 3e. IR contains environment struct
+  PASS: 4a. Snapshot capture generates IR
+  PASS: 4b. IR contains initial value 10
+  PASS: 5a. Nested capture detects 'x' from outer scope
+  PASS: 5b. Captured variable is 'x'
+  PASS: 5c. Nested capture generates IR
+  PASS: 6a. Lambda-as-argument generates IR
+  PASS: 6b. IR contains apply function
+  PASS: 6c. IR uses closure struct type
+  PASS: 7a. Lambda invocation generates IR
+  PASS: 7b. IR contains closure.call for indirect invocation
+  PASS: 8a. Capture detected for mutable test
+  PASS: 8b. Default capture is by value (copy)
+  PASS: 8c. Mutable capture scenario generates IR
+  PASS: 9a. Two lambdas capturing same var generates IR
+  PASS: 9b. IR contains at least two separate lambda functions
+  PASS: 9c. IR has separate malloc for each closure
+  PASS: 10a. FunctionType annotation generates IR
+  PASS: 10b. IR contains 'apply' function
+  PASS: 10c. Closure struct type used in apply signature
+
+--- Module Loader Tests ---
+  PASS: 1a. module name
+  PASS: 1b. exports foo
+  PASS: 2a. Resolve finds utils.vsl from extra search path
+  PASS: 2b. Module exports 'add' function
+  PASS: 3a. Stdlib module 'math' resolved
+  PASS: 3b. Stdlib module filepath indicates builtin
+  PASS: 4a. Module name is 'utils'
+  PASS: 4b. 'add' exported from utils
+  PASS: 4c. 'subtract' exported from utils
+  PASS: 4d. 'multiply' exported from utils
+  PASS: 4e. 'add' mangled name is 'utils.add'
+  PASS: 5a. IR references 'utils.add' mangled name
+  PASS: 5b. 'utils' tracked as loaded user module
+  PASS: 6a. IR contains call to 'math_helpers.square'
+  PASS: 6b. 'math_helpers' tracked as loaded user module
+  PASS: 7a. Module with import statement loaded
+  PASS: 7b. No crash on module with import statement
+  PASS: 8a. Module cached after first load
+  PASS: 8b. Second load returns same Module (cache hit)
+  PASS: 8c. Cached module name matches
+  PASS: 9a. Missing module throws ImportError
+  PASS: 9b. Error message contains module name
+  PASS: 10a. Linker produces merged module
+  PASS: 10b. Merged module contains test_add
+  PASS: 10c. Merged module contains test_wrap
+  PASS: 10d. test_add has a body in merged module
+
+=== Results: All tests passed! ===

@@ -1,0 +1,13 @@
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/intrinsics_gen.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/vt_gen.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/omp_gen.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/acc_gen.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/ARMTargetParserTableGen.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/AArch64TargetParserTableGen.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/RISCVTargetParserTableGen.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_runtime.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuallc.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/visuall_tests.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/test.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/edit_cache.dir
+C:/Users/vir01/Documents/GitHub/visuall/build/CMakeFiles/rebuild_cache.dir

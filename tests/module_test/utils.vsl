@@ -1,0 +1,14 @@
+## utils.vsl — A utility module for testing the module system.
+
+define add(a: int, b: int) -> int:
+	return a + b
+
+define subtract(a: int, b: int) -> int:
+	return a - b
+
+define multiply(a: int, b: int) -> int:
+	return a * b
+
+define double_val(x: int) -> int:
+	return x * 2
+

@@ -1,0 +1,17 @@
+## main.vsl — Main test file that imports other modules.
+
+import utils
+from math_helpers import square, cube
+
+## Using namespace access
+result1 = utils.add(3, 4)
+result2 = utils.subtract(10, 5)
+
+## Using directly imported functions
+result3 = square(5)
+result4 = cube(3)
+
+println(result1)
+println(result2)
+println(result3)
+println(result4)

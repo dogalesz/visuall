@@ -1,0 +1,80 @@
+## This is a Visuall example showcasing the language features
+
+import math
+from math import sqrt
+
+## ── Class with constructor and a method ────────────────────────────
+class Greeter:
+	init(name: string):
+		this.name = name
+		this.count = 0
+
+	define greet(loud: bool) -> string:
+		this.count = this.count + 1
+		if loud:
+			return f"HELLO, {this.name}!"
+		elsif this.count > 3:
+			return f"Hi again, {this.name} (visit #{this.count})"
+		else:
+			return f"Hello, {this.name}"
+
+## ── Function with type hints and return type ───────────────────────
+define fibonacci(n: int) -> int:
+	if n <= 1:
+		return n
+	a = 0
+	b = 1
+	for i in range(2, n + 1):
+		temp = b
+		b = a + b
+		a = temp
+	return b
+
+## ── Lambda ─────────────────────────────────────────────────────────
+double = x -> x * 2
+
+## ── Main logic ─────────────────────────────────────────────────────
+greeter = Greeter("World")
+message = greeter.greet(false)
+
+### 
+  Multi-line comment:
+  This block exercises the try/catch/finally construct.
+###
+
+try:
+	result = fibonacci(10)
+	if result == 55:
+		message = f"Fibonacci(10) = {result}, correct!"
+	else:
+		throw Error("unexpected fibonacci result")
+catch Error as e:
+	message = f"Caught error: {e}"
+finally:
+	numbers = [1, 2, 3, 4, 5]
+	total = 0
+	for n in numbers:
+		total = total + n
+	metadata = {"language": "Visuall", "version": 1}
+	coords = (10, 20, 30)
+
+## ── Chained comparison ─────────────────────────────────────────────
+age = 25
+if 18 <= age <= 65:
+	status = "working age"
+
+## ── Operators showcase ─────────────────────────────────────────────
+x = 2 ** 10
+y = 17 // 3
+z = 17 % 3
+flag = true and not false
+found = "hello" in ["hello", "world"]
+missing = "foo" not in ["bar", "baz"]
+
+## ── While loop ─────────────────────────────────────────────────────
+counter = 0
+while counter < 5:
+	if counter == 3:
+		counter = counter + 1
+		continue
+	counter = counter + 1
