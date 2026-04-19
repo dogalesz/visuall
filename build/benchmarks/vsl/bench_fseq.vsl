@@ -1,0 +1,14 @@
+## String equality benchmark
+define bench(n: int) -> int:
+	matches = 0
+	i = 0
+	while i < n:
+		a = f"key_{i}"
+		b = f"key_{i}"
+		if a == b:
+			matches = matches + 1
+		i = i + 1
+	return matches
+
+r = bench(500000)
+print(r)

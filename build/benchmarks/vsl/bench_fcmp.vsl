@@ -1,0 +1,12 @@
+## List comprehension with filter benchmark
+define bench(n: int) -> int:
+	total = 0
+	i = 0
+	while i < n:
+		evens = [x * x for x in range(100) if x % 2 == 0]
+		total = total + evens[0] + evens[49]
+		i = i + 1
+	return total
+
+r = bench(10000)
+print(r)

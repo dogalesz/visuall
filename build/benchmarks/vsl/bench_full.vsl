@@ -1,0 +1,188 @@
+## Complex Benchmark Suite for Visuall
+## Tests: integer math, floating-point, recursion, strings, classes, nested loops
+## Avoids list.push() on variables (not yet code-generated for method calls)
+
+## ── 1. Count primes via trial division ────────────────────────────
+define is_prime(n: int) -> int:
+	if n < 2:
+		return 0
+	if n < 4:
+		return 1
+	if n % 2 == 0:
+		return 0
+	d = 3
+	while d * d <= n:
+		if n % d == 0:
+			return 0
+		d = d + 2
+	return 1
+
+define count_primes(limit: int) -> int:
+	count = 0
+	n = 2
+	while n < limit:
+		count = count + is_prime(n)
+		n = n + 1
+	return count
+
+## ── 2. Recursive tree sum (binary tree shape) ────────────────────
+define build_tree_sum(depth: int, val: int) -> int:
+	if depth <= 0:
+		return val
+	left_sum = build_tree_sum(depth - 1, val * 2)
+	right_sum = build_tree_sum(depth - 1, val * 2 + 1)
+	return val + left_sum + right_sum
+
+## ── 3. Collatz conjecture ─────────────────────────────────────────
+define collatz_steps(n: int) -> int:
+	steps = 0
+	while n != 1:
+		if n % 2 == 0:
+			n = n // 2
+		else:
+			n = 3 * n + 1
+		steps = steps + 1
+	return steps
+
+## ── 4. String building with f-strings ────────────────────────────
+define string_build(iterations: int) -> int:
+	total_len = 0
+	i = 0
+	while i < iterations:
+		s = f"item_{i}_value_{i * 7}"
+		total_len = total_len + len(s)
+		i = i + 1
+	return total_len
+
+## ── 5. Floating-point: approximate pi via Leibniz ────────────────
+define compute_pi(terms: int) -> float:
+	pi = 0.0
+	sign = 1.0
+	i = 0
+	while i < terms:
+		pi = pi + sign / float(2 * i + 1)
+		sign = sign * -1.0
+		i = i + 1
+	return pi * 4.0
+
+## ── 6. Nested loop + modular arithmetic ──────────────────────────
+define nested_loops(n: int) -> int:
+	total = 0
+	i = 0
+	while i < n:
+		j = 0
+		while j < n:
+			total = total + (i * j) % 97
+			j = j + 1
+		i = i + 1
+	return total
+
+## ── 7. Ackermann function (deeply recursive) ─────────────────────
+define ackermann(m: int, n: int) -> int:
+	if m == 0:
+		return n + 1
+	if n == 0:
+		return ackermann(m - 1, 1)
+	return ackermann(m - 1, ackermann(m, n - 1))
+
+## ── 8. GCD-heavy computation ─────────────────────────────────────
+define gcd(a: int, b: int) -> int:
+	while b != 0:
+		temp = b
+		b = a % b
+		a = temp
+	return a
+
+define gcd_sum(limit: int) -> int:
+	total = 0
+	i = 1
+	while i <= limit:
+		j = i
+		while j <= limit:
+			total = total + gcd(i, j)
+			j = j + 1
+		i = i + 1
+	return total
+
+## ── 9. Fibonacci double-loop (iterative, many calls) ─────────────
+define fibonacci(n: int) -> int:
+	if n <= 1:
+		return n
+	a = 0
+	b = 1
+	i = 2
+	while i <= n:
+		temp = b
+		b = a + b
+		a = temp
+		i = i + 1
+	return b
+
+## ── 10. Floating-point distance computation (no classes) ────────
+define dist_bench(count: int) -> float:
+	total_dist = 0.0
+	i = 0
+	while i < count:
+		x = float(i % 100) - 50.0
+		y = float(i % 73) - 36.5
+		total_dist = total_dist + x * x + y * y
+		i = i + 1
+	return total_dist
+
+## ═══════════════════════════════════════════════════════════════════
+## Run all benchmarks
+## ═══════════════════════════════════════════════════════════════════
+
+## 1. Count primes up to 100000 (run 3 times)
+r1 = 0
+iter = 0
+while iter < 3:
+	r1 = count_primes(100000)
+	iter = iter + 1
+print(f"Primes < 100000: {r1}")
+
+## 2. Recursive tree sum (depth=22)
+r2 = build_tree_sum(22, 1)
+print(f"Tree sum:        {r2}")
+
+## 3. Collatz: sum steps for 1..100000
+r3 = 0
+n = 1
+while n <= 100000:
+	r3 = r3 + collatz_steps(n)
+	n = n + 1
+print(f"Collatz total:   {r3}")
+
+## 4. String building 200000 iterations
+r4 = string_build(200000)
+print(f"String len sum:  {r4}")
+
+## 5. Compute pi with 10,000,000 terms
+r5 = compute_pi(10000000)
+print(f"Pi approx:       {r5}")
+
+## 6. Nested loops 2000×2000
+r6 = nested_loops(2000)
+print(f"Nested total:    {r6}")
+
+## 7. Ackermann(3, 11)
+r7 = ackermann(3, 11)
+print(f"Ackermann(3,11): {r7}")
+
+## 8. GCD sum for 1..2000
+r8 = gcd_sum(2000)
+print(f"GCD sum:         {r8}")
+
+## 9. Fibonacci(35) x 500000
+r9 = 0
+iter = 0
+while iter < 500000:
+	r9 = r9 + fibonacci(35)
+	iter = iter + 1
+print(f"Fib sum:         {r9}")
+
+## 10. Float distance computation 1000000 times
+r10 = dist_bench(1000000)
+print(f"Dist sum:        {r10}")
+
+print("done")

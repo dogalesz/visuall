@@ -1,0 +1,28 @@
+define is_prime(n: int) -> int:
+	if n < 2:
+		return 0
+	if n < 4:
+		return 1
+	if n % 2 == 0:
+		return 0
+	d = 3
+	while d * d <= n:
+		if n % d == 0:
+			return 0
+		d = d + 2
+	return 1
+
+define count_primes(limit: int) -> int:
+	count = 0
+	n = 2
+	while n < limit:
+		count = count + is_prime(n)
+		n = n + 1
+	return count
+
+r = 0
+iter = 0
+while iter < 3:
+	r = count_primes(100000)
+	iter = iter + 1
+print(r)

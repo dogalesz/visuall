@@ -1,0 +1,23 @@
+## Benchmark: iterative fibonacci in a tight loop
+
+define fibonacci(n: int) -> int:
+	if n <= 1:
+		return n
+	a = 0
+	b = 1
+	i = 2
+	while i <= n:
+		temp = b
+		b = a + b
+		a = temp
+		i = i + 1
+	return b
+
+## Run fibonacci many times
+total = 0
+i = 0
+while i < 1000000:
+	total = total + fibonacci(30)
+	i = i + 1
+
+print(total)

@@ -1,0 +1,13 @@
+## Tuple create + unpack benchmark
+define bench(n: int) -> int:
+	total = 0
+	i = 0
+	while i < n:
+		t = (i, i * 2, i * 3)
+		a, b, c = t
+		total = total + a + b + c
+		i = i + 1
+	return total
+
+r = bench(500000)
+print(r)

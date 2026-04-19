@@ -1,0 +1,11 @@
+define string_build(iterations: int) -> int:
+	total_len = 0
+	i = 0
+	while i < iterations:
+		s = f"item_{i}_value_{i * 7}"
+		total_len = total_len + len(s)
+		i = i + 1
+	return total_len
+
+r = string_build(200000)
+print(r)

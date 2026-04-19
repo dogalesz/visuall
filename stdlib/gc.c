@@ -23,6 +23,7 @@
 #include "gc.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -38,7 +39,7 @@ static GCHeader* heap_head = NULL;
 static size_t heap_bytes = 0;
 
 /* Collection threshold — collect when heap_bytes > threshold. */
-static size_t gc_threshold = 1024 * 1024;   /* 1 MB initial */
+static size_t gc_threshold = 1 * 1024 * 1024;   /* 1 MB initial */
 
 /* Bottom of the C stack (set once by __visuall_gc_init). */
 static void* stack_bottom = NULL;
@@ -52,6 +53,216 @@ static size_t num_global_roots = 0;
 static GCStats gc_stats;
 static int gc_stats_enabled = 0;
 
+/* Heap address range — quickly rejects non-heap stack candidates. */
+static uintptr_t heap_lo = UINTPTR_MAX;
+static uintptr_t heap_hi = 0;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Free-list pool for small allocations — avoids malloc/free overhead
+ *
+ * Bucketed by size class: 32, 64, 128, 256 bytes (total incl. header).
+ * During sweep, dead small objects go to the free list instead of free().
+ * During alloc, check the free list before calling malloc().
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#define FL_NUM_CLASSES   4
+#define FL_MAX_PER_CLASS 32768
+
+static const size_t fl_class_sizes[FL_NUM_CLASSES] = { 32, 64, 128, 256 };
+static GCHeader*    fl_heads[FL_NUM_CLASSES]  = { NULL, NULL, NULL, NULL };
+static size_t       fl_counts[FL_NUM_CLASSES] = { 0, 0, 0, 0 };
+
+/* Find the smallest size class that fits `total` bytes, or -1 if none. */
+static int fl_class_for(size_t total) {
+    for (int c = 0; c < FL_NUM_CLASSES; c++) {
+        if (total <= fl_class_sizes[c]) return c;
+    }
+    return -1;
+}
+
+/* Try to pop a block from the free list for the given size class. */
+static GCHeader* fl_pop(int cls) {
+    if (cls < 0 || !fl_heads[cls]) return NULL;
+    GCHeader* hdr = fl_heads[cls];
+    fl_heads[cls] = hdr->next;
+    fl_counts[cls]--;
+    return hdr;
+}
+
+/* Push a dead block onto the free list. Returns 1 if cached, 0 if full. */
+static int fl_push(GCHeader* hdr) {
+    int cls = fl_class_for(hdr->size);
+    if (cls < 0 || fl_counts[cls] >= FL_MAX_PER_CLASS) return 0;
+    hdr->next = fl_heads[cls];
+    fl_heads[cls] = hdr;
+    fl_counts[cls]++;
+    return 1;
+}
+
+static void fl_free_all(void) {
+    for (int c = 0; c < FL_NUM_CLASSES; c++) {
+        GCHeader* h = fl_heads[c];
+        while (h) {
+            GCHeader* next = h->next;
+            free(h);
+            h = next;
+        }
+        fl_heads[c]  = NULL;
+        fl_counts[c] = 0;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Pointer hash table — O(1) average lookup for find_gc_header
+ *
+ * Open-addressing hash map: user_ptr → GCHeader*.
+ * Power-of-2 table size with linear probing.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    void*     key;   /* user_ptr (pointer past header), NULL = empty slot */
+    GCHeader* value; /* corresponding header */
+} PtrMapEntry;
+
+static PtrMapEntry* ptr_map = NULL;
+static size_t ptr_map_cap   = 0;   /* always a power of 2 */
+static size_t ptr_map_size  = 0;   /* number of occupied slots */
+
+#define PTR_MAP_INIT_CAP 1024
+#define PTR_MAP_LOAD_MAX_NUM 3   /* grow when size * 4 > cap * 3 (75%) */
+#define PTR_MAP_LOAD_MAX_DEN 4
+
+static size_t ptr_hash(void* p, size_t mask) {
+    uintptr_t h = (uintptr_t)p;
+    h ^= h >> 16;
+    h *= 0x45d9f3b;
+    h ^= h >> 16;
+    return (size_t)(h & mask);
+}
+
+static void ptr_map_init(void) {
+    ptr_map_cap  = PTR_MAP_INIT_CAP;
+    ptr_map_size = 0;
+    ptr_map = (PtrMapEntry*)calloc(ptr_map_cap, sizeof(PtrMapEntry));
+}
+
+static void ptr_map_grow(void) {
+    size_t old_cap = ptr_map_cap;
+    PtrMapEntry* old = ptr_map;
+    ptr_map_cap *= 2;
+    ptr_map = (PtrMapEntry*)calloc(ptr_map_cap, sizeof(PtrMapEntry));
+    ptr_map_size = 0;
+    size_t mask = ptr_map_cap - 1;
+    for (size_t i = 0; i < old_cap; i++) {
+        if (old[i].key) {
+            size_t idx = ptr_hash(old[i].key, mask);
+            while (ptr_map[idx].key) idx = (idx + 1) & mask;
+            ptr_map[idx].key   = old[i].key;
+            ptr_map[idx].value = old[i].value;
+            ptr_map_size++;
+        }
+    }
+    free(old);
+}
+
+static void ptr_map_insert(void* key, GCHeader* value) {
+    if (!ptr_map) ptr_map_init();
+    if (ptr_map_size * PTR_MAP_LOAD_MAX_DEN >= ptr_map_cap * PTR_MAP_LOAD_MAX_NUM)
+        ptr_map_grow();
+    size_t mask = ptr_map_cap - 1;
+    size_t idx = ptr_hash(key, mask);
+    while (ptr_map[idx].key && ptr_map[idx].key != key)
+        idx = (idx + 1) & mask;
+    if (!ptr_map[idx].key) ptr_map_size++;
+    ptr_map[idx].key   = key;
+    ptr_map[idx].value = value;
+}
+
+static void ptr_map_remove(void* key) {
+    if (!ptr_map || !key) return;
+    size_t mask = ptr_map_cap - 1;
+    size_t idx = ptr_hash(key, mask);
+    while (ptr_map[idx].key) {
+        if (ptr_map[idx].key == key) {
+            /* Delete and re-probe the cluster (backward-shift deletion). */
+            ptr_map[idx].key   = NULL;
+            ptr_map[idx].value = NULL;
+            ptr_map_size--;
+            size_t j = (idx + 1) & mask;
+            while (ptr_map[j].key) {
+                size_t k = ptr_hash(ptr_map[j].key, mask);
+                /* Check if j is in the gap between idx and its natural slot k */
+                if ((j > idx && (k <= idx || k > j)) ||
+                    (j < idx && (k <= idx && k > j))) {
+                    ptr_map[idx] = ptr_map[j];
+                    ptr_map[j].key   = NULL;
+                    ptr_map[j].value = NULL;
+                    idx = j;
+                }
+                j = (j + 1) & mask;
+            }
+            return;
+        }
+        idx = (idx + 1) & mask;
+    }
+}
+
+static GCHeader* ptr_map_lookup(void* key) {
+    if (!ptr_map || !key) return NULL;
+    size_t mask = ptr_map_cap - 1;
+    size_t idx = ptr_hash(key, mask);
+    while (ptr_map[idx].key) {
+        if (ptr_map[idx].key == key) return ptr_map[idx].value;
+        idx = (idx + 1) & mask;
+    }
+    return NULL;
+}
+
+static void ptr_map_free(void) {
+    free(ptr_map);
+    ptr_map = NULL;
+    ptr_map_cap = 0;
+    ptr_map_size = 0;
+}
+
+/* Rebuild the hash table from the surviving heap list.
+   Much faster than per-object ptr_map_remove during sweep when most objects die. */
+static void ptr_map_rebuild(void) {
+    if (!ptr_map) return;
+    memset(ptr_map, 0, ptr_map_cap * sizeof(PtrMapEntry));
+    ptr_map_size = 0;
+    size_t mask = ptr_map_cap - 1;
+    for (GCHeader* h = heap_head; h; h = h->next) {
+        void* user = (char*)h + sizeof(GCHeader);
+        size_t idx = ptr_hash(user, mask);
+        while (ptr_map[idx].key) idx = (idx + 1) & mask;
+        ptr_map[idx].key   = user;
+        ptr_map[idx].value = h;
+        ptr_map_size++;
+    }
+    /* Shrink table if it became very sparse after collection. */
+    while (ptr_map_cap > PTR_MAP_INIT_CAP &&
+           ptr_map_size * 8 < ptr_map_cap) {
+        /* Table is <12.5% full — halve it and rebuild. */
+        size_t old_cap = ptr_map_cap;
+        PtrMapEntry* old = ptr_map;
+        ptr_map_cap /= 2;
+        ptr_map = (PtrMapEntry*)calloc(ptr_map_cap, sizeof(PtrMapEntry));
+        ptr_map_size = 0;
+        mask = ptr_map_cap - 1;
+        for (size_t i = 0; i < old_cap; i++) {
+            if (old[i].key) {
+                size_t idx = ptr_hash(old[i].key, mask);
+                while (ptr_map[idx].key) idx = (idx + 1) & mask;
+                ptr_map[idx].key   = old[i].key;
+                ptr_map[idx].value = old[i].value;
+                ptr_map_size++;
+            }
+        }
+        free(old);
+    }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * Helpers
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -63,6 +274,21 @@ typedef struct {
     int64_t  length;
     int64_t  capacity;
 } VisualList_GC;
+
+/* Forward declaration for VisualDict defined in runtime.c. */
+typedef struct {
+    uint8_t _state;
+} DictEntry_GC;
+
+typedef struct {
+    void*   entries;   /* DictEntry array (malloc'd) */
+    int64_t capacity;
+    int64_t length;
+} VisualDict_GC;
+
+/* Each DictEntry is: char* key (8) + int64_t value (8) + uint8_t state (1) + padding = 24 bytes */
+#define DICT_ENTRY_SIZE 24
+#define DICT_ENTRY_STATE_USED 1
 
 /* Return current monotonic time in nanoseconds (for pause measurement). */
 static double now_ns(void) {
@@ -76,10 +302,19 @@ static double now_ns(void) {
 }
 
 /* Check whether `ptr` looks like it points into one of our GC objects.
-   We walk the full heap list — O(n) per candidate, acceptable for v1. */
+   O(1) average via hash table for exact user_ptr matches.
+   Falls back to linear scan for interior pointers (conservative scanning). */
 static GCHeader* find_gc_header(void* ptr) {
     if (!ptr) return NULL;
-    GCHeader* h = heap_head;
+    /* Fast path: exact match on the user_ptr (allocation start). */
+    GCHeader* h = ptr_map_lookup(ptr);
+    if (h) return h;
+    /* Range guard: skip O(n) scan if ptr is outside the heap bounding box. */
+    uintptr_t addr = (uintptr_t)ptr;
+    if (addr < heap_lo || addr >= heap_hi) return NULL;
+    /* Slow path for interior pointers (conservative stack scan).
+       Walk the heap list to find if ptr falls within any allocation. */
+    h = heap_head;
     while (h) {
         void* obj_start = (char*)h + sizeof(GCHeader);
         void* obj_end   = (char*)h + h->size;
@@ -99,9 +334,12 @@ void __visuall_gc_init(void* sb) {
     stack_bottom = sb;
     heap_head = NULL;
     heap_bytes = 0;
-    gc_threshold = 1024 * 1024;
+    gc_threshold = 1 * 1024 * 1024;
+    heap_lo = UINTPTR_MAX;
+    heap_hi = 0;
     num_global_roots = 0;
     memset(&gc_stats, 0, sizeof(gc_stats));
+    ptr_map_init();
 }
 
 void __visuall_gc_enable_stats(int enable) {
@@ -123,14 +361,23 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
     }
 
     size_t total = sizeof(GCHeader) + size;
-    GCHeader* hdr = (GCHeader*)malloc(total);
+
+    /* Round up to size-class boundary so free-list blocks are interchangeable. */
+    int fl_cls = fl_class_for(total);
+    if (fl_cls >= 0) total = fl_class_sizes[fl_cls];
+
+    /* Try the free-list pool first (avoids malloc for small, common sizes). */
+    GCHeader* hdr = fl_pop(fl_cls);
     if (!hdr) {
-        /* OOM — try collecting and retry once */
-        __visuall_collect();
         hdr = (GCHeader*)malloc(total);
         if (!hdr) {
-            fprintf(stderr, "out of memory (GC alloc %zu bytes)\n", size);
-            exit(1);
+            /* OOM — try collecting and retry once */
+            __visuall_collect();
+            hdr = (GCHeader*)malloc(total);
+            if (!hdr) {
+                fprintf(stderr, "out of memory (GC alloc %zu bytes)\n", size);
+                exit(1);
+            }
         }
     }
 
@@ -152,6 +399,16 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
     /* Zero the user payload. */
     void* user = (char*)hdr + sizeof(GCHeader);
     memset(user, 0, size);
+
+    /* Insert into the pointer hash table for O(1) lookup. */
+    ptr_map_insert(user, hdr);
+
+    /* Update heap address range for fast out-of-range rejection. */
+    uintptr_t haddr = (uintptr_t)hdr;
+    if (haddr < heap_lo) heap_lo = haddr;
+    uintptr_t htop  = haddr + total;
+    if (htop  > heap_hi) heap_hi = htop;
+
     return user;
 }
 
@@ -202,9 +459,28 @@ void __visuall_mark(void* ptr) {
         break;
     }
 
-    case VSL_TAG_DICT:
-        /* Dict not fully implemented yet — no child tracing needed. */
+    case VSL_TAG_DICT: {
+        /* Dict entries: trace keys (strings) and values (may be GC pointers). */
+        VisualDict_GC* dict = (VisualDict_GC*)ptr;
+        if (dict->entries) {
+            char* base = (char*)dict->entries;
+            for (int64_t i = 0; i < dict->capacity; i++) {
+                char* ent = base + i * DICT_ENTRY_SIZE;
+                uint8_t state = *(uint8_t*)(ent + 16); /* offset of state field */
+                if (state == DICT_ENTRY_STATE_USED) {
+                    void* key = *(void**)ent;           /* char* key at offset 0 */
+                    if (key) {
+                        GCHeader* kh = find_gc_header(key);
+                        if (kh) __visuall_mark(key);
+                    }
+                    void* val = *(void**)(ent + 8);     /* int64_t value at offset 8, may be ptr */
+                    GCHeader* vh = find_gc_header(val);
+                    if (vh) __visuall_mark(val);
+                }
+            }
+        }
         break;
+    }
 
     case VSL_TAG_CLOSURE: {
         /* Closure fat pointer: { void* env, void* fn_ptr }
@@ -317,9 +593,15 @@ static void finalize(GCHeader* hdr) {
         }
         break;
     }
-    case VSL_TAG_DICT:
-        /* Dict hash table cleanup would go here. */
+    case VSL_TAG_DICT: {
+        /* Free the dict entries array. */
+        VisualDict_GC* dict = (VisualDict_GC*)user;
+        if (dict->entries) {
+            free(dict->entries);
+            dict->entries = NULL;
+        }
         break;
+    }
     default:
         break;
     }
@@ -334,7 +616,7 @@ static void sweep(void) {
             hdr->marked = 0;
             pp = &hdr->next;
         } else {
-            /* Object is garbage — unlink and free. */
+            /* Object is garbage — unlink. */
             *pp = hdr->next;
 
             size_t obj_size = hdr->size;
@@ -342,10 +624,17 @@ static void sweep(void) {
             gc_stats.total_bytes_collected += obj_size;
 
             finalize(hdr);
-            free(hdr);
+
+            /* Try to cache on free list; otherwise free to OS. */
+            if (!fl_push(hdr)) {
+                free(hdr);
+            }
         }
     }
     gc_stats.current_live_bytes = heap_bytes;
+
+    /* Rebuild hash table from survivors (O(survivors) instead of O(dead) removes). */
+    ptr_map_rebuild();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -353,19 +642,24 @@ static void sweep(void) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 void __visuall_collect(void) {
-    double t0 = now_ns();
+    double t0 = 0;
+    if (gc_stats_enabled) t0 = now_ns();
 
     mark_roots();
     sweep();
 
     /* Adjust threshold: 2× current live bytes, but at least 1 MB. */
     size_t new_threshold = heap_bytes * 2;
-    if (new_threshold < 1024 * 1024) new_threshold = 1024 * 1024;
+    if (new_threshold < 1 * 1024 * 1024) new_threshold = 1 * 1024 * 1024;
     gc_threshold = new_threshold;
 
-    double t1 = now_ns();
-    gc_stats.total_collections++;
-    gc_stats.total_pause_ns += (t1 - t0);
+    if (gc_stats_enabled) {
+        double t1 = now_ns();
+        gc_stats.total_collections++;
+        gc_stats.total_pause_ns += (t1 - t0);
+    } else {
+        gc_stats.total_collections++;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -383,6 +677,12 @@ void __visuall_gc_shutdown(void) {
     }
     heap_head = NULL;
     heap_bytes = 0;
+
+    /* Free the pointer hash table. */
+    ptr_map_free();
+
+    /* Free the free-list pool. */
+    fl_free_all();
 
     if (gc_stats_enabled) {
         fprintf(stderr, "\n=== GC Statistics ===\n");

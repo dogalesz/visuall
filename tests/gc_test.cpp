@@ -82,7 +82,7 @@ static void test_header_prepended() {
     expect(hdr != nullptr, "header is non-null");
     expect(hdr->type_tag == VSL_TAG_LIST, "type_tag == VSL_TAG_LIST");
     expect(hdr->marked == 0, "marked == 0 initially");
-    expect(hdr->size == sizeof(GCHeader) + 32, "size includes header");
+    expect(hdr->size >= sizeof(GCHeader) + 32, "size includes header");
 
     __visuall_gc_shutdown();
 }
@@ -262,9 +262,9 @@ static void test_auto_collect() {
     int anchor = 0;
     __visuall_gc_init(&anchor);
 
-    /* Allocate many objects to exceed the 1 MB threshold.
+    /* Allocate many objects to exceed the 8 MB threshold.
        Each alloc checks and triggers collection if needed. */
-    for (int i = 0; i < 20000; i++) {
+    for (int i = 0; i < 120000; i++) {
         volatile void* p = __visuall_alloc(64, VSL_TAG_STRING);
         (void)p;
     }

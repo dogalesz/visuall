@@ -1,0 +1,12 @@
+define dist_bench(count: int) -> float:
+	total_dist = 0.0
+	i = 0
+	while i < count:
+		x = float(i % 100) - 50.0
+		y = float(i % 73) - 36.5
+		total_dist = total_dist + x * x + y * y
+		i = i + 1
+	return total_dist
+
+r = dist_bench(1000000)
+print(r)

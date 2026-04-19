@@ -1,0 +1,13 @@
+define nested_loops(n: int) -> int:
+	total = 0
+	i = 0
+	while i < n:
+		j = 0
+		while j < n:
+			total = total + (i * j) % 97
+			j = j + 1
+		i = i + 1
+	return total
+
+r = nested_loops(2000)
+print(r)

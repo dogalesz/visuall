@@ -73,6 +73,13 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     /* ── String concat ───────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_str_concat", i8p, {i8p, i8p});
 
+    /* ── f-string builder ────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_fstring_build", i8p,
+                       {llvm::PointerType::getUnqual(i8p), i32});
+
+    /* ── String comparison ────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_str_eq", i64, {i8p, i8p});
+
     /* ── String length ───────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_str_len", i64, {i8p});
 
@@ -82,6 +89,19 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_list_get",  i64, {i8p, i64});
     getOrDeclareExtern(mod, ctx, "__visuall_list_set",  voidTy, {i8p, i64, i64});
     getOrDeclareExtern(mod, ctx, "__visuall_list_len",  i64, {i8p});
+
+    /* ── Dict runtime ────────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_dict_new",  i8p, {});
+    getOrDeclareExtern(mod, ctx, "__visuall_dict_set",  voidTy, {i8p, i8p, i64});
+    getOrDeclareExtern(mod, ctx, "__visuall_dict_get",  i64, {i8p, i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_dict_has",  i64, {i8p, i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_dict_len",  i64, {i8p});
+
+    /* ── Tuple runtime ───────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_tuple_new", i8p, {i64});
+
+    /* ── Slice runtime ───────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_list_slice", i8p, {i8p, i64, i64, i64});
 
     /* ── range() ─────────────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_range", i8p, {i64, i64, i64});

@@ -507,8 +507,8 @@ Token Lexer::lexOperator(char c, int tokLine, int tokCol) {
         case '!':
             if (match('='))
                 return makeToken(TokenType::NEQ, "!=", tokLine, tokCol);
-            throw LexError(std::string("Unexpected character '!'"),
-                           filename_, tokLine, tokCol);
+            errors_.emplace_back("Unexpected character '!'", filename_, tokLine, tokCol);
+            return makeToken(TokenType::ERROR, "!", tokLine, tokCol);
 
         case '<':
             if (match('<')) {
@@ -569,9 +569,10 @@ Token Lexer::lexOperator(char c, int tokLine, int tokCol) {
             return makeToken(TokenType::QUESTION, "?", tokLine, tokCol);
 
         default:
-            throw LexError(
+            errors_.emplace_back(
                 std::string("Unexpected character '") + c + "'",
                 filename_, tokLine, tokCol);
+            return makeToken(TokenType::ERROR, std::string(1, c), tokLine, tokCol);
     }
 }
 
@@ -595,99 +596,133 @@ Token Lexer::lexOperator(char c, int tokLine, int tokCol) {
 // ════════════════════════════════════════════════════════════════════════════
 std::vector<Token> Lexer::tokenize() {
     std::vector<Token> tokens;
+    errors_.clear();
+    std::exception_ptr firstError;
 
     while (!isAtEnd()) {
-        // ── 1. Line-start: handle indentation ─────────────────────────
-        if (atLineStart_) {
-            atLineStart_ = false;
-            handleIndentation(tokens);
-            if (isAtEnd()) break;
-            // If after eating indentation we're on a blank line, loop back.
-            if (peek() == '\n') continue;
-        }
+        size_t startPos = pos_;
+        int startLine = line_;
+        int startCol = column_;
 
-        char c = peek();
-
-        // ── 2. Mid-line whitespace ────────────────────────────────────
-        if (c == ' ' || c == '\t' || c == '\r') {
-            skipWhitespace();
-            continue;
-        }
-
-        // ── 3. Newlines ───────────────────────────────────────────────
-        if (c == '\n') {
-            int nl = line_;
-            int nc = column_;
-            advance();
-
-            // Only emit NEWLINE if the previous meaningful token isn't
-            // already a NEWLINE, INDENT, or DEDENT (avoids duplicates
-            // on blank/comment lines).
-            if (!tokens.empty()) {
-                TokenType last = tokens.back().type;
-                if (last != TokenType::NEWLINE &&
-                    last != TokenType::INDENT &&
-                    last != TokenType::DEDENT) {
-                    tokens.push_back(makeToken(TokenType::NEWLINE, "\\n", nl, nc));
-                }
+        try {
+            // ── 1. Line-start: handle indentation ─────────────────────
+            if (atLineStart_) {
+                atLineStart_ = false;
+                handleIndentation(tokens);
+                if (isAtEnd()) break;
+                // If after eating indentation we're on a blank line, loop back.
+                if (peek() == '\n') continue;
             }
-            atLineStart_ = true;
-            continue;
-        }
 
-        int tokLine = line_;
-        int tokCol  = column_;
+            char c = peek();
 
-        // ── 4. Comments ───────────────────────────────────────────────
-        if (c == '#') {
-            if (peekNext() == '#') {
-                advance(); advance();  // consume first two '#'
-                if (!isAtEnd() && peek() == '#') {
-                    advance();  // consume third '#'
-                    skipMultiLineComment();
-                } else {
-                    skipSingleLineComment();
-                }
+            // ── 2. Mid-line whitespace ────────────────────────────────
+            if (c == ' ' || c == '\t' || c == '\r') {
+                skipWhitespace();
                 continue;
             }
-            // A lone '#' — treat as single-line comment for robustness.
+
+            // ── 3. Newlines ───────────────────────────────────────────
+            if (c == '\n') {
+                int nl = line_;
+                int nc = column_;
+                advance();
+
+                // Only emit NEWLINE if the previous meaningful token isn't
+                // already a NEWLINE, INDENT, or DEDENT (avoids duplicates
+                // on blank/comment lines).
+                if (!tokens.empty()) {
+                    TokenType last = tokens.back().type;
+                    if (last != TokenType::NEWLINE &&
+                        last != TokenType::INDENT &&
+                        last != TokenType::DEDENT) {
+                        tokens.push_back(makeToken(TokenType::NEWLINE, "\\n", nl, nc));
+                    }
+                }
+                atLineStart_ = true;
+                continue;
+            }
+
+            int tokLine = line_;
+            int tokCol  = column_;
+
+            // ── 4. Comments ───────────────────────────────────────────
+            if (c == '#') {
+                if (peekNext() == '#') {
+                    advance(); advance();  // consume first two '#'
+                    if (!isAtEnd() && peek() == '#') {
+                        advance();  // consume third '#'
+                        skipMultiLineComment();
+                    } else {
+                        skipSingleLineComment();
+                    }
+                    continue;
+                }
+                // A lone '#' — treat as single-line comment for robustness.
+                advance();
+                skipSingleLineComment();
+                continue;
+            }
+
+            // ── 5. F-strings ─────────────────────────────────────────
+            if (c == 'f' && (peekNext() == '"' || peekNext() == '\'')) {
+                advance();            // consume 'f'
+                char q = advance();   // consume opening quote
+                tokens.push_back(lexFString(q));
+                continue;
+            }
+
+            // ── 6. Strings ───────────────────────────────────────────
+            if (c == '"' || c == '\'') {
+                advance();  // consume opening quote
+                tokens.push_back(lexString(c));
+                continue;
+            }
+
+            // ── 7. Numbers ───────────────────────────────────────────
+            if (std::isdigit(static_cast<unsigned char>(c))) {
+                advance();  // consume first digit
+                tokens.push_back(lexNumber());
+                continue;
+            }
+
+            // ── 8. Identifiers / keywords ─────────────────────────────
+            if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+                advance();  // consume first character
+                tokens.push_back(lexIdentifierOrKeyword());
+                continue;
+            }
+
+            // ── 9. Operators and delimiters ───────────────────────────
+            advance();  // consume first character of the operator
+            tokens.push_back(lexOperator(c, tokLine, tokCol));
+        } catch (const IndentationError& e) {
+            errors_.emplace_back(e.what(), e.filename, e.line, e.column);
+            tokens.push_back(makeToken(TokenType::ERROR, "<indent-error>", e.line, e.column));
+            if (!firstError) firstError = std::current_exception();
+
+            // Recover by skipping to end-of-line.
+            while (!isAtEnd() && peek() != '\n') {
+                advance();
+            }
+        } catch (const LexError& e) {
+            errors_.push_back(e);
+            tokens.push_back(makeToken(TokenType::ERROR, "<lex-error>", e.line, e.column));
+            if (!firstError) firstError = std::current_exception();
+
+            // Ensure forward progress after a lexer failure.
+            if (pos_ == startPos && !isAtEnd()) {
+                advance();
+            }
+
+            // If we failed in the middle of a line, continue scanning from next character.
+            // For malformed strings/comments this still preserves later diagnostics.
+        }
+
+        // Guard against accidental infinite loops.
+        if (pos_ == startPos && line_ == startLine && column_ == startCol && !isAtEnd()) {
             advance();
-            skipSingleLineComment();
-            continue;
         }
-
-        // ── 5. F-strings ─────────────────────────────────────────────
-        if (c == 'f' && (peekNext() == '"' || peekNext() == '\'')) {
-            advance();            // consume 'f'
-            char q = advance();   // consume opening quote
-            tokens.push_back(lexFString(q));
-            continue;
-        }
-
-        // ── 6. Strings ───────────────────────────────────────────────
-        if (c == '"' || c == '\'') {
-            advance();  // consume opening quote
-            tokens.push_back(lexString(c));
-            continue;
-        }
-
-        // ── 7. Numbers ───────────────────────────────────────────────
-        if (std::isdigit(static_cast<unsigned char>(c))) {
-            advance();  // consume first digit
-            tokens.push_back(lexNumber());
-            continue;
-        }
-
-        // ── 8. Identifiers / keywords ─────────────────────────────────
-        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
-            advance();  // consume first character
-            tokens.push_back(lexIdentifierOrKeyword());
-            continue;
-        }
-
-        // ── 9. Operators and delimiters ───────────────────────────────
-        advance();  // consume first character of the operator
-        tokens.push_back(lexOperator(c, tokLine, tokCol));
     }
 
     // ── 10. EOF: flush remaining DEDENTs ──────────────────────────────
@@ -697,6 +732,10 @@ std::vector<Token> Lexer::tokenize() {
     }
 
     tokens.push_back(makeToken(TokenType::END_OF_FILE, "", line_, column_));
+
+    // After recovery, re-throw the first error so callers see it.
+    if (firstError) std::rethrow_exception(firstError);
+
     return tokens;
 }
 

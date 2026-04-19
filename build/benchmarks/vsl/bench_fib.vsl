@@ -1,0 +1,19 @@
+define fibonacci(n: int) -> int:
+	if n <= 1:
+		return n
+	a = 0
+	b = 1
+	i = 2
+	while i <= n:
+		temp = b
+		b = a + b
+		a = temp
+		i = i + 1
+	return b
+
+r = 0
+iter = 0
+while iter < 500000:
+	r = r + fibonacci(35)
+	iter = iter + 1
+print(r)

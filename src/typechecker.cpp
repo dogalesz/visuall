@@ -262,6 +262,7 @@ Type TypeChecker::unify(const Type& a, const Type& b, int line, int col) {
     if (isAssignableTo(b, a)) return a;
 
     error("Cannot assign " + a.toString() + " to " + b.toString(), line, col);
+    return Type::makeUnknown();
 }
 
 Type TypeChecker::promoteNumeric(const Type& a, const Type& b) {
@@ -347,8 +348,8 @@ bool TypeChecker::classImplementsInterface(const std::string& className, const s
 // Error reporting
 // ════════════════════════════════════════════════════════════════════════════
 
-[[noreturn]] void TypeChecker::error(const std::string& msg, int line, int col) const {
-    throw TypeError(msg, filename_, line, col);
+void TypeChecker::error(const std::string& msg, int line, int col) {
+    errors_.emplace_back(msg, filename_, line, col);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -356,6 +357,7 @@ bool TypeChecker::classImplementsInterface(const std::string& className, const s
 // ════════════════════════════════════════════════════════════════════════════
 
 void TypeChecker::check(const ast::Program& program) {
+    errors_.clear();
     enterScope();  // file scope
     // First pass: register all top-level function, class, and interface declarations.
     for (const auto& stmt : program.statements) {
@@ -424,6 +426,9 @@ void TypeChecker::check(const ast::Program& program) {
     // Second pass: check all statements.
     checkStmtList(program.statements);
     exitScope();
+
+    // After checking, re-throw the first error so callers see it.
+    if (!errors_.empty()) throw errors_.front();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -856,12 +861,15 @@ Type TypeChecker::checkExpr(const ast::Expr& expr) {
     if (dynamic_cast<const ast::SuperExpr*>(&expr)) {
         if (!insideClass_) {
             error("'super' used outside of class", expr.line, expr.column);
+            return Type::makeUnknown();
         }
-        if (currentClassName_.empty() || classTable_.count(currentClassName_) == 0 ||
-            classTable_.at(currentClassName_).baseClass.empty()) {
+        auto clsIt = classTable_.find(currentClassName_);
+        if (currentClassName_.empty() || clsIt == classTable_.end() ||
+            clsIt->second.baseClass.empty()) {
             error("'super' used in class without base class", expr.line, expr.column);
+            return Type::makeUnknown();
         }
-        return Type::makeClass(classTable_.at(currentClassName_).baseClass);
+        return Type::makeClass(clsIt->second.baseClass);
     }
 
     // ── BinaryExpr ─────────────────────────────────────────────────────

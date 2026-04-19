@@ -75,12 +75,33 @@ Linker::link(std::unique_ptr<llvm::Module> mainModule,
 // ── optimize ───────────────────────────────────────────────────────────────
 
 void Linker::optimize(llvm::Module& mod) {
+    // Initialise the native target so the optimizer can make
+    // target-aware decisions (vectorization widths, cost model, etc.).
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
+
+    auto triple = llvm::sys::getDefaultTargetTriple();
+    mod.setTargetTriple(triple);
+
+    std::string err;
+    auto* target = llvm::TargetRegistry::lookupTarget(triple, err);
+
+    llvm::TargetOptions opt;
+    auto cpu = llvm::sys::getHostCPUName();
+    std::unique_ptr<llvm::TargetMachine> TM(
+        target ? target->createTargetMachine(triple, cpu, "", opt,
+                                              llvm::Reloc::PIC_)
+               : nullptr);
+    if (TM)
+        mod.setDataLayout(TM->createDataLayout());
+
     llvm::LoopAnalysisManager     LAM;
     llvm::FunctionAnalysisManager FAM;
     llvm::CGSCCAnalysisManager    CGAM;
     llvm::ModuleAnalysisManager   MAM;
 
-    llvm::PassBuilder PB;
+    llvm::PassBuilder PB(TM.get());
     PB.registerModuleAnalyses(MAM);
     PB.registerCGSCCAnalyses(CGAM);
     PB.registerFunctionAnalyses(FAM);
@@ -119,9 +140,10 @@ void Linker::emitObjectFile(llvm::Module& mod, const std::string& path) {
         throw std::runtime_error("TargetRegistry::lookupTarget: " + err);
     }
 
+    auto cpu = llvm::sys::getHostCPUName();
     llvm::TargetOptions opt;
     auto* TM = target->createTargetMachine(
-        triple, "generic", "", opt, llvm::Reloc::PIC_);
+        triple, cpu, "", opt, llvm::Reloc::PIC_);
     mod.setDataLayout(TM->createDataLayout());
 
     std::error_code ec;
@@ -158,7 +180,7 @@ int Linker::compileAndLink(std::unique_ptr<llvm::Module> mainModule,
     // 1. Link all modules together
     auto merged = link(std::move(mainModule), std::move(others));
 
-    // 2. Optimize
+    // 2. Optimize (also sets target triple + data layout)
     optimize(*merged);
 
     // 3. If emit-ir requested, dump and stop

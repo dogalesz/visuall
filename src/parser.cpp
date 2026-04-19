@@ -222,22 +222,22 @@ void Parser::synchronize() {
 // ════════════════════════════════════════════════════════════════════════════
 std::unique_ptr<ast::Program> Parser::parse() {
     ast::StmtList stmts;
-    std::vector<ParseError> errors;
+    errors_.clear();
 
     skipNewlines();
     while (!isAtEnd()) {
         try {
             stmts.push_back(parseStatement());
         } catch (const ParseError& e) {
-            errors.push_back(e);
+            errors_.push_back(e);
             synchronize();
         }
         skipNewlines();
     }
 
-    if (!errors.empty()) {
-        throw errors.front();
-    }
+    // After recovery, re-throw the first error so callers see it.
+    if (!errors_.empty()) throw errors_.front();
+
     return std::make_unique<ast::Program>(std::move(stmts));
 }
 

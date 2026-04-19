@@ -127,8 +127,9 @@ static void test_functionCall() {
     expect(!ir.empty(), "5a. Function call generates IR");
     // Should contain the function definition.
     expect(ir.find("define") != std::string::npos, "5b. IR defines the function");
-    // Should contain a call instruction.
-    expect(ir.find("call i64 @add") != std::string::npos, "5c. IR emits call to @add");
+    // Should contain a call instruction (possibly with fastcc convention).
+    expect(ir.find("call i64 @add") != std::string::npos ||
+           ir.find("call fastcc i64 @add") != std::string::npos, "5c. IR emits call to @add");
 }
 
 // ── 6. print("hello") emits printf call ────────────────────────────────────

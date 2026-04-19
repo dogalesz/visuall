@@ -19,6 +19,7 @@ enum class TokenType {
 
     // ── Identifiers ────────────────────────────────────────────────────────
     IDENTIFIER,         // user-defined names
+    ERROR,              // lexer error placeholder token
 
     // ── Keywords ───────────────────────────────────────────────────────────
     KW_DEFINE,          // define
@@ -139,6 +140,7 @@ inline const char* tokenTypeToString(TokenType t) {
         case TokenType::BOOL_LITERAL:   return "BOOL_LITERAL";
         case TokenType::NULL_LITERAL:   return "NULL_LITERAL";
         case TokenType::IDENTIFIER:     return "IDENTIFIER";
+        case TokenType::ERROR:          return "ERROR";
         case TokenType::KW_DEFINE:      return "KW_DEFINE";
         case TokenType::KW_INIT:        return "KW_INIT";
         case TokenType::KW_CLASS:       return "KW_CLASS";

@@ -106,6 +106,164 @@ int64_t __visuall_list_len(VisualList* list) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Visuall Tuple runtime  (fixed-size VisualList with VSL_TAG_TUPLE)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+VisualList* __visuall_tuple_new(int64_t count) {
+    VisualList* t = (VisualList*)__visuall_alloc(sizeof(VisualList), VSL_TAG_TUPLE);
+    t->capacity = count > 0 ? count : 1;
+    t->length   = 0;
+    t->data     = (int64_t*)vsl_malloc(sizeof(int64_t) * (size_t)t->capacity);
+    return t;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Visuall List Slice
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+VisualList* __visuall_list_slice(VisualList* list, int64_t start,
+                                  int64_t stop, int64_t step) {
+    if (!list) return __visuall_list_new();
+    int64_t len = list->length;
+
+    /* Clamp start/stop to [0, len] */
+    if (start < 0) { start += len; if (start < 0) start = 0; }
+    if (start > len) start = len;
+    if (stop < 0) { stop += len; if (stop < 0) stop = 0; }
+    if (stop > len) stop = len;
+
+    if (step == 0) step = 1; /* protect against infinite loop */
+
+    VisualList* out = __visuall_list_new();
+    if (step > 0) {
+        for (int64_t i = start; i < stop; i += step)
+            __visuall_list_push(out, list->data[i]);
+    } else {
+        for (int64_t i = start; i > stop; i += step)
+            __visuall_list_push(out, list->data[i]);
+    }
+    return out;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Visuall Dict runtime  (open-addressing hash table, string keys, i64 values)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#define DICT_INIT_CAP  16
+#define DICT_LOAD_MAX  0.7
+#define DICT_EMPTY     0
+#define DICT_USED      1
+#define DICT_DELETED   2
+
+typedef struct {
+    char*   key;      /* GC-managed string (or NULL) */
+    int64_t value;
+    uint8_t state;    /* DICT_EMPTY / DICT_USED / DICT_DELETED */
+} DictEntry;
+
+typedef struct {
+    DictEntry* entries;
+    int64_t    capacity;
+    int64_t    length;    /* number of USED entries */
+} VisualDict;
+
+static uint64_t dict_hash(const char* key) {
+    uint64_t h = 14695981039346656037ULL;
+    for (const char* p = key; *p; p++) {
+        h ^= (uint8_t)*p;
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static void dict_resize(VisualDict* d, int64_t new_cap);
+
+static int64_t dict_find_slot(DictEntry* entries, int64_t cap, const char* key) {
+    uint64_t h = dict_hash(key);
+    int64_t idx = (int64_t)(h % (uint64_t)cap);
+    int64_t first_deleted = -1;
+    for (int64_t i = 0; i < cap; i++) {
+        int64_t slot = (idx + i) % cap;
+        if (entries[slot].state == DICT_EMPTY) {
+            return first_deleted >= 0 ? first_deleted : slot;
+        }
+        if (entries[slot].state == DICT_DELETED) {
+            if (first_deleted < 0) first_deleted = slot;
+            continue;
+        }
+        if (entries[slot].key && strcmp(entries[slot].key, key) == 0) {
+            return slot;
+        }
+    }
+    return first_deleted >= 0 ? first_deleted : -1;
+}
+
+VisualDict* __visuall_dict_new(void) {
+    VisualDict* d = (VisualDict*)__visuall_alloc(sizeof(VisualDict), VSL_TAG_DICT);
+    d->capacity = DICT_INIT_CAP;
+    d->length   = 0;
+    d->entries  = (DictEntry*)vsl_malloc(sizeof(DictEntry) * (size_t)d->capacity);
+    memset(d->entries, 0, sizeof(DictEntry) * (size_t)d->capacity);
+    return d;
+}
+
+static void dict_resize(VisualDict* d, int64_t new_cap) {
+    DictEntry* old = d->entries;
+    int64_t old_cap = d->capacity;
+    d->entries  = (DictEntry*)vsl_malloc(sizeof(DictEntry) * (size_t)new_cap);
+    d->capacity = new_cap;
+    d->length   = 0;
+    memset(d->entries, 0, sizeof(DictEntry) * (size_t)new_cap);
+    for (int64_t i = 0; i < old_cap; i++) {
+        if (old[i].state == DICT_USED) {
+            int64_t slot = dict_find_slot(d->entries, d->capacity, old[i].key);
+            d->entries[slot].key   = old[i].key;
+            d->entries[slot].value = old[i].value;
+            d->entries[slot].state = DICT_USED;
+            d->length++;
+        }
+    }
+    free(old);
+}
+
+void __visuall_dict_set(VisualDict* d, const char* key, int64_t value) {
+    if (!d || !key) return;
+    if ((double)(d->length + 1) > (double)d->capacity * DICT_LOAD_MAX) {
+        dict_resize(d, d->capacity * 2);
+    }
+    int64_t slot = dict_find_slot(d->entries, d->capacity, key);
+    if (slot < 0) { dict_resize(d, d->capacity * 2); slot = dict_find_slot(d->entries, d->capacity, key); }
+    if (d->entries[slot].state == DICT_USED) {
+        d->entries[slot].value = value;
+    } else {
+        d->entries[slot].key   = vsl_strdup(key);
+        d->entries[slot].value = value;
+        d->entries[slot].state = DICT_USED;
+        d->length++;
+    }
+}
+
+int64_t __visuall_dict_get(VisualDict* d, const char* key) {
+    if (!d || !key) return 0;
+    int64_t slot = dict_find_slot(d->entries, d->capacity, key);
+    if (slot >= 0 && d->entries[slot].state == DICT_USED) {
+        return d->entries[slot].value;
+    }
+    fprintf(stderr, "KeyError: '%s'\n", key);
+    exit(1);
+}
+
+int64_t __visuall_dict_has(VisualDict* d, const char* key) {
+    if (!d || !key) return 0;
+    int64_t slot = dict_find_slot(d->entries, d->capacity, key);
+    return (slot >= 0 && d->entries[slot].state == DICT_USED) ? 1 : 0;
+}
+
+int64_t __visuall_dict_len(VisualDict* d) {
+    return d ? d->length : 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Conversion builtins: __visuall_to_str
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -141,6 +299,96 @@ char* __visuall_str_concat(const char* a, const char* b) {
     memcpy(out, a, la);
     memcpy(out + la, b, lb);
     out[la + lb] = '\0';
+    return out;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * String comparison (value-based)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int64_t __visuall_str_eq(const char* a, const char* b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    return strcmp(a, b) == 0 ? 1 : 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Fast integer-to-buffer (no snprintf overhead)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static int fast_i64_to_buf(int64_t val, char* buf) {
+    char tmp[21]; /* max 20 digits + sign */
+    int pos = 0;
+    int neg = 0;
+    uint64_t uv;
+
+    if (val < 0) {
+        neg = 1;
+        uv = (uint64_t)(-(val + 1)) + 1;
+    } else {
+        uv = (uint64_t)val;
+    }
+
+    do {
+        tmp[pos++] = '0' + (char)(uv % 10);
+        uv /= 10;
+    } while (uv);
+
+    int len = 0;
+    if (neg) buf[len++] = '-';
+    for (int i = pos - 1; i >= 0; i--)
+        buf[len++] = tmp[i];
+    buf[len] = '\0';
+    return len;
+}
+
+int __visuall_int_to_buf(int64_t val, char* buf, int bufsize) {
+    (void)bufsize;
+    return fast_i64_to_buf(val, buf);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * f-string builder — single allocation for all parts
+ *
+ * Supports tagged integers: any entry in `parts` whose low bit is set
+ * is actually an unboxed int64_t encoded as (val << 1) | 1.  These are
+ * formatted inline via __visuall_int_to_buf — zero extra GC allocs.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+char* __visuall_fstring_build(const char** parts, int count) {
+    /* Pre-format tagged integers into stack buffers so we only format once. */
+    char  ibufs[16][24];   /* up to 16 tagged-int parts, 24 chars each */
+    const char* resolved[32];
+    size_t      lengths[32];
+    int ibuf_idx = 0;
+    size_t total = 0;
+
+    for (int i = 0; i < count && i < 32; i++) {
+        uintptr_t raw = (uintptr_t)parts[i];
+        if (raw & 1) {
+            int64_t val = (int64_t)((intptr_t)raw >> 1);
+            int n = fast_i64_to_buf(val, ibufs[ibuf_idx]);
+            resolved[i] = ibufs[ibuf_idx++];
+            lengths[i]  = (size_t)n;
+        } else if (parts[i]) {
+            resolved[i] = parts[i];
+            lengths[i]  = strlen(parts[i]);
+        } else {
+            resolved[i] = NULL;
+            lengths[i]  = 0;
+        }
+        total += lengths[i];
+    }
+
+    char* out = (char*)__visuall_alloc(total + 1, VSL_TAG_STRING);
+    size_t pos = 0;
+    for (int i = 0; i < count && i < 32; i++) {
+        if (resolved[i]) {
+            memcpy(out + pos, resolved[i], lengths[i]);
+            pos += lengths[i];
+        }
+    }
+    out[pos] = '\0';
     return out;
 }
 

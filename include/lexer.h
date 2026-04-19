@@ -58,7 +58,11 @@ public:
 
     // Run the lexer and return the complete, flat token stream.
     // The stream always ends with an END_OF_FILE token.
+    // Lexer errors are recorded and surfaced as ERROR tokens.
     std::vector<Token> tokenize();
+
+    // Collected lexer errors from the last tokenize() call.
+    const std::vector<LexError>& errors() const { return errors_; };
 
 private:
     // ── Source state ───────────────────────────────────────────────────
@@ -71,6 +75,9 @@ private:
 
     // ── Indent tracking ────────────────────────────────────────────────
     std::stack<int> indentStack_;   // monotonic stack of tab-depths
+
+    // Collected lexer errors while continuing tokenization.
+    std::vector<LexError> errors_;
 
     // ── Character-level helpers ────────────────────────────────────────
 

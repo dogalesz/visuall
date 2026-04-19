@@ -30,6 +30,9 @@ public:
     Parser(const std::vector<Token>& tokens, const std::string& filename);
     std::unique_ptr<ast::Program> parse();
 
+    /// Collected parse errors from the last parse() call.
+    const std::vector<ParseError>& errors() const { return errors_; }
+
     /// Parse a single expression from the token stream. Used internally
     /// by f-string interpolation parsing.
     ast::ExprPtr parseExpression();
@@ -38,6 +41,7 @@ private:
     std::vector<Token> tokens_;
     std::string        filename_;
     size_t             pos_;
+    std::vector<ParseError> errors_;
 
     // ── Token navigation ───────────────────────────────────────────────
     const Token& current() const;

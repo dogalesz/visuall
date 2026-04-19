@@ -253,8 +253,12 @@ void Codegen::generate(const ast::Program& program) {
                     p.typeAnnotation.empty() ? llvm::Type::getInt64Ty(*context_)
                                              : getLLVMType(p.typeAnnotation));
             auto* fnTy = llvm::FunctionType::get(retTy, paramTys, false);
-            llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage,
+            auto linkage = moduleMode_
+                ? llvm::Function::ExternalLinkage
+                : llvm::Function::InternalLinkage;
+            auto* fn = llvm::Function::Create(fnTy, linkage,
                                    f->name, module_.get());
+            fn->setCallingConv(llvm::CallingConv::Fast);
         }
     }
 
@@ -319,18 +323,13 @@ void Codegen::generate(const ast::Program& program) {
             auto* anchor = createEntryBlockAlloca(mainFn, "gc.anchor", anchorTy);
             auto* anchorPtr = builder_->CreateBitCast(anchor, i8Ptr, "gc.anchor.ptr");
 
-            auto* gcInitTy = llvm::FunctionType::get(voidTy, {i8Ptr}, false);
-            auto* gcInitFn = llvm::Function::Create(
-                gcInitTy, llvm::Function::ExternalLinkage,
-                "__visuall_gc_init", module_.get());
+            // Use already-declared gc_init from declareRuntimeFunctions.
+            auto* gcInitFn = module_->getFunction("__visuall_gc_init");
             builder_->CreateCall(gcInitFn, {anchorPtr});
 
             // If --gc-stats was requested, call __visuall_gc_enable_stats(1).
             auto* i32Ty = llvm::Type::getInt32Ty(*context_);
-            auto* enableStatsTy = llvm::FunctionType::get(voidTy, {i32Ty}, false);
-            auto* enableStatsFn = llvm::Function::Create(
-                enableStatsTy, llvm::Function::ExternalLinkage,
-                "__visuall_gc_enable_stats", module_.get());
+            auto* enableStatsFn = module_->getFunction("__visuall_gc_enable_stats");
             if (gcStatsEnabled_) {
                 builder_->CreateCall(enableStatsFn,
                     {llvm::ConstantInt::get(i32Ty, 1)});
@@ -434,8 +433,15 @@ void Codegen::emitObjectFile(const std::string& path) const {
     }
 
     llvm::TargetOptions opt;
+    auto cpu = llvm::sys::getHostCPUName();
+
+    // Prefer Static relocation for executables; fall back to PIC_ if needed.
     auto* TM = target->createTargetMachine(
-        triple, "generic", "", opt, llvm::Reloc::PIC_);
+        triple, cpu, "", opt, llvm::Reloc::Static);
+    if (!TM) {
+        TM = target->createTargetMachine(
+            triple, cpu, "", opt, llvm::Reloc::PIC_);
+    }
     module_->setDataLayout(TM->createDataLayout());
 
     std::error_code ec;
@@ -559,8 +565,12 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
                 p.typeAnnotation.empty() ? llvm::Type::getInt64Ty(*context_)
                                          : getLLVMType(p.typeAnnotation));
         auto* fnTy = llvm::FunctionType::get(retTy, paramTys, false);
-        fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage,
+        auto linkage = moduleMode_
+            ? llvm::Function::ExternalLinkage
+            : llvm::Function::InternalLinkage;
+        fn = llvm::Function::Create(fnTy, linkage,
                                     node.name, module_.get());
+        fn->setCallingConv(llvm::CallingConv::Fast);
     }
 
     // Name parameters
@@ -658,6 +668,7 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
             auto* fn = llvm::Function::Create(
                 fnTy, llvm::Function::ExternalLinkage,
                 node.name + "_" + m->name, module_.get());
+            fn->setCallingConv(llvm::CallingConv::Fast);
 
             // Name params
             auto argIt = fn->arg_begin();
@@ -977,6 +988,12 @@ void Codegen::codegenWhileStmt(const ast::WhileStmt& node) {
 void Codegen::codegenReturnStmt(const ast::ReturnStmt& node) {
     if (node.value) {
         llvm::Value* val = codegenExpr(*node.value);
+
+        // Mark tail calls: if the return value is a CallInst, hint LLVM.
+        if (auto* call = llvm::dyn_cast<llvm::CallInst>(val)) {
+            call->setTailCallKind(llvm::CallInst::TCK_Tail);
+        }
+
         auto* retTy = currentFunction_->getReturnType();
         // Type coercion: if function returns double and value is int, promote.
         if (retTy->isDoubleTy() && val->getType()->isIntegerTy()) {
@@ -1118,7 +1135,37 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
             declareVar(ident->name, alloca);
         }
     }
-    // TODO: member/index assignment
+
+    // ── Index assignment: list[i] = val ────────────────────────────────
+    if (auto* idx = dynamic_cast<const ast::IndexExpr*>(node.target.get())) {
+        llvm::Value* obj = codegenExpr(*idx->object);
+        llvm::Value* index = codegenExpr(*idx->index);
+        if (obj->getType()->isPointerTy()) {
+            auto* listSetFn = module_->getFunction("__visuall_list_set");
+            if (listSetFn) {
+                // Ensure value is i64 (box pointers as int)
+                if (val->getType()->isPointerTy()) {
+                    val = builder_->CreatePtrToInt(val,
+                        llvm::Type::getInt64Ty(*context_), "ptr2i");
+                } else if (val->getType()->isDoubleTy()) {
+                    val = builder_->CreateBitCast(val,
+                        llvm::Type::getInt64Ty(*context_), "f2i");
+                } else if (val->getType() != llvm::Type::getInt64Ty(*context_)) {
+                    val = builder_->CreateIntCast(val,
+                        llvm::Type::getInt64Ty(*context_), true, "widen");
+                }
+                builder_->CreateCall(listSetFn, {obj, index, val});
+                return;
+            }
+        }
+    }
+
+    // ── Member assignment: obj.field = val (struct GEP + store) ────────
+    if (auto* mem = dynamic_cast<const ast::MemberExpr*>(node.target.get())) {
+        // For now, member assignment on objects is not supported yet.
+        // Module members are constants and cannot be assigned.
+        (void)mem;
+    }
 }
 
 // ── ExprStmt ───────────────────────────────────────────────────────────────
@@ -1222,59 +1269,118 @@ llvm::Value* Codegen::codegenFStringLiteral(const ast::FStringLiteral& node) {
 
 llvm::Value* Codegen::codegenFStringExpr(const ast::FStringExpr& node) {
     auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
-    auto* concatFn = module_->getFunction("__visuall_str_concat");
     auto* intToStrFn = module_->getFunction("__visuall_int_to_str");
     auto* floatToStrFn = module_->getFunction("__visuall_float_to_str");
     auto* boolToStrFn = module_->getFunction("__visuall_bool_to_str");
+    auto* fstringBuildFn = module_->getFunction("__visuall_fstring_build");
 
-    // Start with empty string
-    llvm::Value* result = builder_->CreateGlobalString("", "fstr.empty");
-
-    for (const auto& part : node.parts) {
-        llvm::Value* partStr = nullptr;
+    auto convertPart = [&](const auto& part) -> llvm::Value* {
         if (!part.isExpr) {
-            // Literal part
-            partStr = builder_->CreateGlobalString(part.literal, "fstr.lit");
+            return builder_->CreateGlobalString(part.literal, "fstr.lit");
+        }
+        llvm::Value* val = codegenExpr(*part.expr);
+        if (val->getType()->isPointerTy()) {
+            return val;
+        } else if (val->getType()->isIntegerTy(64)) {
+            if (intToStrFn)
+                return builder_->CreateCall(intToStrFn, {val}, "fstr.int");
+            return builder_->CreateGlobalString("<int>", "fstr.stub");
+        } else if (val->getType()->isDoubleTy()) {
+            if (floatToStrFn)
+                return builder_->CreateCall(floatToStrFn, {val}, "fstr.float");
+            return builder_->CreateGlobalString("<float>", "fstr.stub");
+        } else if (val->getType()->isIntegerTy(1)) {
+            auto* ext = builder_->CreateZExt(val, llvm::Type::getInt64Ty(*context_), "bext");
+            if (boolToStrFn)
+                return builder_->CreateCall(boolToStrFn, {ext}, "fstr.bool");
+            return builder_->CreateGlobalString("<bool>", "fstr.stub");
         } else {
-            // Expression part — evaluate and convert to string
-            llvm::Value* val = codegenExpr(*part.expr);
-            if (val->getType()->isPointerTy()) {
-                // Already a string (char*)
-                partStr = val;
-            } else if (val->getType()->isIntegerTy(64)) {
+            if (val->getType()->isIntegerTy()) {
+                val = builder_->CreateSExt(val, llvm::Type::getInt64Ty(*context_), "sext");
                 if (intToStrFn)
-                    partStr = builder_->CreateCall(intToStrFn, {val}, "fstr.int");
-                else
-                    partStr = builder_->CreateGlobalString("<int>", "fstr.stub");
-            } else if (val->getType()->isDoubleTy()) {
-                if (floatToStrFn)
-                    partStr = builder_->CreateCall(floatToStrFn, {val}, "fstr.float");
-                else
-                    partStr = builder_->CreateGlobalString("<float>", "fstr.stub");
-            } else if (val->getType()->isIntegerTy(1)) {
-                auto* ext = builder_->CreateZExt(val, llvm::Type::getInt64Ty(*context_), "bext");
-                if (boolToStrFn)
-                    partStr = builder_->CreateCall(boolToStrFn, {ext}, "fstr.bool");
-                else
-                    partStr = builder_->CreateGlobalString("<bool>", "fstr.stub");
+                    return builder_->CreateCall(intToStrFn, {val}, "fstr.int");
+            }
+            return builder_->CreateGlobalString("<value>", "fstr.stub");
+        }
+    };
+
+    if (node.parts.empty())
+        return builder_->CreateGlobalString("", "fstr.empty");
+
+    // Use single-allocation fstring_build when available and >1 part.
+    if (fstringBuildFn && node.parts.size() > 1) {
+        int count = (int)node.parts.size();
+        auto* i32Ty = llvm::Type::getInt32Ty(*context_);
+        auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+        auto* arrayTy = llvm::ArrayType::get(i8Ptr, count);
+        // Hoist alloca to entry block to avoid stack growth in loops.
+        auto* entryBlock = &builder_->GetInsertBlock()->getParent()->getEntryBlock();
+        llvm::IRBuilder<> entryBuilder(entryBlock, entryBlock->begin());
+        auto* partsAlloca = entryBuilder.CreateAlloca(arrayTy, nullptr, "fstr.parts");
+
+        for (int i = 0; i < count; i++) {
+            llvm::Value* partVal;
+            const auto& part = node.parts[i];
+            if (!part.isExpr) {
+                partVal = builder_->CreateGlobalString(part.literal, "fstr.lit");
             } else {
-                // Fallback: treat as int
-                if (val->getType()->isIntegerTy()) {
-                    val = builder_->CreateSExt(val, llvm::Type::getInt64Ty(*context_), "sext");
-                    if (intToStrFn)
-                        partStr = builder_->CreateCall(intToStrFn, {val}, "fstr.int");
+                llvm::Value* val = codegenExpr(*part.expr);
+                if (val->getType()->isIntegerTy(64)) {
+                    // Tag the integer: (val << 1) | 1, then inttoptr
+                    auto* shifted = builder_->CreateShl(val,
+                        llvm::ConstantInt::get(i64Ty, 1), "fstr.shl");
+                    auto* tagged = builder_->CreateOr(shifted,
+                        llvm::ConstantInt::get(i64Ty, 1), "fstr.tag");
+                    partVal = builder_->CreateIntToPtr(tagged, i8Ptr, "fstr.tagptr");
+                } else if (val->getType()->isDoubleTy()) {
+                    if (floatToStrFn)
+                        partVal = builder_->CreateCall(floatToStrFn, {val}, "fstr.float");
                     else
-                        partStr = builder_->CreateGlobalString("<value>", "fstr.stub");
+                        partVal = builder_->CreateGlobalString("<float>", "fstr.stub");
+                } else if (val->getType()->isIntegerTy(1)) {
+                    auto* ext = builder_->CreateZExt(val, i64Ty, "bext");
+                    if (boolToStrFn)
+                        partVal = builder_->CreateCall(boolToStrFn, {ext}, "fstr.bool");
+                    else
+                        partVal = builder_->CreateGlobalString("<bool>", "fstr.stub");
+                } else if (val->getType()->isIntegerTy()) {
+                    // Other int sizes — sign-extend to i64 then tag
+                    val = builder_->CreateSExt(val, i64Ty, "sext");
+                    auto* shifted = builder_->CreateShl(val,
+                        llvm::ConstantInt::get(i64Ty, 1), "fstr.shl");
+                    auto* tagged = builder_->CreateOr(shifted,
+                        llvm::ConstantInt::get(i64Ty, 1), "fstr.tag");
+                    partVal = builder_->CreateIntToPtr(tagged, i8Ptr, "fstr.tagptr");
+                } else if (val->getType()->isPointerTy()) {
+                    partVal = val;
                 } else {
-                    partStr = builder_->CreateGlobalString("<value>", "fstr.stub");
+                    partVal = builder_->CreateGlobalString("<value>", "fstr.stub");
                 }
             }
+            auto* gep = builder_->CreateConstInBoundsGEP2_32(arrayTy, partsAlloca, 0, i, "fstr.gep");
+            builder_->CreateStore(partVal, gep);
         }
 
-        if (concatFn && partStr) {
+        auto* arrPtr = builder_->CreateConstInBoundsGEP2_32(arrayTy, partsAlloca, 0, 0, "fstr.arr");
+        return builder_->CreateCall(fstringBuildFn,
+                                     {arrPtr, llvm::ConstantInt::get(i32Ty, count)},
+                                     "fstr.result");
+    }
+
+    // Fallback: single part or no fstring_build available.
+    llvm::Value* result = nullptr;
+    auto* concatFn = module_->getFunction("__visuall_str_concat");
+    for (const auto& part : node.parts) {
+        llvm::Value* partStr = convertPart(part);
+        if (!result) {
+            result = partStr;
+        } else if (concatFn && partStr) {
             result = builder_->CreateCall(concatFn, {result, partStr}, "fstr.cat");
         }
     }
+
+    if (!result)
+        result = builder_->CreateGlobalString("", "fstr.empty");
 
     return result;
 }
@@ -1303,8 +1409,73 @@ llvm::Value* Codegen::codegenIdentifier(const ast::Identifier& node) {
 
 // ── BinaryExpr ─────────────────────────────────────────────────────────────
 llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
+    // ── Short-circuit And/Or — evaluate RHS only if needed ─────────────
+    if (node.op == ast::BinOp::And) {
+        auto* fn = builder_->GetInsertBlock()->getParent();
+        auto* lhsBB   = builder_->GetInsertBlock();
+        auto* rhsBB   = llvm::BasicBlock::Create(*context_, "and.rhs", fn);
+        auto* mergeBB = llvm::BasicBlock::Create(*context_, "and.merge", fn);
+
+        llvm::Value* L = codegenExpr(*node.left);
+        llvm::Value* lhsBool = toBool(L);
+        lhsBB = builder_->GetInsertBlock(); // update after codegen
+        builder_->CreateCondBr(lhsBool, rhsBB, mergeBB);
+
+        builder_->SetInsertPoint(rhsBB);
+        llvm::Value* R = codegenExpr(*node.right);
+        llvm::Value* rhsBool = toBool(R);
+        auto* rhsEnd = builder_->GetInsertBlock();
+        builder_->CreateBr(mergeBB);
+
+        builder_->SetInsertPoint(mergeBB);
+        auto* phi = builder_->CreatePHI(llvm::Type::getInt1Ty(*context_), 2, "and");
+        phi->addIncoming(llvm::ConstantInt::getFalse(*context_), lhsBB);
+        phi->addIncoming(rhsBool, rhsEnd);
+        return phi;
+    }
+
+    if (node.op == ast::BinOp::Or) {
+        auto* fn = builder_->GetInsertBlock()->getParent();
+        auto* lhsBB   = builder_->GetInsertBlock();
+        auto* rhsBB   = llvm::BasicBlock::Create(*context_, "or.rhs", fn);
+        auto* mergeBB = llvm::BasicBlock::Create(*context_, "or.merge", fn);
+
+        llvm::Value* L = codegenExpr(*node.left);
+        llvm::Value* lhsBool = toBool(L);
+        lhsBB = builder_->GetInsertBlock();
+        builder_->CreateCondBr(lhsBool, mergeBB, rhsBB);
+
+        builder_->SetInsertPoint(rhsBB);
+        llvm::Value* R = codegenExpr(*node.right);
+        llvm::Value* rhsBool = toBool(R);
+        auto* rhsEnd = builder_->GetInsertBlock();
+        builder_->CreateBr(mergeBB);
+
+        builder_->SetInsertPoint(mergeBB);
+        auto* phi = builder_->CreatePHI(llvm::Type::getInt1Ty(*context_), 2, "or");
+        phi->addIncoming(llvm::ConstantInt::getTrue(*context_), lhsBB);
+        phi->addIncoming(rhsBool, rhsEnd);
+        return phi;
+    }
+
     llvm::Value* L = codegenExpr(*node.left);
     llvm::Value* R = codegenExpr(*node.right);
+
+    // ── Pointer-type comparisons (string content comparison) ───────────
+    if (L->getType()->isPointerTy() && R->getType()->isPointerTy()) {
+        if (node.op == ast::BinOp::Eq || node.op == ast::BinOp::Neq) {
+            auto* strEqFn = module_->getFunction("__visuall_str_eq");
+            if (strEqFn) {
+                auto* result = builder_->CreateCall(strEqFn, {L, R}, "str.eq");
+                auto* cmp = builder_->CreateICmpNE(result,
+                    llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), 0),
+                    "str.cmp");
+                if (node.op == ast::BinOp::Neq)
+                    cmp = builder_->CreateNot(cmp, "str.ne");
+                return cmp;
+            }
+        }
+    }
 
     bool isFloat = L->getType()->isDoubleTy() || R->getType()->isDoubleTy();
 
@@ -1337,19 +1508,8 @@ llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
             case ast::BinOp::Gt:  return builder_->CreateFCmpOGT(L, R, "fgt");
             case ast::BinOp::Lte: return builder_->CreateFCmpOLE(L, R, "fle");
             case ast::BinOp::Gte: return builder_->CreateFCmpOGE(L, R, "fge");
-            case ast::BinOp::And:
-            case ast::BinOp::Or:
-                break; // fall through to integer logic below after bool conversion
             default: break;
         }
-    }
-
-    // ── Logical And/Or — convert both sides to i1 first ────────────────
-    if (node.op == ast::BinOp::And) {
-        return builder_->CreateAnd(toBool(L), toBool(R), "and");
-    }
-    if (node.op == ast::BinOp::Or) {
-        return builder_->CreateOr(toBool(L), toBool(R), "or");
     }
 
     // ── Integer operations ─────────────────────────────────────────────
@@ -1487,10 +1647,13 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
                     args.push_back(codegenExpr(*a));
                 }
                 if (callee->getReturnType()->isVoidTy()) {
-                    builder_->CreateCall(callee, args);
+                    auto* ci = builder_->CreateCall(callee, args);
+                    ci->setCallingConv(callee->getCallingConv());
                     return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
                 }
-                return builder_->CreateCall(callee, args, "modcall");
+                auto* ci = builder_->CreateCall(callee, args, "modcall");
+                ci->setCallingConv(callee->getCallingConv());
+                return ci;
             }
         }
 
@@ -1519,10 +1682,13 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
         }
 
         if (callee->getReturnType()->isVoidTy()) {
-            builder_->CreateCall(callee, args);
+            auto* ci = builder_->CreateCall(callee, args);
+            ci->setCallingConv(callee->getCallingConv());
             return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
         }
-        return builder_->CreateCall(callee, args, "call");
+        auto* ci = builder_->CreateCall(callee, args, "call");
+        ci->setCallingConv(callee->getCallingConv());
+        return ci;
     }
 
     // Member call: object.method(args) — route through module or class method lookup.
@@ -1545,10 +1711,13 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
                         args.push_back(codegenExpr(*a));
                     }
                     if (callee->getReturnType()->isVoidTy()) {
-                        builder_->CreateCall(callee, args);
+                        auto* ci = builder_->CreateCall(callee, args);
+                        ci->setCallingConv(callee->getCallingConv());
                         return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
                     }
-                    return builder_->CreateCall(callee, args, "modcall");
+                    auto* ci = builder_->CreateCall(callee, args, "modcall");
+                    ci->setCallingConv(callee->getCallingConv());
+                    return ci;
                 }
             }
         }
@@ -1810,40 +1979,229 @@ llvm::Value* Codegen::codegenListExpr(const ast::ListExpr& node) {
     return list;
 }
 
-llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& /*node*/) {
-    // Stub: dicts require hash map runtime.
-    return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& node) {
+    auto* dictNewFn = module_->getFunction("__visuall_dict_new");
+    auto* dictSetFn = module_->getFunction("__visuall_dict_set");
+    if (!dictNewFn || !dictSetFn)
+        return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+
+    auto* dict = builder_->CreateCall(dictNewFn, {}, "dict.new");
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+
+    for (const auto& [keyExpr, valExpr] : node.entries) {
+        llvm::Value* key = codegenExpr(*keyExpr);
+        llvm::Value* val = codegenExpr(*valExpr);
+
+        // Key must be i8* (string)
+        if (!key->getType()->isPointerTy()) {
+            // Convert int key to string
+            auto* toStrFn = module_->getFunction("__visuall_int_to_str");
+            if (toStrFn)
+                key = builder_->CreateCall(toStrFn, {key}, "key.str");
+        }
+
+        // Value must be i64
+        if (val->getType()->isPointerTy()) {
+            val = builder_->CreatePtrToInt(val, i64Ty, "val.p2i");
+        } else if (val->getType()->isDoubleTy()) {
+            val = builder_->CreateBitCast(val, i64Ty, "val.f2i");
+        } else if (val->getType() != i64Ty) {
+            val = builder_->CreateIntCast(val, i64Ty, true, "val.widen");
+        }
+
+        builder_->CreateCall(dictSetFn, {dict, key, val});
+    }
+
+    return dict;
 }
 
-llvm::Value* Codegen::codegenTupleExpr(const ast::TupleExpr& /*node*/) {
-    // Stub: tuples → LLVM struct literals.
-    return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+llvm::Value* Codegen::codegenTupleExpr(const ast::TupleExpr& node) {
+    auto* tupleNewFn = module_->getFunction("__visuall_tuple_new");
+    auto* listPushFn = module_->getFunction("__visuall_list_push");
+    if (!tupleNewFn || !listPushFn)
+        return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* count = llvm::ConstantInt::get(i64Ty, node.elements.size());
+    auto* tup = builder_->CreateCall(tupleNewFn, {count}, "tuple.new");
+
+    for (const auto& elem : node.elements) {
+        llvm::Value* val = codegenExpr(*elem);
+        if (val->getType()->isPointerTy()) {
+            val = builder_->CreatePtrToInt(val, i64Ty, "tup.p2i");
+        } else if (val->getType()->isDoubleTy()) {
+            val = builder_->CreateBitCast(val, i64Ty, "tup.f2i");
+        } else if (val->getType() != i64Ty) {
+            val = builder_->CreateIntCast(val, i64Ty, true, "tup.widen");
+        }
+        builder_->CreateCall(listPushFn, {tup, val});
+    }
+
+    return tup;
 }
 
 // ── TupleUnpackStmt ────────────────────────────────────────────────────────
 void Codegen::codegenTupleUnpackStmt(const ast::TupleUnpackStmt& node) {
-    // Evaluate the RHS; for now, each target gets the same value (stub).
     llvm::Value* val = codegenExpr(*node.value);
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-    for (const auto& target : node.targets) {
-        auto* alloca = createEntryBlockAlloca(currentFunction_, target,
-                                               val->getType()->isIntegerTy() ? val->getType() : i64Ty);
-        builder_->CreateStore(val->getType()->isIntegerTy() ? val
-                              : llvm::ConstantInt::get(i64Ty, 0), alloca);
-        declareVar(target, alloca);
+    auto* listGetFn = module_->getFunction("__visuall_list_get");
+
+    for (size_t i = 0; i < node.targets.size(); i++) {
+        llvm::Value* elemVal;
+        if (val->getType()->isPointerTy() && listGetFn) {
+            auto* idx = llvm::ConstantInt::get(i64Ty, i);
+            elemVal = builder_->CreateCall(listGetFn, {val, idx}, "unpack.elem");
+        } else {
+            elemVal = val->getType()->isIntegerTy() ? val
+                      : llvm::ConstantInt::get(i64Ty, 0);
+        }
+        auto* alloca = createEntryBlockAlloca(currentFunction_, node.targets[i], i64Ty);
+        builder_->CreateStore(elemVal, alloca);
+        declareVar(node.targets[i], alloca);
     }
 }
 
 // ── SliceExpr ──────────────────────────────────────────────────────────────
-llvm::Value* Codegen::codegenSliceExpr(const ast::SliceExpr& /*node*/) {
-    // Slicing requires runtime list/string support; stub returns 0.
-    return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+llvm::Value* Codegen::codegenSliceExpr(const ast::SliceExpr& node) {
+    auto* sliceFn  = module_->getFunction("__visuall_list_slice");
+    auto* listLenFn = module_->getFunction("__visuall_list_len");
+    if (!sliceFn)
+        return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    llvm::Value* obj = codegenExpr(*node.object);
+
+    // Default start = 0
+    llvm::Value* start;
+    if (node.start)
+        start = codegenExpr(*node.start);
+    else
+        start = llvm::ConstantInt::get(i64Ty, 0);
+
+    // Default stop = len(obj)
+    llvm::Value* stop;
+    if (node.stop)
+        stop = codegenExpr(*node.stop);
+    else if (listLenFn && obj->getType()->isPointerTy())
+        stop = builder_->CreateCall(listLenFn, {obj}, "slice.len");
+    else
+        stop = llvm::ConstantInt::get(i64Ty, 0);
+
+    // Default step = 1
+    llvm::Value* step;
+    if (node.step)
+        step = codegenExpr(*node.step);
+    else
+        step = llvm::ConstantInt::get(i64Ty, 1);
+
+    // Ensure all are i64
+    if (start->getType() != i64Ty)
+        start = builder_->CreateIntCast(start, i64Ty, true, "slice.s");
+    if (stop->getType() != i64Ty)
+        stop = builder_->CreateIntCast(stop, i64Ty, true, "slice.e");
+    if (step->getType() != i64Ty)
+        step = builder_->CreateIntCast(step, i64Ty, true, "slice.st");
+
+    return builder_->CreateCall(sliceFn, {obj, start, stop, step}, "slice.result");
 }
 
 // ── ListComprehension ──────────────────────────────────────────────────────
-llvm::Value* Codegen::codegenListComprehension(const ast::ListComprehension& /*node*/) {
-    // List comprehensions require runtime list allocation; stub returns 0.
-    return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+llvm::Value* Codegen::codegenListComprehension(const ast::ListComprehension& node) {
+    auto* listNewFn  = module_->getFunction("__visuall_list_new");
+    auto* listPushFn = module_->getFunction("__visuall_list_push");
+    auto* listLenFn  = module_->getFunction("__visuall_list_len");
+    auto* listGetFn  = module_->getFunction("__visuall_list_get");
+    if (!listNewFn || !listPushFn || !listLenFn || !listGetFn)
+        return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* fn = currentFunction_;
+
+    // Create result list
+    auto* result = builder_->CreateCall(listNewFn, {}, "comp.list");
+
+    // Evaluate iterable
+    llvm::Value* iterVal = codegenExpr(*node.iterable);
+
+    // Get bound
+    llvm::Value* bound;
+    if (iterVal->getType()->isPointerTy()) {
+        bound = builder_->CreateCall(listLenFn, {iterVal}, "comp.len");
+    } else {
+        bound = iterVal;
+    }
+
+    // Hoist alloca to entry block
+    auto* idxAlloca = createEntryBlockAlloca(fn, "__comp_idx", i64Ty);
+    builder_->CreateStore(llvm::ConstantInt::get(i64Ty, 0), idxAlloca);
+
+    auto* varAlloca = createEntryBlockAlloca(fn, node.variable, i64Ty);
+
+    auto* condBB = llvm::BasicBlock::Create(*context_, "comp.cond", fn);
+    auto* bodyBB = llvm::BasicBlock::Create(*context_, "comp.body", fn);
+    auto* exitBB = llvm::BasicBlock::Create(*context_, "comp.end", fn);
+
+    builder_->CreateBr(condBB);
+
+    // Condition: idx < bound
+    builder_->SetInsertPoint(condBB);
+    auto* idx = builder_->CreateLoad(i64Ty, idxAlloca, "comp.i");
+    auto* cmp = builder_->CreateICmpSLT(idx, bound, "comp.cmp");
+    builder_->CreateCondBr(cmp, bodyBB, exitBB);
+
+    // Body
+    builder_->SetInsertPoint(bodyBB);
+    pushScope();
+
+    auto* curIdx = builder_->CreateLoad(i64Ty, idxAlloca, "comp.cur");
+    llvm::Value* elemVal;
+    if (iterVal->getType()->isPointerTy()) {
+        elemVal = builder_->CreateCall(listGetFn, {iterVal, curIdx}, "comp.elem");
+    } else {
+        elemVal = curIdx;
+    }
+    builder_->CreateStore(elemVal, varAlloca);
+    declareVar(node.variable, varAlloca);
+
+    // Optional filter condition
+    llvm::BasicBlock* pushBB = nullptr;
+    llvm::BasicBlock* skipBB = nullptr;
+    if (node.condition) {
+        pushBB = llvm::BasicBlock::Create(*context_, "comp.push", fn);
+        skipBB = llvm::BasicBlock::Create(*context_, "comp.skip", fn);
+        llvm::Value* condVal = codegenExpr(*node.condition);
+        llvm::Value* condBool = toBool(condVal);
+        builder_->CreateCondBr(condBool, pushBB, skipBB);
+        builder_->SetInsertPoint(pushBB);
+    }
+
+    // Evaluate body expression and push to result list
+    llvm::Value* bodyVal = codegenExpr(*node.body);
+    if (bodyVal->getType()->isPointerTy()) {
+        bodyVal = builder_->CreatePtrToInt(bodyVal, i64Ty, "comp.p2i");
+    } else if (bodyVal->getType()->isDoubleTy()) {
+        bodyVal = builder_->CreateBitCast(bodyVal, i64Ty, "comp.f2i");
+    } else if (bodyVal->getType() != i64Ty) {
+        bodyVal = builder_->CreateIntCast(bodyVal, i64Ty, true, "comp.widen");
+    }
+    builder_->CreateCall(listPushFn, {result, bodyVal});
+
+    if (node.condition) {
+        builder_->CreateBr(skipBB);
+        builder_->SetInsertPoint(skipBB);
+    }
+
+    popScope();
+
+    // Increment index
+    auto* next = builder_->CreateAdd(
+        builder_->CreateLoad(i64Ty, idxAlloca, "comp.i2"),
+        llvm::ConstantInt::get(i64Ty, 1), "comp.inc");
+    builder_->CreateStore(next, idxAlloca);
+    builder_->CreateBr(condBB);
+
+    builder_->SetInsertPoint(exitBB);
+    return result;
 }
 
 // ── DictComprehension ──────────────────────────────────────────────────────
@@ -2010,8 +2368,6 @@ llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallEx
         llvm::Value* arg = codegenExpr(*node.args[0]);
         if (arg->getType()->isDoubleTy()) return arg;
         if (arg->getType()->isIntegerTy(64)) {
-            auto* fn = module_->getFunction("__visuall_int_to_float");
-            if (fn) return builder_->CreateCall(fn, {arg}, "tofloat");
             return builder_->CreateSIToFP(arg, f64Ty, "tofloat");
         }
         if (arg->getType()->isIntegerTy(1)) {
@@ -2244,6 +2600,7 @@ void Codegen::emitMonomorphization(const ast::FuncDef* def,
     auto* fnTy = llvm::FunctionType::get(retTy, paramTys, false);
     auto* fn = llvm::Function::Create(fnTy, llvm::Function::ExternalLinkage,
                                        mangledName, module_.get());
+    fn->setCallingConv(llvm::CallingConv::Fast);
 
     // Name params.
     size_t idx = 0;

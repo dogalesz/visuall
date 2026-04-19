@@ -92,6 +92,7 @@ public:
     explicit TypeChecker(const std::string& filename);
 
     void check(const ast::Program& program);
+    const std::vector<TypeError>& errors() const { return errors_; };
 
 private:
     std::string filename_;
@@ -124,6 +125,7 @@ private:
     std::unordered_map<std::string, ClassInfo> classTable_;
     std::unordered_map<std::string, InterfaceInfo> interfaceTable_;
     std::unordered_map<std::string, std::vector<std::string>> funcTypeParams_;
+    std::vector<TypeError> errors_;
 
     // ── Scope helpers ──────────────────────────────────────────────────
     void enterScope();
@@ -144,7 +146,7 @@ private:
     void checkStmtList(const ast::StmtList& stmts);
     Type checkExpr(const ast::Expr& expr);
 
-    [[noreturn]] void error(const std::string& msg, int line, int col) const;
+    void error(const std::string& msg, int line, int col);
 };
 
 } // namespace visuall
