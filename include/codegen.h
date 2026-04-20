@@ -124,6 +124,8 @@ private:
 
     // ── Class context ───────────────────────────────────────────────────
     std::string currentClassName_;
+    // Maps className → ordered list of field names (discovered from init body)
+    std::unordered_map<std::string, std::vector<std::string>> classFields_;
 
     // ── Generic function store ──────────────────────────────────────────
     std::unordered_map<std::string, const ast::FuncDef*> genericFuncDefs_;

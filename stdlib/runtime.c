@@ -263,6 +263,28 @@ int64_t __visuall_dict_len(VisualDict* d) {
     return d ? d->length : 0;
 }
 
+int64_t __visuall_dict_contains(VisualDict* d, const char* key) {
+    return __visuall_dict_has(d, key);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Tag introspection & membership tests
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int64_t __visuall_get_tag(void* ptr) {
+    if (!ptr) return 0;
+    GCHeader* hdr = (GCHeader*)ptr - 1;
+    return (int64_t)hdr->type_tag;
+}
+
+int64_t __visuall_list_contains(VisualList* list, int64_t value) {
+    if (!list) return 0;
+    for (int64_t i = 0; i < list->length; i++) {
+        if (list->data[i] == value) return 1;
+    }
+    return 0;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * Conversion builtins: __visuall_to_str
  * ═══════════════════════════════════════════════════════════════════════════ */

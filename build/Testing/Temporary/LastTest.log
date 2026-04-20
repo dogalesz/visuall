@@ -1,10 +1,10 @@
-Start testing: Apr 19 20:08 Central Europe Daylight Time
+Start testing: Apr 20 19:30 Central Europe Daylight Time
 ----------------------------------------------------------
 1/1 Testing: visuall_tests
 1/1 Test: visuall_tests
 Command: "C:/Users/vir01/Documents/GitHub/visuall/build/visuall_tests.exe"
 Directory: C:/Users/vir01/Documents/GitHub/visuall/build
-"visuall_tests" start time: Apr 19 20:08 Central Europe Daylight Time
+"visuall_tests" start time: Apr 20 19:30 Central Europe Daylight Time
 Output:
 ----------------------------------------------------------
 === Visuall Compiler Test Suite ===
@@ -424,11 +424,11 @@ GC tests: 12/12 passed
 
 === Results: All tests passed! ===
 <end of output>
-Test time =   0.21 sec
+Test time =   0.11 sec
 ----------------------------------------------------------
 Test Passed.
-"visuall_tests" end time: Apr 19 20:08 Central Europe Daylight Time
+"visuall_tests" end time: Apr 20 19:30 Central Europe Daylight Time
 "visuall_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Apr 19 20:08 Central Europe Daylight Time
+End testing: Apr 20 19:30 Central Europe Daylight Time

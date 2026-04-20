@@ -96,6 +96,11 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_dict_get",  i64, {i8p, i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_has",  i64, {i8p, i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_len",  i64, {i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_dict_contains", i64, {i8p, i8p});
+
+    /* ── Tag introspection & membership ───────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_get_tag",        i64, {i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_list_contains",  i64, {i8p, i64});
 
     /* ── Tuple runtime ───────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_tuple_new", i8p, {i64});

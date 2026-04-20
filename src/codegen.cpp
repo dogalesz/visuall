@@ -627,6 +627,28 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
     std::string savedClass = currentClassName_;
     currentClassName_ = node.name;
 
+    // ── Discover fields from InitDef: scan for self.field = val ────────
+    auto& fields = classFields_[node.name];
+    for (const auto& s : node.body) {
+        if (auto* init = dynamic_cast<const ast::InitDef*>(s.get())) {
+            for (const auto& stmt : init->body) {
+                if (auto* assign = dynamic_cast<const ast::AssignStmt*>(stmt.get())) {
+                    if (auto* mem = dynamic_cast<const ast::MemberExpr*>(assign->target.get())) {
+                        if (auto* obj = dynamic_cast<const ast::Identifier*>(mem->object.get())) {
+                            if (obj->name == "self" || obj->name == "this") {
+                                // Register field if not already known
+                                bool found = false;
+                                for (const auto& f : fields)
+                                    if (f == mem->member) { found = true; break; }
+                                if (!found) fields.push_back(mem->member);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     for (const auto& s : node.body) {
         if (auto* m = dynamic_cast<const ast::FuncDef*>(s.get())) {
             // Emit class methods as ClassName_methodName
@@ -1162,9 +1184,40 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
 
     // ── Member assignment: obj.field = val (struct GEP + store) ────────
     if (auto* mem = dynamic_cast<const ast::MemberExpr*>(node.target.get())) {
-        // For now, member assignment on objects is not supported yet.
-        // Module members are constants and cannot be assigned.
-        (void)mem;
+        llvm::Value* obj = codegenExpr(*mem->object);
+        auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+
+        // Find the field index by searching known classes
+        int fieldIdx = -1;
+        for (const auto& [clsName, fields] : classFields_) {
+            for (size_t i = 0; i < fields.size(); i++) {
+                if (fields[i] == mem->member) {
+                    fieldIdx = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (fieldIdx >= 0) break;
+        }
+
+        if (fieldIdx >= 0 && obj->getType()->isPointerTy()) {
+            // Cast i8* to i64*, GEP to field offset, store
+            auto* i64PtrTy = llvm::PointerType::getUnqual(i64Ty);
+            auto* objTyped = builder_->CreateBitCast(obj, i64PtrTy, "obj.i64p");
+            auto* gep = builder_->CreateGEP(
+                i64Ty, objTyped,
+                llvm::ConstantInt::get(i64Ty, fieldIdx),
+                mem->member + ".ptr");
+
+            // Box value to i64
+            if (val->getType()->isPointerTy()) {
+                val = builder_->CreatePtrToInt(val, i64Ty, "val.p2i");
+            } else if (val->getType()->isDoubleTy()) {
+                val = builder_->CreateBitCast(val, i64Ty, "val.f2i");
+            } else if (val->getType() != i64Ty) {
+                val = builder_->CreateIntCast(val, i64Ty, true, "val.widen");
+            }
+            builder_->CreateStore(val, gep);
+        }
     }
 }
 
@@ -1477,6 +1530,78 @@ llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
         }
     }
 
+    // ── In / NotIn membership tests ────────────────────────────────────
+    if (node.op == ast::BinOp::In || node.op == ast::BinOp::NotIn) {
+        if (R->getType()->isPointerTy()) {
+            auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+            auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+            auto* getTagFn = module_->getFunction("__visuall_get_tag");
+            auto* listContainsFn = module_->getFunction("__visuall_list_contains");
+            auto* dictContainsFn = module_->getFunction("__visuall_dict_contains");
+
+            if (getTagFn && listContainsFn && dictContainsFn) {
+                auto* tag = builder_->CreateCall(getTagFn, {R}, "tag");
+                auto* isDict = builder_->CreateICmpEQ(tag,
+                    llvm::ConstantInt::get(i64Ty, 3), "isdict"); // VSL_TAG_DICT
+
+                auto* fn = builder_->GetInsertBlock()->getParent();
+                auto* dictBB  = llvm::BasicBlock::Create(*context_, "in.dict", fn);
+                auto* listBB  = llvm::BasicBlock::Create(*context_, "in.list", fn);
+                auto* mergeBB = llvm::BasicBlock::Create(*context_, "in.merge", fn);
+
+                builder_->CreateCondBr(isDict, dictBB, listBB);
+
+                // Dict path: contains(dict, key_as_string)
+                builder_->SetInsertPoint(dictBB);
+                llvm::Value* dictKey = L;
+                if (!dictKey->getType()->isPointerTy()) {
+                    auto* toStrFn = module_->getFunction("__visuall_int_to_str");
+                    if (toStrFn)
+                        dictKey = builder_->CreateCall(toStrFn, {dictKey}, "key.str");
+                    else
+                        dictKey = llvm::ConstantPointerNull::get(
+                            llvm::cast<llvm::PointerType>(i8Ptr));
+                }
+                auto* dictResult = builder_->CreateCall(dictContainsFn, {R, dictKey}, "dict.has");
+                auto* dictBool = builder_->CreateICmpNE(dictResult,
+                    llvm::ConstantInt::get(i64Ty, 0), "dict.bool");
+                auto* dictExitBB = builder_->GetInsertBlock();
+                builder_->CreateBr(mergeBB);
+
+                // List/tuple path: contains(list, value_as_i64)
+                builder_->SetInsertPoint(listBB);
+                llvm::Value* listVal = L;
+                if (listVal->getType()->isPointerTy()) {
+                    listVal = builder_->CreatePtrToInt(listVal, i64Ty, "val.p2i");
+                } else if (listVal->getType()->isDoubleTy()) {
+                    listVal = builder_->CreateBitCast(listVal, i64Ty, "val.f2i");
+                } else if (listVal->getType() != i64Ty) {
+                    listVal = builder_->CreateIntCast(listVal, i64Ty, true, "val.widen");
+                }
+                auto* listResult = builder_->CreateCall(listContainsFn, {R, listVal}, "list.has");
+                auto* listBool = builder_->CreateICmpNE(listResult,
+                    llvm::ConstantInt::get(i64Ty, 0), "list.bool");
+                auto* listExitBB = builder_->GetInsertBlock();
+                builder_->CreateBr(mergeBB);
+
+                // Merge
+                builder_->SetInsertPoint(mergeBB);
+                auto* phi = builder_->CreatePHI(llvm::Type::getInt1Ty(*context_), 2, "in.result");
+                phi->addIncoming(dictBool, dictExitBB);
+                phi->addIncoming(listBool, listExitBB);
+
+                if (node.op == ast::BinOp::NotIn)
+                    return builder_->CreateNot(phi, "notin.result");
+                return phi;
+            }
+        }
+        // Non-container or missing runtime functions: return false
+        llvm::Value* result = llvm::ConstantInt::get(*context_, llvm::APInt(1, 0));
+        if (node.op == ast::BinOp::NotIn)
+            result = builder_->CreateNot(result, "notin");
+        return result;
+    }
+
     bool isFloat = L->getType()->isDoubleTy() || R->getType()->isDoubleTy();
 
     // ── Float operations (with promotion) ──────────────────────────────
@@ -1527,10 +1652,6 @@ llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
         case ast::BinOp::Gt:     return builder_->CreateICmpSGT(L, R, "gt");
         case ast::BinOp::Lte:    return builder_->CreateICmpSLE(L, R, "le");
         case ast::BinOp::Gte:    return builder_->CreateICmpSGE(L, R, "ge");
-        case ast::BinOp::In:
-        case ast::BinOp::NotIn:
-            // Membership tests require runtime support; return false for now.
-            return llvm::ConstantInt::get(*context_, llvm::APInt(1, 0));
         case ast::BinOp::BitAnd: return builder_->CreateAnd(L, R, "bitand");
         case ast::BinOp::BitOr:  return builder_->CreateOr(L, R, "bitor");
         case ast::BinOp::BitXor: return builder_->CreateXor(L, R, "bitxor");
@@ -1743,7 +1864,32 @@ llvm::Value* Codegen::codegenMemberExpr(const ast::MemberExpr& node) {
             if (fn) return fn;
         }
     }
-    // Stub: requires struct layout for non-module member access.
+    // ── Non-module member access: obj.field via GEP ──────────────────
+    llvm::Value* obj = codegenExpr(*node.object);
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+
+    // Find the field index by searching known classes
+    int fieldIdx = -1;
+    for (const auto& [clsName, fields] : classFields_) {
+        for (size_t i = 0; i < fields.size(); i++) {
+            if (fields[i] == node.member) {
+                fieldIdx = static_cast<int>(i);
+                break;
+            }
+        }
+        if (fieldIdx >= 0) break;
+    }
+
+    if (fieldIdx >= 0 && obj->getType()->isPointerTy()) {
+        auto* i64PtrTy = llvm::PointerType::getUnqual(i64Ty);
+        auto* objTyped = builder_->CreateBitCast(obj, i64PtrTy, "obj.i64p");
+        auto* gep = builder_->CreateGEP(
+            i64Ty, objTyped,
+            llvm::ConstantInt::get(i64Ty, fieldIdx),
+            node.member + ".ptr");
+        return builder_->CreateLoad(i64Ty, gep, node.member + ".val");
+    }
+
     return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
 }
 
@@ -1753,10 +1899,16 @@ llvm::Value* Codegen::codegenIndexExpr(const ast::IndexExpr& node) {
     llvm::Value* idx = codegenExpr(*node.index);
 
     if (obj->getType()->isPointerTy()) {
-        // List or string indexing
-        auto* listGetFn = module_->getFunction("__visuall_list_get");
-        if (listGetFn) {
-            return builder_->CreateCall(listGetFn, {obj, idx}, "idx.get");
+        if (idx->getType()->isPointerTy()) {
+            // String key → dict access
+            auto* dictGetFn = module_->getFunction("__visuall_dict_get");
+            if (dictGetFn)
+                return builder_->CreateCall(dictGetFn, {obj, idx}, "dict.get");
+        } else {
+            // Integer index → list/tuple access
+            auto* listGetFn = module_->getFunction("__visuall_list_get");
+            if (listGetFn)
+                return builder_->CreateCall(listGetFn, {obj, idx}, "idx.get");
         }
     }
 
@@ -2294,14 +2446,46 @@ llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallEx
             throw CodegenError("len() requires 1 argument", node.line, node.column);
         llvm::Value* arg = codegenExpr(*node.args[0]);
         if (arg->getType()->isPointerTy()) {
-            // Could be string or list; try string length first
-            auto* fn = module_->getFunction("__visuall_str_len");
-            if (fn) return builder_->CreateCall(fn, {arg}, "len");
+            auto* getTagFn  = module_->getFunction("__visuall_get_tag");
+            auto* listLenFn = module_->getFunction("__visuall_list_len");
+            auto* dictLenFn = module_->getFunction("__visuall_dict_len");
+            auto* strLenFn  = module_->getFunction("__visuall_str_len");
+
+            if (getTagFn && listLenFn && dictLenFn && strLenFn) {
+                auto* tag = builder_->CreateCall(getTagFn, {arg}, "tag");
+                auto* curFn = builder_->GetInsertBlock()->getParent();
+
+                auto* listBB  = llvm::BasicBlock::Create(*context_, "len.list", curFn);
+                auto* dictBB  = llvm::BasicBlock::Create(*context_, "len.dict", curFn);
+                auto* strBB   = llvm::BasicBlock::Create(*context_, "len.str",  curFn);
+                auto* mergeBB = llvm::BasicBlock::Create(*context_, "len.merge", curFn);
+
+                // Switch on tag: LIST=2, TUPLE=6 → listLenFn, DICT=3 → dictLenFn, default → strLenFn
+                auto* sw = builder_->CreateSwitch(tag, strBB, 3);
+                sw->addCase(llvm::ConstantInt::get(i64Ty, 2), listBB);  // VSL_TAG_LIST
+                sw->addCase(llvm::ConstantInt::get(i64Ty, 6), listBB);  // VSL_TAG_TUPLE
+                sw->addCase(llvm::ConstantInt::get(i64Ty, 3), dictBB);  // VSL_TAG_DICT
+
+                builder_->SetInsertPoint(listBB);
+                auto* listLen = builder_->CreateCall(listLenFn, {arg}, "len.list");
+                builder_->CreateBr(mergeBB);
+
+                builder_->SetInsertPoint(dictBB);
+                auto* dictLen = builder_->CreateCall(dictLenFn, {arg}, "len.dict");
+                builder_->CreateBr(mergeBB);
+
+                builder_->SetInsertPoint(strBB);
+                auto* strLen = builder_->CreateCall(strLenFn, {arg}, "len.str");
+                builder_->CreateBr(mergeBB);
+
+                builder_->SetInsertPoint(mergeBB);
+                auto* phi = builder_->CreatePHI(i64Ty, 3, "len");
+                phi->addIncoming(listLen, listBB);
+                phi->addIncoming(dictLen, dictBB);
+                phi->addIncoming(strLen,  strBB);
+                return phi;
+            }
         }
-        // For list pointers (also i8*), use list_len
-        auto* fn = module_->getFunction("__visuall_list_len");
-        if (fn && arg->getType()->isPointerTy())
-            return builder_->CreateCall(fn, {arg}, "len");
         return llvm::ConstantInt::get(i64Ty, 0);
     }
 
