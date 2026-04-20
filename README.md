@@ -33,7 +33,46 @@ Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best
 
 Compute-bound integer work is within **1.1–1.2x** of C++. Recursion-heavy workloads are 4–5x due to GC stack scanning overhead.
 
-## Prerequisites
+## Download (Windows — Prebuilt Binary)
+
+The easiest way to use Visuall on Windows is to download the prebuilt release — no need to install LLVM or build from source.
+
+### 1. Download the release
+
+Go to the [Releases page](../../releases) and download the latest `visuallc-windows.zip`. Extract it anywhere (e.g. `C:\visuall\`). The zip contains:
+
+| File | Purpose |
+|------|---------|
+| `visuallc.exe` | The Visuall compiler |
+| `libgcc_s_seh-1.dll` | MinGW GCC runtime |
+| `libstdc++-6.dll` | MinGW C++ standard library |
+| `libwinpthread-1.dll` | MinGW POSIX threads |
+| `zlib1.dll` | zlib compression (LLVM dependency) |
+| `libzstd.dll` | Zstandard compression (LLVM dependency) |
+
+All DLLs must be in the **same folder** as `visuallc.exe`.
+
+### 2. Install a C linker (MinGW)
+
+`visuallc` emits object files and calls a linker to produce the final binary. You need **MinGW-W64** for this:
+
+1. Download [WinLibs MinGW-W64](https://winlibs.com/) (choose the UCRT or MSVCRT build, x86-64, with POSIX threads)
+2. Extract it (e.g. `C:\mingw64\`)
+3. Add `C:\mingw64\bin` to your system **PATH**
+
+Verify: open PowerShell and run `gcc --version`.
+
+### 3. Use the compiler
+
+```powershell
+cd C:\visuall
+.\visuallc.exe path\to\your_program.vsl -o output
+.\output.exe
+```
+
+---
+
+## Prerequisites (Building from Source)
 
 ### LLVM 17+
 
