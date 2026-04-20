@@ -16,21 +16,20 @@ Source (.vsl) → Lexer → Parser → Type Checker → LLVM IR → O2 Optimizat
 - **Error handling** — `try` / `catch` / `finally` / `throw`
 
 ## Performance
+Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best of 3 runs):
 
-Benchmarked against equivalent C++ compiled with `g++ -O2` (best of 3 runs):
-
-| Test | C++ (ms) | Visuall (ms) | Ratio |
-|------|----------|--------------|-------|
-| Primes (sieve to 100K ×3) | 7.6 | 8.5 | 1.1x |
-| Collatz (sequence ×5) | 16.7 | 18.3 | 1.1x |
-| Strings (200K f-string builds) | 28.0 | 30.8 | 1.1x |
-| GCD (Euclidean ×10M) | 46.5 | 55.5 | 1.2x |
-| Pi (Leibniz 50M terms) | 11.1 | 16.9 | 1.5x |
-| Nested loops (triple ×300) | 3.9 | 8.8 | 2.3x |
-| Distance (sqrt ×1M) | 2.1 | 7.3 | 3.5x |
-| Fibonacci (recursive fib(35)) | 1.4 | 6.3 | 4.5x |
-| TreeSum (recursive depth 22) | 2.7 | 14.1 | 5.2x |
-| Ackermann (3,12) | 175.7 | 924.7 | 5.3x |
+| Test | C++ (ms) | Visuall (ms) | Python (ms) | Visuall/C++ | Py/C++ |
+|------|----------|--------------|-------------|-------------|--------|
+| Primes (sieve to 100K ×3) | 7.6 | 7.9 | 196.8 | 1.0x | 25.9x |
+| Collatz (sequence ×5) | 16.7 | 17.5 | 630.6 | 1.0x | 37.8x |
+| Strings (200K f-string builds) | 28.0 | 30.3 | 29.6 | 1.1x | 1.1x |
+| GCD (Euclidean ×10M) | 46.5 | 55.1 | 434.0 | 1.2x | 9.3x |
+| Pi (Leibniz 50M terms) | 11.1 | 16.0 | 581.1 | 1.4x | 52.4x |
+| Nested loops (triple ×300) | 3.9 | 8.6 | 149.1 | 2.2x | 38.2x |
+| Distance (sqrt ×1M) | 2.1 | 7.0 | 81.1 | 3.3x | 38.6x |
+| Fibonacci (recursive fib(35)) | 1.4 | 5.1 | 374.7 | 3.6x | 267.6x |
+| TreeSum (recursive depth 22) | 2.7 | 13.4 | 552.6 | 5.0x | 204.7x |
+| Ackermann (3,12) | 175.7 | 888.8 | 17,990.7 | 5.1x | 102.4x |
 
 Compute-bound integer work is within **1.1–1.2x** of C++. Recursion-heavy workloads are 4–5x due to GC stack scanning overhead.
 
