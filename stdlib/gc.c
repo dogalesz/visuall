@@ -381,10 +381,11 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
         }
     }
 
-    hdr->type_tag = type_tag;
-    hdr->marked   = 0;
-    hdr->flags    = 0;
-    hdr->size     = (uint32_t)total;
+    hdr->type_tag   = type_tag;
+    hdr->marked     = 0;
+    hdr->flags      = 0;
+    hdr->size       = (uint32_t)total;
+    hdr->field_count = 0;
 
     /* Prepend to heap list. */
     hdr->next = heap_head;
@@ -408,6 +409,63 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
     if (haddr < heap_lo) heap_lo = haddr;
     uintptr_t htop  = haddr + total;
     if (htop  > heap_hi) heap_hi = htop;
+
+    return user;
+}
+
+void* __visuall_alloc_object(size_t payload, uint32_t field_count,
+                              const uint32_t* field_offsets) {
+    /* Total allocation: GCHeader + user payload + field_offsets array. */
+    size_t offsets_bytes = field_count * sizeof(uint32_t);
+    size_t total_payload = payload + offsets_bytes;
+
+    /* Trigger GC before allocating if needed. */
+    if (heap_bytes + sizeof(GCHeader) + total_payload > gc_threshold) {
+        __visuall_collect();
+    }
+
+    size_t total = sizeof(GCHeader) + total_payload;
+    GCHeader* hdr = (GCHeader*)malloc(total);
+    if (!hdr) {
+        __visuall_collect();
+        hdr = (GCHeader*)malloc(total);
+        if (!hdr) {
+            fprintf(stderr, "out of memory (GC alloc_object %zu bytes)\n", total_payload);
+            exit(1);
+        }
+    }
+
+    hdr->type_tag    = VSL_TAG_OBJECT;
+    hdr->marked      = 0;
+    hdr->flags       = 0;
+    hdr->size        = (uint32_t)total;
+    hdr->field_count = field_count;
+
+    hdr->next = heap_head;
+    heap_head = hdr;
+
+    heap_bytes += total;
+    if (heap_bytes > gc_stats.peak_heap_bytes) {
+        gc_stats.peak_heap_bytes = heap_bytes;
+    }
+    gc_stats.current_live_bytes = heap_bytes;
+
+    void* user = (char*)hdr + sizeof(GCHeader);
+    /* Zero user payload. */
+    memset(user, 0, payload);
+
+    /* Copy field offsets to tail of allocation. */
+    if (field_count > 0 && field_offsets) {
+        uint32_t* tail = (uint32_t*)((char*)user + payload);
+        memcpy(tail, field_offsets, offsets_bytes);
+    }
+
+    ptr_map_insert(user, hdr);
+
+    uintptr_t haddr = (uintptr_t)hdr;
+    if (haddr < heap_lo) heap_lo = haddr;
+    uintptr_t htop = haddr + total;
+    if (htop > heap_hi) heap_hi = htop;
 
     return user;
 }
@@ -497,15 +555,35 @@ void __visuall_mark(void* ptr) {
     }
 
     case VSL_TAG_OBJECT: {
-        /* Class instances: we don't know the layout at runtime, so
-           conservatively scan the entire payload for GC pointers. */
-        size_t payload = hdr->size - (uint32_t)sizeof(GCHeader);
-        size_t nwords = payload / sizeof(void*);
-        void** words = (void**)ptr;
-        for (size_t i = 0; i < nwords; i++) {
-            GCHeader* eh = find_gc_header(words[i]);
-            if (eh) {
-                __visuall_mark(words[i]);
+        /* Class instances allocated via __visuall_alloc_object store the
+           number of GC-traced fields in hdr->field_count and the byte
+           offsets of those fields at the tail of the allocation (after
+           the user payload).  Objects allocated via the legacy
+           __visuall_alloc path have field_count == 0 and are scanned
+           conservatively for backwards compatibility. */
+        if (hdr->field_count > 0) {
+            /* Precise tracing: only follow the registered field offsets. */
+            size_t offsets_bytes = hdr->field_count * sizeof(uint32_t);
+            size_t payload = hdr->size - (uint32_t)sizeof(GCHeader) - (uint32_t)offsets_bytes;
+            uint32_t* offsets = (uint32_t*)((char*)ptr + payload);
+            for (uint32_t i = 0; i < hdr->field_count; i++) {
+                int64_t raw = *(int64_t*)((char*)ptr + offsets[i]);
+                void* fptr = (void*)(uintptr_t)(uint64_t)raw;
+                if (fptr) {
+                    GCHeader* eh = find_gc_header(fptr);
+                    if (eh) __visuall_mark(fptr);
+                }
+            }
+        } else {
+            /* Conservative scan: treat every aligned word as a potential ptr. */
+            size_t payload = hdr->size - (uint32_t)sizeof(GCHeader);
+            size_t nwords = payload / sizeof(void*);
+            void** words = (void**)ptr;
+            for (size_t i = 0; i < nwords; i++) {
+                GCHeader* eh = find_gc_header(words[i]);
+                if (eh) {
+                    __visuall_mark(words[i]);
+                }
             }
         }
         break;
@@ -523,6 +601,10 @@ void __visuall_mark(void* ptr) {
         }
         break;
     }
+
+    case VSL_TAG_BOXED:
+        /* Box: a single int64_t payload — no child GC pointers to trace. */
+        break;
 
     default:
         break;

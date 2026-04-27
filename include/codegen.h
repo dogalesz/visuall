@@ -1,6 +1,7 @@
 #pragma once
 
-#include "ast.h"
+#include "diagnostic.h"
+#include "ast_visitor.h"
 #include "builtins.h"
 #include <string>
 #include <vector>
@@ -28,25 +29,19 @@ struct Module;
 
 // ════════════════════════════════════════════════════════════════════════════
 // CodegenError — thrown on all code-generation errors.
-// Format: "CodegenError: [message] at [line]:[col]"
+// Inherits Diagnostic for clang-style formatting.
 // ════════════════════════════════════════════════════════════════════════════
-class CodegenError : public std::runtime_error {
+class CodegenError : public Diagnostic {
 public:
-    CodegenError(const std::string& msg, int line, int col)
-        : std::runtime_error("CodegenError: " + msg + " at " +
-                             std::to_string(line) + ":" + std::to_string(col)),
-          line_(line), col_(col) {}
-    int line() const { return line_; }
-    int col()  const { return col_; }
-private:
-    int line_;
-    int col_;
+    CodegenError(const std::string& msg, int ln, int c,
+                 const std::string& file = "")
+        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, c) {}
 };
 
 // ════════════════════════════════════════════════════════════════════════════
 // Codegen — LLVM IR code generator for the Visuall AST.
 // ════════════════════════════════════════════════════════════════════════════
-class Codegen {
+class Codegen : public ASTVisitor {
 public:
     explicit Codegen(const std::string& moduleName);
 
@@ -90,6 +85,12 @@ public:
     /// Enable GC statistics reporting at shutdown.
     void setGCStats(bool enabled) { gcStatsEnabled_ = enabled; }
 
+    /// Inject the class-field map built by ClassAnalyzer.
+    /// Must be called before generate().
+    void setClassFields(
+        const std::unordered_map<std::string, std::vector<std::string>>& fields)
+    { classFields_ = fields; }
+
     /// Transfer ownership of the LLVM module out.
     std::unique_ptr<llvm::Module> takeModule() { return std::move(module_); }
 
@@ -124,7 +125,7 @@ private:
 
     // ── Class context ───────────────────────────────────────────────────
     std::string currentClassName_;
-    // Maps className → ordered list of field names (discovered from init body)
+    // Maps className → ordered list of field names (populated by ClassAnalyzer)
     std::unordered_map<std::string, std::vector<std::string>> classFields_;
 
     // ── Generic function store ──────────────────────────────────────────
@@ -136,6 +137,46 @@ private:
     // know to indirect through fn_ptr(env, args...).
     std::unordered_set<std::string> closureVars_;
 
+    // Track which variables hold string values so that IndexExpr can
+    // dispatch to __visuall_string_index instead of __visuall_list_get.
+    std::unordered_set<std::string> stringVars_;
+
+    // Returns true when the AST expression is known to produce a string.
+    bool isStringExpr(const ast::Expr& e) const;
+
+    // Track which variables are accessed through a GC-managed heap box
+    // (byReference captures).  The stack alloca for such a variable holds
+    // an i8* pointing to an 8-byte VSL_TAG_BOXED allocation; all reads and
+    // writes go through that pointer.
+    std::unordered_set<std::string> boxedVars_;
+
+    // Scan a flat statement list for any LambdaExpr whose captures are
+    // byReference, and populate boxedVars_ with those variable names.
+    void collectBoxedVarsFromStmts(const ast::StmtList& stmts);
+
+    // Allocate an 8-byte VSL_TAG_BOXED cell via __visuall_alloc and return
+    // the raw i8* pointer to its payload.
+    llvm::Value* allocBox();
+
+    // ── Native exception handling ────────────────────────────────────────
+    // Personality function name: platform-specific.
+    // Set to __gxx_personality_seh0 on Windows, __gxx_personality_v0 elsewhere.
+    std::string personalityFnName_;
+
+    // Stack of unwind landing-pad BasicBlocks.  Non-empty when inside a try
+    // body; the top is the landing pad that all invoke instructions target.
+    std::vector<llvm::BasicBlock*> landingpadStack_;
+
+    // Set the C++ personality function on fn (idempotent).
+    void setPersonalityFn(llvm::Function* fn);
+
+    // Emit a call or (when inside a try body) an invoke instruction.
+    // Handles calling-convention propagation and advances the insert point
+    // to the invoke-continuation block when an invoke is emitted.
+    llvm::Value* emitCallOrInvoke(llvm::Function* callee,
+                                   llvm::ArrayRef<llvm::Value*> args,
+                                   const std::string& name = "");
+
     // The closure struct type: { i8* env, i8* fn_ptr }
     llvm::StructType* getClosureType();
 
@@ -144,6 +185,58 @@ private:
 
     // Declare __visuall_alloc if not already declared.
     llvm::Function* getOrDeclareVisualAlloc();
+
+    // Declare __visuall_alloc_object if not already declared.
+    llvm::Function* getOrDeclareAllocObject();
+
+    // ── ASTVisitor overrides (statement nodes) ────────────────────────────
+    void visit(const ast::ExprStmt& n) override;
+    void visit(const ast::AssignStmt& n) override;
+    void visit(const ast::TupleUnpackStmt& n) override;
+    void visit(const ast::ReturnStmt& n) override;
+    void visit(const ast::BreakStmt& n) override;
+    void visit(const ast::ContinueStmt& n) override;
+    void visit(const ast::PassStmt& n) override;
+    void visit(const ast::FuncDef& n) override;
+    void visit(const ast::ClassDef& n) override;
+    void visit(const ast::InitDef& n) override;
+    void visit(const ast::IfStmt& n) override;
+    void visit(const ast::ForStmt& n) override;
+    void visit(const ast::WhileStmt& n) override;
+    void visit(const ast::ThrowStmt& n) override;
+    void visit(const ast::TryStmt& n) override;
+    void visit(const ast::ImportStmt& n) override;
+    void visit(const ast::FromImportStmt& n) override;
+    void visit(const ast::InterfaceDef& n) override;
+
+    // ── ASTVisitor overrides (expression nodes) ──────────────────────────
+    void visit(const ast::IntLiteral& n) override;
+    void visit(const ast::FloatLiteral& n) override;
+    void visit(const ast::StringLiteral& n) override;
+    void visit(const ast::FStringLiteral& n) override;
+    void visit(const ast::FStringExpr& n) override;
+    void visit(const ast::BoolLiteral& n) override;
+    void visit(const ast::NullLiteral& n) override;
+    void visit(const ast::Identifier& n) override;
+    void visit(const ast::ThisExpr& n) override;
+    void visit(const ast::SuperExpr& n) override;
+    void visit(const ast::BinaryExpr& n) override;
+    void visit(const ast::UnaryExpr& n) override;
+    void visit(const ast::CallExpr& n) override;
+    void visit(const ast::MemberExpr& n) override;
+    void visit(const ast::IndexExpr& n) override;
+    void visit(const ast::LambdaExpr& n) override;
+    void visit(const ast::ListExpr& n) override;
+    void visit(const ast::DictExpr& n) override;
+    void visit(const ast::TupleExpr& n) override;
+    void visit(const ast::TernaryExpr& n) override;
+    void visit(const ast::SliceExpr& n) override;
+    void visit(const ast::ListComprehension& n) override;
+    void visit(const ast::DictComprehension& n) override;
+    void visit(const ast::SpreadExpr& n) override;
+
+    // Result slot set by expression visit()s, read by codegenExpr().
+    llvm::Value* valueResult_ = nullptr;
 
     // ── Codegen methods for statements ──────────────────────────────────
     void codegenStmt(const ast::Stmt& stmt);

@@ -697,8 +697,8 @@ std::vector<Token> Lexer::tokenize() {
             advance();  // consume first character of the operator
             tokens.push_back(lexOperator(c, tokLine, tokCol));
         } catch (const IndentationError& e) {
-            errors_.emplace_back(e.what(), e.filename, e.line, e.column);
-            tokens.push_back(makeToken(TokenType::ERROR, "<indent-error>", e.line, e.column));
+            errors_.emplace_back(e.what(), e.filename, e.line, e.col);
+            tokens.push_back(makeToken(TokenType::ERROR, "<indent-error>", e.line, e.col));
             if (!firstError) firstError = std::current_exception();
 
             // Recover by skipping to end-of-line.
@@ -707,7 +707,7 @@ std::vector<Token> Lexer::tokenize() {
             }
         } catch (const LexError& e) {
             errors_.push_back(e);
-            tokens.push_back(makeToken(TokenType::ERROR, "<lex-error>", e.line, e.column));
+            tokens.push_back(makeToken(TokenType::ERROR, "<lex-error>", e.line, e.col));
             if (!firstError) firstError = std::current_exception();
 
             // Ensure forward progress after a lexer failure.

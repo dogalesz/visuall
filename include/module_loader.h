@@ -8,6 +8,7 @@
  * ════════════════════════════════════════════════════════════════════════════ */
 
 #include "ast.h"
+#include "diagnostic.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -29,11 +30,14 @@ namespace visuall {
 
 // ════════════════════════════════════════════════════════════════════════════
 // ImportError — thrown on module‐resolution failures.
+// Inherits Diagnostic for clang-style formatting.
 // ════════════════════════════════════════════════════════════════════════════
-class ImportError : public std::runtime_error {
+class ImportError : public Diagnostic {
 public:
-    ImportError(const std::string& msg)
-        : std::runtime_error("ImportError: " + msg) {}
+    explicit ImportError(const std::string& msg,
+                         const std::string& file = "",
+                         int ln = 0, int c = 0)
+        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, c) {}
 };
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -1,44 +1,32 @@
 #pragma once
 
+#include "diagnostic.h"
 #include "token.h"
 #include <string>
 #include <vector>
 #include <stack>
-#include <stdexcept>
 
 namespace visuall {
 
 // ════════════════════════════════════════════════════════════════════════════
 // LexError — thrown on all lexer-time errors.
-// Format: "LexError: [message] at [filename]:[line]:[col]"
+// Inherits Diagnostic for clang-style formatting.
 // ════════════════════════════════════════════════════════════════════════════
-class LexError : public std::runtime_error {
+class LexError : public Diagnostic {
 public:
-    std::string filename;
-    int line;
-    int column;
-
-    LexError(const std::string& msg, const std::string& file, int ln, int col)
-        : std::runtime_error("LexError: " + msg + " at " +
-                             file + ":" + std::to_string(ln) + ":" +
-                             std::to_string(col)),
-          filename(file), line(ln), column(col) {}
+    LexError(const std::string& msg, const std::string& file, int ln, int col,
+             const std::string& src_line = "")
+        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, col, src_line) {}
 };
 
 // ════════════════════════════════════════════════════════════════════════════
 // IndentationError — thrown when spaces are used for indentation.
 // ════════════════════════════════════════════════════════════════════════════
-class IndentationError : public std::runtime_error {
+class IndentationError : public LexError {
 public:
-    std::string filename;
-    int line;
-    int column;
-
-    IndentationError(const std::string& msg, const std::string& file, int ln, int col)
-        : std::runtime_error("IndentationError: " + msg + " at " +
-                             file + ":" + std::to_string(ln) + ":" +
-                             std::to_string(col)),
-          filename(file), line(ln), column(col) {}
+    IndentationError(const std::string& msg, const std::string& file, int ln, int col,
+                     const std::string& src_line = "")
+        : LexError(msg, file, ln, col, src_line) {}
 };
 
 // Backward-compatible alias so existing catch(LexerError) sites still compile.

@@ -1,28 +1,22 @@
 #pragma once
 
+#include "diagnostic.h"
 #include "ast.h"
 #include "token.h"
 #include <string>
 #include <vector>
-#include <stdexcept>
 
 namespace visuall {
 
 // ════════════════════════════════════════════════════════════════════════════
 // ParseError — thrown on all parse-time errors.
-// Format: "ParseError: [message] at [filename]:[line]:[col]"
+// Inherits Diagnostic for clang-style formatting.
 // ════════════════════════════════════════════════════════════════════════════
-class ParseError : public std::runtime_error {
+class ParseError : public Diagnostic {
 public:
-    std::string filename;
-    int line;
-    int column;
-
-    ParseError(const std::string& msg, const std::string& file, int ln, int col)
-        : std::runtime_error("ParseError: " + msg + " at " +
-                             file + ":" + std::to_string(ln) + ":" +
-                             std::to_string(col)),
-          filename(file), line(ln), column(col) {}
+    ParseError(const std::string& msg, const std::string& file, int ln, int col,
+               const std::string& src_line = "")
+        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, col, src_line) {}
 };
 
 class Parser {

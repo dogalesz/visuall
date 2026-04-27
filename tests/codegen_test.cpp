@@ -1,6 +1,4 @@
 // ════════════════════════════════════════════════════════════════════════════
-// tests/codegen_test.cpp — Test suite for the Visuall LLVM IR code generator.
-//
 // 10 test cases:
 //   1. Integer addition produces correct IR
 //   2. Float promotion in mixed arithmetic
@@ -12,6 +10,10 @@
 //   8. null emits ConstantPointerNull
 //   9. String literal produces global constant
 //  10. Optimization passes run without error
+//  11. str[i] positive index emits __visuall_string_index
+//  12. str[i] negative index emits __visuall_string_index
+//  13. str[i] on variable emits __visuall_string_index
+//  14. try/catch/finally generates invoke/landingpad/__cxa_throw IR
 // ════════════════════════════════════════════════════════════════════════════
 
 #include "lexer.h"
@@ -206,6 +208,70 @@ static void test_optimizationPasses() {
     expect(success, "10. Optimization passes run without error");
 }
 
+// ── 11. str[positive] dispatches to __visuall_string_index ────────────────
+static void test_stringIndexPositive() {
+    // Direct literal index: "hello"[1]
+    std::string ir = generateIR("c = \"hello\"[1]\n");
+    expect(!ir.empty(), "11a. str literal [positive] generates IR");
+    // 'str.char' is the CreateCall hint name for __visuall_string_index results.
+    expect(ir.find("str.char") != std::string::npos,
+           "11b. IR calls __visuall_string_index for literal[1]");
+    // 'idx.get' is the CreateCall hint name for __visuall_list_get results.
+    expect(ir.find("idx.get") == std::string::npos,
+           "11c. IR does NOT call list_get for string index");
+}
+
+// ── 12. str[negative] dispatches to __visuall_string_index ────────────────
+static void test_stringIndexNegative() {
+    std::string ir = generateIR("c = \"hello\"[-1]\n");
+    expect(!ir.empty(), "12a. str literal [negative] generates IR");
+    expect(ir.find("str.char") != std::string::npos,
+           "12b. IR calls __visuall_string_index for literal[-1]");
+}
+
+// ── 13. str variable[i] dispatches to __visuall_string_index ──────────────
+static void test_stringIndexVariable() {
+    std::string ir = generateIR("s = \"world\"\nc = s[0]\n");
+    expect(!ir.empty(), "13a. str variable [0] generates IR");
+    expect(ir.find("str.char") != std::string::npos,
+           "13b. IR calls __visuall_string_index for s[0]");
+    expect(ir.find("idx.get") == std::string::npos,
+           "13c. IR does NOT call list_get for string variable index");
+}
+
+// ── 14. try/catch/finally uses invoke/landingpad/__cxa_throw ─────────────
+static void test_tryCatchFinally() {
+    // A function that throws, called inside a try/catch/finally block.
+    // The codegen must:
+    //   • emit __cxa_throw in the throwing function
+    //   • use invoke (not call) for the call inside the try body
+    //   • emit a landingpad with catch-all clause
+    //   • emit __cxa_begin_catch to retrieve the exception object
+    //   • emit finally body on both normal and exception paths
+    const char* src =
+        "define raiser() -> void:\n"
+        "\tthrow \"oops\"\n"
+        "try:\n"
+        "\traiser()\n"
+        "catch Exception as e:\n"
+        "\tprint(e)\n"
+        "finally:\n"
+        "\tprint(\"fin\")\n";
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "14a. try/catch/finally generates IR");
+    expect(ir.find("invoke") != std::string::npos,
+           "14b. raiser() inside try emits invoke");
+    expect(ir.find("landingpad") != std::string::npos,
+           "14c. IR contains a landingpad block");
+    expect(ir.find("__cxa_throw") != std::string::npos,
+           "14d. throw emits __cxa_throw");
+    expect(ir.find("__cxa_begin_catch") != std::string::npos,
+           "14e. catch path calls __cxa_begin_catch");
+    // The finally block label should appear in the IR (normal path).
+    expect(ir.find("finally.norm") != std::string::npos,
+           "14f. IR contains finally.norm block");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Test runner
 // ════════════════════════════════════════════════════════════════════════════
@@ -223,7 +289,11 @@ int runCodegenTests() {
     test_nullLiteral();
     test_stringLiteral();
     test_optimizationPasses();
+    test_stringIndexPositive();
+    test_stringIndexNegative();
+    test_stringIndexVariable();
+    test_tryCatchFinally();
 
-    std::cout << "  " << (10 - failures) << "/10 codegen tests passed.\n";
+    std::cout << "  " << (14 - failures) << "/14 codegen tests passed.\n";
     return failures;
 }

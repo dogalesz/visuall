@@ -134,6 +134,7 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_filter", i8p, {i8p, i8p, i8p});
 
     /* ── string module ───────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_string_index",       i8p, {i8p, i64});
     getOrDeclareExtern(mod, ctx, "__visuall_string_upper",       i8p, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_string_lower",       i8p, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_string_strip",       i8p, {i8p});
@@ -210,11 +211,27 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     /* ── GC runtime ──────────────────────────────────────────────────── */
     auto* i8 = llvm::Type::getInt8Ty(ctx);
     getOrDeclareExtern(mod, ctx, "__visuall_alloc",             i8p,    {i64, i8});
+    getOrDeclareExtern(mod, ctx, "__visuall_alloc_object",      i8p,    {i64, i32, i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_register_global",   voidTy, {llvm::PointerType::getUnqual(i8p)});
     getOrDeclareExtern(mod, ctx, "__visuall_collect",           voidTy, {});
     getOrDeclareExtern(mod, ctx, "__visuall_gc_init",           voidTy, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_gc_shutdown",       voidTy, {});
     getOrDeclareExtern(mod, ctx, "__visuall_gc_enable_stats",   voidTy, {i32});
-}
+    /* ── Exception support ────────────────────────────────────────────── */
+    // __visuall_exception_new: allocate a VisualException via __cxa_allocate_exception
+    getOrDeclareExtern(mod, ctx, "__visuall_exception_new",          i8p,    {i8p});
+    // __visuall_exception_msg: extract the message char* from an exception object
+    getOrDeclareExtern(mod, ctx, "__visuall_exception_msg",          i8p,    {i8p});
+    // __visuall_get_exception_typeinfo: returns &typeid(VisualException)
+    getOrDeclareExtern(mod, ctx, "__visuall_get_exception_typeinfo", i8p,    {});
+
+    // C++ ABI exception functions (provided by libstdc++)
+    {
+        auto* cxaThrow = getOrDeclareExtern(mod, ctx, "__cxa_throw",
+                                            voidTy, {i8p, i8p, i8p});
+        cxaThrow->addFnAttr(llvm::Attribute::NoReturn);
+    }
+    getOrDeclareExtern(mod, ctx, "__cxa_begin_catch", i8p,    {i8p});
+    getOrDeclareExtern(mod, ctx, "__cxa_end_catch",   voidTy, {});}
 
 } // namespace visuall

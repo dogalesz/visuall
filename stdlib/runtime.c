@@ -696,6 +696,27 @@ VisualList* __visuall_filter(void* env, void* fn_ptr, VisualList* src) {
  * Module: string
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+/* Return a single-character GC-managed string for s[i].
+   Negative indices wrap: s[-1] is the last character.
+   Out-of-range indices print an error and call exit(1). */
+char* __visuall_string_index(const char* s, int64_t i) {
+    if (!s) {
+        fprintf(stderr, "IndexError: string index on null string\n");
+        exit(1);
+    }
+    int64_t len = (int64_t)strlen(s);
+    if (i < 0) i = len + i;   /* normalise negative index */
+    if (i < 0 || i >= len) {
+        fprintf(stderr, "IndexError: string index %lld out of range [0, %lld)\n",
+                (long long)(i < 0 ? i - len : i), (long long)len);
+        exit(1);
+    }
+    char* out = (char*)__visuall_alloc(2, VSL_TAG_STRING);
+    out[0] = s[i];
+    out[1] = '\0';
+    return out;
+}
+
 char* __visuall_string_upper(const char* s) {
     if (!s) return vsl_strdup("");
     size_t len = strlen(s);

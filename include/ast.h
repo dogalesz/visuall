@@ -9,6 +9,10 @@
 #include <vector>
 
 namespace visuall {
+
+// Forward-declare the visitor so ast.h does not need to include ast_visitor.h.
+class ASTVisitor;
+
 namespace ast {
 
 // ── Forward declarations ───────────────────────────────────────────────────
@@ -29,10 +33,12 @@ struct Node {
 
 struct Expr : Node {
     virtual ~Expr() = default;
+    virtual void accept(ASTVisitor& v) const = 0;
 };
 
 struct Stmt : Node {
     virtual ~Stmt() = default;
+    virtual void accept(ASTVisitor& v) const = 0;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -42,21 +48,25 @@ struct Stmt : Node {
 struct IntLiteral : Expr {
     int64_t value;
     explicit IntLiteral(int64_t v) : value(v) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct FloatLiteral : Expr {
     double value;
     explicit FloatLiteral(double v) : value(v) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct StringLiteral : Expr {
     std::string value;
     explicit StringLiteral(std::string v) : value(std::move(v)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct FStringLiteral : Expr {
     std::string raw; // the full f"..." text for later interpolation lowering
     explicit FStringLiteral(std::string r) : raw(std::move(r)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── F-String with parsed parts (full interpolation) ────────────────────────
@@ -69,23 +79,32 @@ struct FStringPart {
 struct FStringExpr : Expr {
     std::vector<FStringPart> parts;
     explicit FStringExpr(std::vector<FStringPart> p) : parts(std::move(p)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct BoolLiteral : Expr {
     bool value;
     explicit BoolLiteral(bool v) : value(v) {}
+    void accept(ASTVisitor& v) const override;
 };
 
-struct NullLiteral : Expr {};
+struct NullLiteral : Expr {
+    void accept(ASTVisitor& v) const override;
+};
 
 struct Identifier : Expr {
     std::string name;
     explicit Identifier(std::string n) : name(std::move(n)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
-struct ThisExpr : Expr {};
+struct ThisExpr : Expr {
+    void accept(ASTVisitor& v) const override;
+};
 
-struct SuperExpr : Expr {};
+struct SuperExpr : Expr {
+    void accept(ASTVisitor& v) const override;
+};
 
 // ── Binary / Unary ─────────────────────────────────────────────────────────
 enum class BinOp {
@@ -101,6 +120,7 @@ struct BinaryExpr : Expr {
     ExprPtr right;
     BinaryExpr(BinOp o, ExprPtr l, ExprPtr r)
         : op(o), left(std::move(l)), right(std::move(r)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 enum class UnaryOp { Neg, Not, BitNot };
@@ -110,6 +130,7 @@ struct UnaryExpr : Expr {
     ExprPtr operand;
     UnaryExpr(UnaryOp o, ExprPtr e)
         : op(o), operand(std::move(e)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Compound expressions ───────────────────────────────────────────────────
@@ -119,6 +140,7 @@ struct CallExpr : Expr {
     std::vector<std::string> typeArgs; // for generic calls: identity<int>(42)
     CallExpr(ExprPtr c, ExprList a)
         : callee(std::move(c)), args(std::move(a)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct MemberExpr : Expr {
@@ -126,6 +148,7 @@ struct MemberExpr : Expr {
     std::string member;
     MemberExpr(ExprPtr o, std::string m)
         : object(std::move(o)), member(std::move(m)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct IndexExpr : Expr {
@@ -133,6 +156,7 @@ struct IndexExpr : Expr {
     ExprPtr index;
     IndexExpr(ExprPtr o, ExprPtr i)
         : object(std::move(o)), index(std::move(i)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Capture info for closures ──────────────────────────────────────────────
@@ -150,22 +174,26 @@ struct LambdaExpr : Expr {
 
     LambdaExpr(std::vector<std::string> p, ExprPtr b)
         : params(std::move(p)), body(std::move(b)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct ListExpr : Expr {
     ExprList elements;
     explicit ListExpr(ExprList e) : elements(std::move(e)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct DictExpr : Expr {
     std::vector<std::pair<ExprPtr, ExprPtr>> entries;
     explicit DictExpr(std::vector<std::pair<ExprPtr, ExprPtr>> e)
         : entries(std::move(e)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct TupleExpr : Expr {
     ExprList elements;
     explicit TupleExpr(ExprList e) : elements(std::move(e)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct TernaryExpr : Expr {
@@ -175,6 +203,7 @@ struct TernaryExpr : Expr {
     TernaryExpr(ExprPtr cond, ExprPtr then_, ExprPtr else_)
         : condition(std::move(cond)), thenExpr(std::move(then_)),
           elseExpr(std::move(else_)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -184,6 +213,7 @@ struct TernaryExpr : Expr {
 struct ExprStmt : Stmt {
     ExprPtr expr;
     explicit ExprStmt(ExprPtr e) : expr(std::move(e)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct AssignStmt : Stmt {
@@ -191,6 +221,7 @@ struct AssignStmt : Stmt {
     ExprPtr value;
     AssignStmt(ExprPtr t, ExprPtr v)
         : target(std::move(t)), value(std::move(v)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Tuple unpacking / destructuring ────────────────────────────────────────
@@ -199,16 +230,24 @@ struct TupleUnpackStmt : Stmt {
     ExprPtr                  value;
     TupleUnpackStmt(std::vector<std::string> t, ExprPtr v)
         : targets(std::move(t)), value(std::move(v)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct ReturnStmt : Stmt {
     ExprPtr value; // may be nullptr
     explicit ReturnStmt(ExprPtr v = nullptr) : value(std::move(v)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
-struct BreakStmt : Stmt {};
-struct ContinueStmt : Stmt {};
-struct PassStmt : Stmt {}; // the ... no-op
+struct BreakStmt : Stmt {
+    void accept(ASTVisitor& v) const override;
+};
+struct ContinueStmt : Stmt {
+    void accept(ASTVisitor& v) const override;
+};
+struct PassStmt : Stmt {
+    void accept(ASTVisitor& v) const override;
+}; // the ... no-op
 
 // ── Slice expression ───────────────────────────────────────────────────────
 struct SliceExpr : Expr {
@@ -219,6 +258,7 @@ struct SliceExpr : Expr {
     SliceExpr(ExprPtr obj, ExprPtr s, ExprPtr e, ExprPtr st)
         : object(std::move(obj)), start(std::move(s)),
           stop(std::move(e)), step(std::move(st)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── List comprehension: [expr for var in iter if cond] ─────────────────────
@@ -230,6 +270,7 @@ struct ListComprehension : Expr {
     ListComprehension(ExprPtr b, std::string v, ExprPtr iter, ExprPtr cond)
         : body(std::move(b)), variable(std::move(v)),
           iterable(std::move(iter)), condition(std::move(cond)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Dict comprehension: {k: v for var in iter if cond} ─────────────────────
@@ -242,12 +283,14 @@ struct DictComprehension : Expr {
     DictComprehension(ExprPtr k, ExprPtr v, std::string var, ExprPtr iter, ExprPtr cond)
         : key(std::move(k)), value(std::move(v)), variable(std::move(var)),
           iterable(std::move(iter)), condition(std::move(cond)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Spread/unpack expression: *expr ────────────────────────────────────────
 struct SpreadExpr : Expr {
     ExprPtr operand;
     explicit SpreadExpr(ExprPtr e) : operand(std::move(e)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Parameters ─────────────────────────────────────────────────────────────
@@ -269,6 +312,7 @@ struct FuncDef : Stmt {
     FuncDef(std::string n, std::vector<Param> p, std::string ret, StmtList b)
         : name(std::move(n)), params(std::move(p)),
           returnType(std::move(ret)), body(std::move(b)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Class definition ───────────────────────────────────────────────────────
@@ -280,6 +324,7 @@ struct ClassDef : Stmt {
     StmtList    body; // methods, init, etc.
     ClassDef(std::string n, StmtList b)
         : name(std::move(n)), body(std::move(b)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Init (constructor) ─────────────────────────────────────────────────────
@@ -288,6 +333,7 @@ struct InitDef : Stmt {
     StmtList           body;
     InitDef(std::vector<Param> p, StmtList b)
         : params(std::move(p)), body(std::move(b)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Control flow ───────────────────────────────────────────────────────────
@@ -301,6 +347,7 @@ struct IfStmt : Stmt {
            StmtList else_)
         : condition(std::move(cond)), thenBranch(std::move(then_)),
           elsifBranches(std::move(elsifs)), elseBranch(std::move(else_)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct ForStmt : Stmt {
@@ -310,6 +357,7 @@ struct ForStmt : Stmt {
     ForStmt(std::string var, ExprPtr iter, StmtList b)
         : variable(std::move(var)), iterable(std::move(iter)),
           body(std::move(b)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct WhileStmt : Stmt {
@@ -317,12 +365,14 @@ struct WhileStmt : Stmt {
     StmtList body;
     WhileStmt(ExprPtr cond, StmtList b)
         : condition(std::move(cond)), body(std::move(b)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Error handling ─────────────────────────────────────────────────────────
 struct ThrowStmt : Stmt {
     ExprPtr expr;
     explicit ThrowStmt(ExprPtr e) : expr(std::move(e)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct CatchClause {
@@ -338,12 +388,14 @@ struct TryStmt : Stmt {
     TryStmt(StmtList try_, std::vector<CatchClause> catches, StmtList finally_)
         : tryBody(std::move(try_)), catchClauses(std::move(catches)),
           finallyBody(std::move(finally_)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Imports ────────────────────────────────────────────────────────────────
 struct ImportStmt : Stmt {
     std::string module;
     explicit ImportStmt(std::string m) : module(std::move(m)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 struct FromImportStmt : Stmt {
@@ -351,6 +403,7 @@ struct FromImportStmt : Stmt {
     std::vector<std::string> names;
     FromImportStmt(std::string m, std::vector<std::string> n)
         : module(std::move(m)), names(std::move(n)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Interface definition ───────────────────────────────────────────────────
@@ -365,6 +418,7 @@ struct InterfaceDef : Stmt {
     std::vector<MethodSignature> methods;
     InterfaceDef(std::string n, std::vector<MethodSignature> m)
         : name(std::move(n)), methods(std::move(m)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Program (top-level) ────────────────────────────────────────────────────

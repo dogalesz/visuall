@@ -28,6 +28,7 @@ extern "C" {
 #define VSL_TAG_CLOSURE  4
 #define VSL_TAG_OBJECT   5
 #define VSL_TAG_TUPLE    6
+#define VSL_TAG_BOXED    7   /* single-element heap box for byReference captures */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * GCHeader — prefixed to every GC-managed allocation
@@ -37,6 +38,7 @@ typedef struct GCHeader {
     uint8_t         marked;     /* 1 = reachable, 0 = garbage             */
     uint16_t        flags;      /* reserved for future use                */
     uint32_t        size;       /* total allocation size (header + body)  */
+    uint32_t        field_count;/* VSL_TAG_OBJECT: # GC-traced fields     */
     struct GCHeader* next;      /* intrusive linked list of all objects   */
 } GCHeader;
 
@@ -59,6 +61,13 @@ typedef struct {
    header (the user-visible pointer).  Triggers collection if threshold
    exceeded. */
 void* __visuall_alloc(size_t size, uint8_t type_tag);
+
+/* Allocate a class instance of `payload` bytes with `field_count` GC-traced
+   fields whose byte offsets (from the user pointer) are in `field_offsets`.
+   The offsets array is copied to the tail of the allocation (after payload).
+   Returns the user-visible pointer (past the GCHeader). */
+void* __visuall_alloc_object(size_t payload, uint32_t field_count,
+                              const uint32_t* field_offsets);
 
 /* Register a global variable as a GC root.  `ptr` must point to a
    location that holds a GC-managed pointer (or NULL). */

@@ -23,6 +23,7 @@ namespace visuall {
 class AstPrinter {
 public:
     static void print(const ast::Program& program, std::ostream& os);
+    static const char* binOpStr(ast::BinOp op);
 
 private:
     static void printStmt(const ast::Stmt& stmt, std::ostream& os,
@@ -36,7 +37,6 @@ private:
     // Try to produce a compact one-line representation of an expression.
     // Returns "" if the expression is too complex for inline display.
     static std::string compactExpr(const ast::Expr& expr);
-    static const char* binOpStr(ast::BinOp op);
 };
 
 } // namespace visuall

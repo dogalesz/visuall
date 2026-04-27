@@ -267,6 +267,106 @@ static void test_functionTypeAnnotation() {
            "10c. Closure struct type used in apply signature");
 }
 
+// ── 11. byReference capture: outer scope mutation observed by lambda ────────
+// When a variable is assigned more than once in a scope and a lambda captures
+// it, CaptureAnalyzer marks it byReference.  Codegen must:
+//   • Heap-allocate a VSL_TAG_BOXED cell for the variable.
+//   • Store/load through the box in the outer scope.
+//   • Store the box pointer (not the value) in the closure environment.
+//   • Inside the lambda, load the box pointer from env and double-dereference.
+//
+// Source:  x = 10; f = n -> n + x; x = 20
+//   After the second assignment x = 20 the box holds 20.
+//   Calling f(0) must return 20, not the stale snapshot 10.
+static void test_byRefCaptureOuterMutation() {
+    // ── Capture analysis: x is reassigned → byReference ────────────────
+    std::string src =
+        "x = 10\n"
+        "f = n -> n + x\n"
+        "x = 20\n";
+    auto caps = getCaptures(src);
+    expect(!caps.empty(), "11a. Capture detected for reassigned variable");
+    if (!caps.empty()) {
+        expect(caps[0].name == "x", "11b. Captured variable is 'x'");
+        expect(caps[0].byReference == true,
+               "11c. Capture is byReference because x is reassigned");
+    }
+
+    // ── IR shape ────────────────────────────────────────────────────────
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "11d. byReference lambda generates IR");
+
+    // A VSL_TAG_BOXED=7 box must be allocated for x.
+    // The call is: __visuall_alloc(i64 8, i8 7)
+    expect(ir.find("@__visuall_alloc") != std::string::npos ||
+           ir.find("__visuall_alloc") != std::string::npos,
+           "11e. IR contains __visuall_alloc for box allocation");
+
+    // The box stores the initial value 10 and then 20.
+    expect(ir.find("store i64 10") != std::string::npos ||
+           ir.find("i64 10") != std::string::npos,
+           "11f. IR contains initial box write of 10");
+    expect(ir.find("store i64 20") != std::string::npos ||
+           ir.find("i64 20") != std::string::npos,
+           "11g. IR contains subsequent box write of 20");
+
+    // The environment must store the box pointer (not the plain value), so
+    // there should be an inttoptr or ptrtoint converting between i64 and i8*.
+    expect(ir.find("inttoptr") != std::string::npos ||
+           ir.find("ptrtoint") != std::string::npos,
+           "11h. IR uses inttoptr/ptrtoint for box pointer in env");
+}
+
+// ── 12. byReference boxing provides lifetime safety ────────────────────────
+// A byReference-captured variable lives in a GC-managed heap box, not on the
+// stack.  Even if the closure is called after the defining scope's activation
+// record is gone, the box remains valid because it is GC-tracked.
+//
+// This test verifies the IR structure that provides that guarantee:
+//   • The alloca for the captured variable holds an i8* (box pointer), NOT
+//     the raw value — so no raw stack pointer is stored in the closure env.
+//   • The env slot carries the box pointer as an i64 (ptrToInt), ensuring
+//     the closure remains callable regardless of stack lifetime.
+//
+// Source:  counter = 1; inc = _ -> counter + 1; counter = 2
+//   'counter' is assigned twice → byReference.
+static void test_byRefLifetimeSafety() {
+    std::string src =
+        "counter = 1\n"
+        "inc = _ -> counter + 1\n"
+        "counter = 2\n";
+    auto caps = getCaptures(src);
+    expect(!caps.empty(), "12a. 'counter' capture detected");
+    if (!caps.empty()) {
+        expect(caps[0].byReference == true,
+               "12b. 'counter' is byReference (assigned twice)");
+    }
+
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "12c. byReference lifetime-safe lambda generates IR");
+
+    // The box must be GC-allocated with VSL_TAG_BOXED (tag=7, size=8).
+    // We expect exactly one alloc call per boxed variable.
+    {
+        size_t count = 0;
+        size_t pos = 0;
+        while ((pos = ir.find("@__visuall_alloc", pos)) != std::string::npos) {
+            count++;
+            pos += 16;
+        }
+        expect(count >= 2, "12d. At least two __visuall_alloc calls (box + env)");
+    }
+
+    // The closure env must store the box ptr (i64 from ptrtoint), not a
+    // value directly read from an i64 alloca.
+    expect(ir.find("ptrtoint") != std::string::npos,
+           "12e. IR uses ptrtoint to store box pointer in closure env");
+
+    // Inside the lambda, the box ptr is reconstructed via inttoptr.
+    expect(ir.find("inttoptr") != std::string::npos,
+           "12f. IR uses inttoptr to reconstruct box pointer inside lambda");
+}
+
 int runClosureTests() {
     closureFailures = 0;
 
@@ -280,6 +380,8 @@ int runClosureTests() {
     test_mutableCapture();
     test_independentCopies();
     test_functionTypeAnnotation();
+    test_byRefCaptureOuterMutation();
+    test_byRefLifetimeSafety();
 
     return closureFailures;
 }

@@ -1,10 +1,10 @@
-Start testing: Apr 20 19:30 Central Europe Daylight Time
+Start testing: Apr 25 20:07 Central Europe Daylight Time
 ----------------------------------------------------------
 1/1 Testing: visuall_tests
 1/1 Test: visuall_tests
 Command: "C:/Users/vir01/Documents/GitHub/visuall/build/visuall_tests.exe"
 Directory: C:/Users/vir01/Documents/GitHub/visuall/build
-"visuall_tests" start time: Apr 20 19:30 Central Europe Daylight Time
+"visuall_tests" start time: Apr 25 20:07 Central Europe Daylight Time
 Output:
 ----------------------------------------------------------
 === Visuall Compiler Test Suite ===
@@ -408,27 +408,55 @@ Output:
   PASS: size includes header
   PASS: reachable string survives GC
   PASS: 1 collection ran
-  PASS: unreachable object collected (live bytes decreased)
+  FAIL: unreachable object collected (live bytes decreased)
   PASS: circular references collected
   PASS: list element 0 survived GC
   PASS: list element 1 survived GC
   PASS: closure env survived GC (reachable through closure)
-  PASS: dict allocation was collected
+  FAIL: dict allocation was collected
   PASS: auto-collection triggered when threshold exceeded
   PASS: threshold grows after collection (no premature re-collect)
   PASS: gc_stats reports 3 collections
   PASS: stress: garbage was collected
   PASS: stress: collections ran
   PASS: stress: kept object intact
-GC tests: 12/12 passed
+  PASS: 13a. alloc_object returns non-null
+  PASS: 13b. type_tag == VSL_TAG_OBJECT
+  PASS: 13c. field_count stored in header
+  PASS: 13d. list pointer recovered from field
+  PASS: 13e. list survives GC (length == 1)
+  PASS: 13f. list value intact after GC
+GC tests: 11/13 passed
 
-=== Results: All tests passed! ===
+--- Class Analyzer Tests ---
+  PASS: 1a. Two fields found from init
+  PASS: 1b. First field is 'x'
+  PASS: 1c. Second field is 'y'
+  PASS: 2a. Two fields found (init + method)
+  PASS: 2b. Field 'name' collected from init
+  PASS: 2c. Field 'sound' collected from method
+  PASS: 3a. Two fields found (unconditional + conditional)
+  PASS: 3b. Field 'species' collected
+  PASS: 3c. Field 'sound' from conditional branch collected
+  PASS: 4a. Field 'total' collected
+  PASS: 4b. Field 'last' inside for-loop body collected
+  PASS: 5. Duplicate field 'x' appears exactly once
+  PASS: 6a. Three total fields in Derived
+  PASS: 6b. Inherited 'x' is first
+  PASS: 6c. Inherited 'y' is second
+  PASS: 6d. Own 'z' is last
+  PASS: 7a. Three total fields in C
+  PASS: 7b. 'a' from A is first
+  PASS: 7c. 'b' from B is second
+  PASS: 7d. 'c' from C is last
+
+=== Results: 2 test(s) FAILED ===
 <end of output>
-Test time =   0.11 sec
+Test time =   0.10 sec
 ----------------------------------------------------------
-Test Passed.
-"visuall_tests" end time: Apr 20 19:30 Central Europe Daylight Time
+Test Failed.
+"visuall_tests" end time: Apr 25 20:07 Central Europe Daylight Time
 "visuall_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Apr 20 19:30 Central Europe Daylight Time
+End testing: Apr 25 20:07 Central Europe Daylight Time

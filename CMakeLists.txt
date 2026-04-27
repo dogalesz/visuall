@@ -39,15 +39,34 @@ set(VISUALL_SOURCES
     src/ast_printer.cpp
     src/typechecker.cpp
     src/capture_analyzer.cpp
+    src/class_analyzer.cpp
     src/codegen.cpp
     src/builtins.cpp
     src/module_loader.cpp
     src/linker.cpp
 )
 
-# ── Visuall C runtime library ──────────────────────────────────────────────
-add_library(visuall_runtime STATIC stdlib/runtime.c stdlib/gc.c)
+# ── Personality function detection ────────────────────────────────────────
+# MinGW/Windows uses the SEH-based personality; POSIX uses the Itanium one.
+if(WIN32)
+    set(VISUALL_PERSONALITY_DEF VISUALL_PERSONALITY_SEH)
+    message(STATUS "Visuall EH: using __gxx_personality_seh0 (Windows/MinGW)")
+else()
+    set(VISUALL_PERSONALITY_DEF "")
+    message(STATUS "Visuall EH: using __gxx_personality_v0 (POSIX)")
+endif()
+
+# ── Visuall C/C++ runtime library ─────────────────────────────────────────
+add_library(visuall_runtime STATIC
+    stdlib/runtime.c
+    stdlib/gc.c
+    stdlib/exception_support.cpp
+)
 target_include_directories(visuall_runtime PRIVATE stdlib)
+target_compile_features(visuall_runtime PRIVATE cxx_std_17)
+if(VISUALL_PERSONALITY_DEF)
+    target_compile_definitions(visuall_runtime PRIVATE ${VISUALL_PERSONALITY_DEF})
+endif()
 target_compile_options(visuall_runtime PRIVATE
     $<$<C_COMPILER_ID:MSVC>:/W3>
     $<$<NOT:$<C_COMPILER_ID:MSVC>>:-Wall -Wextra>
@@ -57,6 +76,9 @@ target_compile_options(visuall_runtime PRIVATE
 add_executable(visuallc ${VISUALL_SOURCES})
 target_include_directories(visuallc PRIVATE include)
 target_link_libraries(visuallc PRIVATE ${LLVM_LIBS})
+if(VISUALL_PERSONALITY_DEF)
+    target_compile_definitions(visuallc PRIVATE ${VISUALL_PERSONALITY_DEF})
+endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────
 enable_testing()
@@ -73,20 +95,27 @@ add_executable(visuall_tests
     tests/closure_test.cpp
     tests/module_loader_test.cpp
     tests/gc_test.cpp
+    tests/class_analyzer_test.cpp
+    tests/diagnostic_test.cpp
     src/lexer.cpp
     src/parser.cpp
     src/ast_printer.cpp
     src/typechecker.cpp
     src/capture_analyzer.cpp
+    src/class_analyzer.cpp
     src/codegen.cpp
     src/builtins.cpp
     src/module_loader.cpp
     src/linker.cpp
     stdlib/gc.c
     stdlib/runtime.c
+    stdlib/exception_support.cpp
 )
 target_include_directories(visuall_tests PRIVATE include stdlib)
 target_link_libraries(visuall_tests PRIVATE ${LLVM_LIBS})
+if(VISUALL_PERSONALITY_DEF)
+    target_compile_definitions(visuall_tests PRIVATE ${VISUALL_PERSONALITY_DEF})
+endif()
 
 add_test(NAME visuall_tests COMMAND visuall_tests)
 

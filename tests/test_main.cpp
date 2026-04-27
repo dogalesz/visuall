@@ -12,6 +12,8 @@ int runTypeSystemTests();
 int runClosureTests();
 int runModuleLoaderTests();
 int runGCTests();
+int runClassAnalyzerTests();
+int runDiagnosticTests();
 
 int main() {
     int failures = 0;
@@ -46,6 +48,12 @@ int main() {
 
     std::cout << "\n--- GC Tests ---\n";
     failures += runGCTests();
+
+    std::cout << "\n--- Class Analyzer Tests ---\n";
+    failures += runClassAnalyzerTests();
+
+    std::cout << "\n--- Diagnostic Tests ---\n";
+    failures += runDiagnosticTests();
 
     std::cout << "\n=== Results: ";
     if (failures == 0) {

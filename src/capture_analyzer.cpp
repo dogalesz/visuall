@@ -1,5 +1,6 @@
 #include "capture_analyzer.h"
 #include <algorithm>
+#include <unordered_map>
 
 namespace visuall {
 
@@ -24,6 +25,17 @@ void CaptureAnalyzer::define(const std::string& name) {
 bool CaptureAnalyzer::isDefined(const std::string& name) const {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
         if (it->count(name)) return true;
+    }
+    return false;
+}
+
+bool CaptureAnalyzer::isByRefCandidate(const std::string& name) const {
+    // A variable is a byRef candidate if it appears in the innermost
+    // byRefCandidatesStack_ entry (i.e., it is assigned ≥2 times in
+    // the current statement list).
+    if (!byRefCandidatesStack_.empty() &&
+        byRefCandidatesStack_.back().count(name)) {
+        return true;
     }
     return false;
 }
@@ -58,9 +70,28 @@ void CaptureAnalyzer::analyze(ast::Program& program) {
 // ════════════════════════════════════════════════════════════════════════════
 
 void CaptureAnalyzer::analyzeStmtList(ast::StmtList& stmts) {
+    // Pre-scan: count assignments per identifier in this statement list.
+    // Variables assigned ≥2 times need byReference semantics when captured
+    // by a lambda, so that outer-scope mutations are visible through the box.
+    std::unordered_map<std::string, int> assignCounts;
+    for (const auto& s : stmts) {
+        if (auto* a = dynamic_cast<const ast::AssignStmt*>(s.get())) {
+            if (auto* id = dynamic_cast<const ast::Identifier*>(a->target.get())) {
+                assignCounts[id->name]++;
+            }
+        }
+    }
+    std::unordered_set<std::string> byRefCandidates;
+    for (const auto& kv : assignCounts) {
+        if (kv.second >= 2) byRefCandidates.insert(kv.first);
+    }
+    byRefCandidatesStack_.push_back(std::move(byRefCandidates));
+
     for (auto& s : stmts) {
         analyzeStmt(*s);
     }
+
+    byRefCandidatesStack_.pop_back();
 }
 
 void CaptureAnalyzer::analyzeStmt(ast::Stmt& stmt) {
@@ -244,7 +275,10 @@ void CaptureAnalyzer::analyzeExpr(ast::Expr& expr,
             if (isDefined(name)) {
                 ast::CaptureInfo cap;
                 cap.name = name;
-                cap.byReference = false;
+                // Mark as byReference if the variable is assigned ≥2 times
+                // in the enclosing scope, meaning the outer scope may mutate
+                // it after the lambda is created.
+                cap.byReference = isByRefCandidate(name);
                 e->captures.push_back(cap);
             } else {
                 // Not defined anywhere — propagate upward.
@@ -367,9 +401,13 @@ void CaptureAnalyzer::analyzeExpr(ast::Expr& expr,
     // Literals, ThisExpr, SuperExpr, NullLiteral etc. — no free variables.
 }
 
-void CaptureAnalyzer::collectAssignedNames(const ast::Expr& /*expr*/,
-                                            std::unordered_set<std::string>& /*assigned*/) {
-    // Reserved for future mutable-capture detection.
+void CaptureAnalyzer::collectAssignedNames(const ast::Expr& expr,
+                                            std::unordered_set<std::string>& assigned) {
+    // Walk expression tree and collect names that appear as assignment targets.
+    // For current single-expression lambda bodies, assignments are not possible,
+    // so this is a no-op in practice.  Kept for future multi-statement lambdas.
+    (void)expr;
+    (void)assigned;
 }
 
 } // namespace visuall

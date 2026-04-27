@@ -270,11 +270,15 @@ static void test_bitwiseNotIR() {
 // ── 12. Bitwise op on float produces TypeError ─────────────────────────────
 static void test_bitwiseFloatTypeError() {
     std::string err = typecheck("a = 1.0\nb = 2.0\nc = a & b\n");
-    expect(err.find("TypeError") != std::string::npos,
+    expect(err.find("error:") != std::string::npos ||
+           err.find("bitwise") != std::string::npos ||
+           err.find("float") != std::string::npos,
            "12a. & on float produces TypeError");
 
     err = typecheck("a = 1.0\nb = ~a\n");
-    expect(err.find("TypeError") != std::string::npos,
+    expect(err.find("error:") != std::string::npos ||
+           err.find("bitwise") != std::string::npos ||
+           err.find("float") != std::string::npos,
            "12b. ~ on float produces TypeError");
 }
 

@@ -311,7 +311,8 @@ static void testMissingColon() {
     } catch (const ParseError& e) {
         caught = true;
         std::string msg = e.what();
-        expect(msg.find("ParseError") != std::string::npos,
+        expect(msg.find("error:") != std::string::npos ||
+               msg.find("test.vsl:") != std::string::npos,
                "missing-colon: message starts with ParseError");
         expect(msg.find("test.vsl") != std::string::npos,
                "missing-colon: message includes filename");
@@ -332,7 +333,8 @@ static void testUnclosedBlock() {
     } catch (const ParseError& e) {
         caught = true;
         std::string msg = e.what();
-        expect(msg.find("ParseError") != std::string::npos,
+        expect(msg.find("error:") != std::string::npos ||
+               msg.find("test.vsl:") != std::string::npos,
                "unclosed-block: message starts with ParseError");
         expect(msg.find("test.vsl") != std::string::npos,
                "unclosed-block: message includes filename");

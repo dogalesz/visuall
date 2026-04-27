@@ -1,7 +1,9 @@
+#include "diagnostic.h"
 #include "lexer.h"
 #include "parser.h"
 #include "ast_printer.h"
 #include "capture_analyzer.h"
+#include "class_analyzer.h"
 #include "codegen.h"
 #include "module_loader.h"
 #include "linker.h"
@@ -27,6 +29,34 @@ static std::string getDirectory(const std::string& filepath) {
     auto pos = filepath.find_last_of("/\\");
     if (pos == std::string::npos) return ".";
     return filepath.substr(0, pos);
+}
+
+// Extract the Nth (1-based) line from a source string; empty if out of range.
+static std::string getSourceLine(const std::string& source, int lineNo) {
+    if (lineNo <= 0) return "";
+    int cur = 1;
+    size_t start = 0;
+    while (start < source.size()) {
+        size_t end = source.find('\n', start);
+        if (end == std::string::npos) end = source.size();
+        if (cur == lineNo) return source.substr(start, end - start);
+        ++cur;
+        start = end + 1;
+    }
+    return "";
+}
+
+// Format a Diagnostic; inject source_line from `source` when absent.
+static std::string formatDiag(visuall::Diagnostic diag,
+                               const std::string& source) {
+    if (diag.source_line.empty() && diag.line > 0) {
+        // Try to read from the already-loaded source (works for the main file).
+        // For imported modules we won't have the source, so leave it blank.
+        diag.source_line = getSourceLine(source, diag.line);
+        // Rebuild what_ with the injected source line.
+        diag.what_ = diag.format();
+    }
+    return diag.format();
 }
 
 static std::string getExeDirectory(const char* argv0) {
@@ -97,14 +127,16 @@ int main(int argc, char* argv[]) {
     // ── Read source ────────────────────────────────────────────────────
     std::string source = readFile(inputFile);
 
+    // ── Single top-level catch for all Diagnostic errors ──────────────
+    // All compiler errors (LexError, ParseError, CodegenError, ImportError,
+    // TypeError) inherit from Diagnostic, so one handler suffices.
+    try {
+
     // ── Lexer ──────────────────────────────────────────────────────────
     std::vector<visuall::Token> tokens;
-    try {
+    {
         visuall::Lexer lexer(source, inputFile);
         tokens = lexer.tokenize();
-    } catch (const visuall::LexError& e) {
-        std::cerr << e.what() << "\n";
-        return 1;
     }
 
     if (dumpTokens) {
@@ -116,12 +148,9 @@ int main(int argc, char* argv[]) {
 
     // ── Parser ─────────────────────────────────────────────────────────
     std::unique_ptr<visuall::ast::Program> program;
-    try {
+    {
         visuall::Parser parser(tokens, inputFile);
         program = parser.parse();
-    } catch (const visuall::ParseError& e) {
-        std::cerr << e.what() << "\n";
-        return 1;
     }
 
     if (dumpAST) {
@@ -132,6 +161,10 @@ int main(int argc, char* argv[]) {
     // ── Capture analysis ─────────────────────────────────────────────
     visuall::CaptureAnalyzer captureAnalyzer;
     captureAnalyzer.analyze(*program);
+
+    // ── Class field analysis ──────────────────────────────────────────
+    visuall::ClassAnalyzer classAnalyzer;
+    classAnalyzer.analyze(*program);
 
     // ── Set up module loader ───────────────────────────────────────────
     // Stdlib directory: look next to the compiler executable, then fallback
@@ -146,11 +179,12 @@ int main(int argc, char* argv[]) {
     visuall::ModuleLoader moduleLoader(stdlibDir, modulePaths, dumpModules);
 
     // ── Code generation ────────────────────────────────────────────────
-    try {
+    {
         visuall::Codegen codegen(inputFile);
         codegen.setModuleLoader(&moduleLoader);
         codegen.setSourceFile(inputFile);
         codegen.setGCStats(gcStats);
+        codegen.setClassFields(classAnalyzer.classFields());
         moduleLoader.setContext(&codegen.getContext());
         codegen.generate(*program);
 
@@ -193,15 +227,16 @@ int main(int argc, char* argv[]) {
         }
 
         std::cout << "compiled: " << inputFile << " -> " << outputFile << "\n";
-    } catch (const visuall::ImportError& e) {
-        std::cerr << inputFile << ": " << e.what() << "\n";
-        return 1;
-    } catch (const visuall::CodegenError& e) {
-        std::cerr << inputFile << ": " << e.what() << "\n";
-        return 1;
+
+    } catch (const visuall::Diagnostic& diag) {
+        // All compiler errors (LexError, ParseError, TypeError, CodegenError,
+        // ImportError) are Diagnostic subclasses — print clang-style and exit.
+        std::cerr << formatDiag(diag, source) << "\n";
+        std::exit(1);
     } catch (const std::exception& e) {
-        std::cerr << inputFile << ": codegen error: " << e.what() << "\n";
-        return 1;
+        // Catch any remaining C++ exceptions so users never see raw C++ text.
+        std::cerr << inputFile << ": internal error: " << e.what() << "\n";
+        std::exit(1);
     }
 
     return 0;

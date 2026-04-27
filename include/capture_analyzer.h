@@ -22,10 +22,16 @@ private:
     /// Scope stack: each entry is the set of names defined in that scope.
     std::vector<std::unordered_set<std::string>> scopes_;
 
+    /// Stack of byReference candidate sets, one per analyzeStmtList call.
+    /// A variable is a byRef candidate if it is assigned ≥2 times in the
+    /// same statement list, making it observable through a shared box.
+    std::vector<std::unordered_set<std::string>> byRefCandidatesStack_;
+
     void pushScope();
     void popScope();
     void define(const std::string& name);
     bool isDefined(const std::string& name) const;
+    bool isByRefCandidate(const std::string& name) const;
 
     // ── AST walkers ────────────────────────────────────────────────────
     void analyzeStmt(ast::Stmt& stmt);
