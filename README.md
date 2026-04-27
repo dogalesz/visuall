@@ -33,41 +33,80 @@ Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best
 
 Compute-bound integer work is within **1.1–1.2x** of C++. Recursion-heavy workloads are 4–5x due to GC stack scanning overhead.
 
-## Download (Windows — Prebuilt Binary)
+## Download (Prebuilt Binary)
 
-The easiest way to use Visuall on Windows is to download the prebuilt release — no need to install LLVM or build from source.
+The easiest way to use Visuall is to download the prebuilt release — no need to install LLVM or build from source.
 
-### 1. Download the release
+Go to the [Releases page](../../releases) and grab the asset for your platform.
 
-Go to the [Releases page](../../releases) and download the latest `visuallc-windows.zip`. Extract it anywhere (e.g. `C:\visuall\`). The zip contains:
+---
 
-| File | Purpose |
-|------|---------|
+### Windows (x86-64)
+
+Download `visuall-v0.9.1-beta-windows-x86_64.zip` and extract it anywhere (e.g. `C:\visuall\`).
+
+| File / Folder | Purpose |
+|---------------|---------|
 | `visuallc.exe` | The Visuall compiler |
-| `libgcc_s_seh-1.dll` | MinGW GCC runtime |
-| `libstdc++-6.dll` | MinGW C++ standard library |
-| `libwinpthread-1.dll` | MinGW POSIX threads |
-| `zlib1.dll` | zlib compression (LLVM dependency) |
-| `libzstd.dll` | Zstandard compression (LLVM dependency) |
+| `stdlib/` | Standard library `.vsl` modules (math, string, io, sys, collections) |
+| `hello.vsl` | Example program |
+| `README.md` | This documentation |
 
-All DLLs must be in the **same folder** as `visuallc.exe`.
+**Install a C linker (MinGW)**
 
-### 2. Install a C linker (MinGW)
+`visuallc` emits object files and calls `gcc` to link the final binary. You need **MinGW-W64**:
 
-`visuallc` emits object files and calls a linker to produce the final binary. You need **MinGW-W64** for this:
-
-1. Download [WinLibs MinGW-W64](https://winlibs.com/) (choose the UCRT or MSVCRT build, x86-64, with POSIX threads)
+1. Download [WinLibs MinGW-W64](https://winlibs.com/) (UCRT or MSVCRT build, x86-64, POSIX threads)
 2. Extract it (e.g. `C:\mingw64\`)
 3. Add `C:\mingw64\bin` to your system **PATH**
 
 Verify: open PowerShell and run `gcc --version`.
 
-### 3. Use the compiler
+**Use the compiler**
 
 ```powershell
 cd C:\visuall
-.\visuallc.exe path\to\your_program.vsl -o output
-.\output.exe
+.\visuallc.exe hello.vsl -o hello
+.\hello.exe
+```
+
+---
+
+### Linux (x86-64)
+
+Download `visuallc-linux-x86_64.tar.gz` and extract it:
+
+```bash
+tar -xzf visuallc-linux-x86_64.tar.gz
+cd visuallc-linux-x86_64
+```
+
+**Install a C linker**
+
+`visuallc` calls `gcc` to produce the final binary. Install it if you don't have it:
+
+```bash
+# Ubuntu / Debian
+sudo apt install gcc
+
+# Fedora / RHEL
+sudo dnf install gcc
+
+# Arch
+sudo pacman -S gcc
+```
+
+**Use the compiler**
+
+```bash
+./visuallc hello.vsl -o hello
+./hello
+```
+
+To use the bundled stdlib from anywhere, pass `--module-path` pointing to the `stdlib/` folder:
+
+```bash
+./visuallc program.vsl --module-path ./stdlib -o program
 ```
 
 ---
