@@ -4,6 +4,7 @@
 #include "ast_printer.h"
 #include "capture_analyzer.h"
 #include "class_analyzer.h"
+#include "typechecker.h"
 #include "codegen.h"
 #include "module_loader.h"
 #include "linker.h"
@@ -53,8 +54,6 @@ static std::string formatDiag(visuall::Diagnostic diag,
         // Try to read from the already-loaded source (works for the main file).
         // For imported modules we won't have the source, so leave it blank.
         diag.source_line = getSourceLine(source, diag.line);
-        // Rebuild what_ with the injected source line.
-        diag.what_ = diag.format();
     }
     return diag.format();
 }
@@ -166,6 +165,12 @@ int main(int argc, char* argv[]) {
     visuall::ClassAnalyzer classAnalyzer;
     classAnalyzer.analyze(*program);
 
+    // ── Type checking ─────────────────────────────────────────────────
+    {
+        visuall::TypeChecker typeChecker(inputFile);
+        typeChecker.check(*program);
+    }
+
     // ── Set up module loader ───────────────────────────────────────────
     // Stdlib directory: look next to the compiler executable, then fallback
     // to the source tree's stdlib/ and the current directory.
@@ -179,8 +184,7 @@ int main(int argc, char* argv[]) {
     visuall::ModuleLoader moduleLoader(stdlibDir, modulePaths, dumpModules);
 
     // ── Code generation ────────────────────────────────────────────────
-    {
-        visuall::Codegen codegen(inputFile);
+    visuall::Codegen codegen(inputFile);
         codegen.setModuleLoader(&moduleLoader);
         codegen.setSourceFile(inputFile);
         codegen.setGCStats(gcStats);
@@ -226,7 +230,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        std::cout << "compiled: " << inputFile << " -> " << outputFile << "\n";
+    std::cout << "compiled: " << inputFile << " -> " << outputFile << "\n";
 
     } catch (const visuall::Diagnostic& diag) {
         // All compiler errors (LexError, ParseError, TypeError, CodegenError,
