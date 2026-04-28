@@ -204,6 +204,7 @@ private:
     void visit(const ast::ForStmt& n) override;
     void visit(const ast::WhileStmt& n) override;
     void visit(const ast::ThrowStmt& n) override;
+    void visit(const ast::AssertStmt& n) override;
     void visit(const ast::TryStmt& n) override;
     void visit(const ast::ImportStmt& n) override;
     void visit(const ast::FromImportStmt& n) override;
@@ -250,6 +251,7 @@ private:
     void codegenReturnStmt(const ast::ReturnStmt& node);
     void codegenTryStmt(const ast::TryStmt& node);
     void codegenThrowStmt(const ast::ThrowStmt& node);
+    void codegenAssertStmt(const ast::AssertStmt& node);
     void codegenImportStmt(const ast::ImportStmt& node);
     void codegenFromImportStmt(const ast::FromImportStmt& node);
     void codegenAssignStmt(const ast::AssignStmt& node);

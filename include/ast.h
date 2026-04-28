@@ -375,6 +375,14 @@ struct ThrowStmt : Stmt {
     void accept(ASTVisitor& v) const override;
 };
 
+struct AssertStmt : Stmt {
+    ExprPtr condition;
+    ExprPtr message;    // nullable
+    AssertStmt(ExprPtr cond, ExprPtr msg)
+        : condition(std::move(cond)), message(std::move(msg)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
 struct CatchClause {
     std::string exceptionType; // may be empty for catch-all
     std::string varName;       // may be empty

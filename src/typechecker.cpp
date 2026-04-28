@@ -915,6 +915,21 @@ void TypeChecker::visit(const ast::ThrowStmt& s) {
     checkExpr(*s.expr);
 }
 
+void TypeChecker::visit(const ast::AssertStmt& s) {
+    Type condType = checkExpr(*s.condition);
+    if (condType.kind != Type::Kind::Bool && condType.kind != Type::Kind::Unknown) {
+        throw TypeError("Assert condition must be bool, got '" + condType.toString() + "'",
+                        filename_, s.line, s.column);
+    }
+    if (s.message) {
+        Type msgType = checkExpr(*s.message);
+        if (msgType.kind != Type::Kind::Str && msgType.kind != Type::Kind::Unknown) {
+            throw TypeError("Assert message must be str, got '" + msgType.toString() + "'",
+                            filename_, s.line, s.column);
+        }
+    }
+}
+
 void TypeChecker::visit(const ast::ImportStmt& s) {
     std::string modName = s.module;
     auto dotPos = modName.find('.');
@@ -1082,6 +1097,25 @@ void TypeChecker::visit(const ast::UnaryExpr& e) {
 }
 
 void TypeChecker::visit(const ast::CallExpr& e) {
+    // ── Handle builtin functions before resolving the callee identifier ──
+    if (auto* id = dynamic_cast<const ast::Identifier*>(e.callee.get())) {
+        if (id->name == "input") {
+            if (e.args.size() > 1) {
+                error("input() accepts 0 or 1 str argument, got " +
+                      std::to_string(e.args.size()), e.line, e.column);
+            }
+            for (const auto& a : e.args) {
+                Type argType = checkExpr(*a);
+                if (!argType.isUnknown() && argType.kind != Type::Str) {
+                    error("input() argument must be str, got " + argType.toString(),
+                          e.line, e.column);
+                }
+            }
+            exprResult_ = Type::makeStr();
+            return;
+        }
+    }
+
     Type calleeType = checkExpr(*e.callee);
 
     std::vector<Type> argTypes;

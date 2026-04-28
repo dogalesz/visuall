@@ -62,8 +62,7 @@ public:
     virtual void visit(const ast::IfStmt&)             = 0;
     virtual void visit(const ast::ForStmt&)            = 0;
     virtual void visit(const ast::WhileStmt&)          = 0;
-    virtual void visit(const ast::ThrowStmt&)          = 0;
-    virtual void visit(const ast::TryStmt&)            = 0;
+    virtual void visit(const ast::ThrowStmt&)          = 0;    virtual void visit(const ast::AssertStmt&)          = 0;    virtual void visit(const ast::TryStmt&)            = 0;
     virtual void visit(const ast::ImportStmt&)         = 0;
     virtual void visit(const ast::FromImportStmt&)     = 0;
     virtual void visit(const ast::InterfaceDef&)       = 0;
@@ -118,6 +117,7 @@ public:
     void visit(const ast::ForStmt&)           override {}
     void visit(const ast::WhileStmt&)         override {}
     void visit(const ast::ThrowStmt&)         override {}
+    void visit(const ast::AssertStmt&)         override {}
     void visit(const ast::TryStmt&)           override {}
     void visit(const ast::ImportStmt&)        override {}
     void visit(const ast::FromImportStmt&)    override {}
@@ -174,6 +174,7 @@ inline void IfStmt::accept(ASTVisitor& v)             const { v.visit(*this); }
 inline void ForStmt::accept(ASTVisitor& v)            const { v.visit(*this); }
 inline void WhileStmt::accept(ASTVisitor& v)          const { v.visit(*this); }
 inline void ThrowStmt::accept(ASTVisitor& v)          const { v.visit(*this); }
+inline void AssertStmt::accept(ASTVisitor& v)         const { v.visit(*this); }
 inline void TryStmt::accept(ASTVisitor& v)            const { v.visit(*this); }
 inline void ImportStmt::accept(ASTVisitor& v)         const { v.visit(*this); }
 inline void FromImportStmt::accept(ASTVisitor& v)     const { v.visit(*this); }

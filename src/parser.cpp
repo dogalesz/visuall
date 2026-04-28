@@ -292,6 +292,7 @@ ast::StmtPtr Parser::parseStatement() {
         case TokenType::KW_RETURN:   return parseReturnStmt();
         case TokenType::KW_TRY:      return parseTryStmt();
         case TokenType::KW_THROW:    return parseThrowStmt();
+        case TokenType::KW_ASSERT:   return parseAssertStmt();
         case TokenType::KW_IMPORT:   return parseImportStmt();
         case TokenType::KW_FROM:     return parseFromImportStmt();
         case TokenType::KW_BREAK:    return parseBreakStmt();
@@ -571,6 +572,22 @@ ast::StmtPtr Parser::parseThrowStmt() {
     advance(); // consume 'throw'
     auto expr = parseExpression();
     auto node = std::make_unique<ast::ThrowStmt>(std::move(expr));
+    node->line = ln; node->column = col;
+    return node;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// assert Expr [ , Expr ]
+// ════════════════════════════════════════════════════════════════════════════
+ast::StmtPtr Parser::parseAssertStmt() {
+    int ln = current().line, col = current().column;
+    advance(); // consume 'assert'
+    auto cond = parseExpression();
+    ast::ExprPtr msg;
+    if (match(TokenType::COMMA)) {
+        msg = parseExpression();
+    }
+    auto node = std::make_unique<ast::AssertStmt>(std::move(cond), std::move(msg));
     node->line = ln; node->column = col;
     return node;
 }

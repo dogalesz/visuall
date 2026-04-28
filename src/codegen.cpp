@@ -1345,6 +1345,49 @@ void Codegen::codegenThrowStmt(const ast::ThrowStmt& node) {
     builder_->CreateUnreachable();
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// assert condition [, message]
+// ════════════════════════════════════════════════════════════════════════════
+void Codegen::codegenAssertStmt(const ast::AssertStmt& node) {
+    llvm::Function* fn = builder_->GetInsertBlock()->getParent();
+
+    llvm::BasicBlock* failBB = llvm::BasicBlock::Create(*context_, "assert.fail", fn);
+    llvm::BasicBlock* passBB = llvm::BasicBlock::Create(*context_, "assert.pass", fn);
+
+    llvm::Value* cond = codegenExpr(*node.condition);
+    // Ensure we have an i1.
+    if (!cond->getType()->isIntegerTy(1)) {
+        cond = builder_->CreateICmpNE(
+            cond, llvm::ConstantInt::get(cond->getType(), 0), "assert.cond");
+    }
+    builder_->CreateCondBr(cond, passBB, failBB);
+
+    // ── Failure path ──────────────────────────────────────────────────────
+    builder_->SetInsertPoint(failBB);
+    auto* printStrFn = module_->getFunction("__visuall_print_str");
+    auto* printNlFn  = module_->getFunction("__visuall_print_newline");
+    auto* exitFn     = module_->getFunction("__visuall_sys_exit");
+
+    if (printStrFn) {
+        llvm::Value* msgVal;
+        if (node.message) {
+            msgVal = codegenExpr(*node.message);
+        } else {
+            msgVal = builder_->CreateGlobalString("AssertionError", "assert.default_msg");
+        }
+        builder_->CreateCall(printStrFn, {msgVal});
+        if (printNlFn) builder_->CreateCall(printNlFn, {});
+    }
+    if (exitFn) {
+        builder_->CreateCall(exitFn,
+            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), 1)});
+    }
+    builder_->CreateUnreachable();
+
+    // ── Success path ──────────────────────────────────────────────────────
+    builder_->SetInsertPoint(passBB);
+}
+
 // ── Imports ────────────────────────────────────────────────────────────────
 void Codegen::codegenImportStmt(const ast::ImportStmt& node) {
     // Track imported modules for module-qualified call dispatch.
@@ -2768,9 +2811,12 @@ llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallEx
 
     // ── input(prompt) ──────────────────────────────────────────────────
     if (name == "input") {
-        llvm::Value* prompt = builder_->CreateGlobalString("", "empty_prompt");
+        llvm::Value* prompt;
         if (!node.args.empty()) {
             prompt = codegenExpr(*node.args[0]);
+        } else {
+            prompt = llvm::ConstantPointerNull::get(
+                llvm::cast<llvm::PointerType>(i8Ptr));
         }
         auto* fn = module_->getFunction("__visuall_input");
         if (fn) return builder_->CreateCall(fn, {prompt}, "input.result");
@@ -3176,6 +3222,7 @@ void Codegen::visit(const ast::ForStmt& n)            { codegenForStmt(n); }
 void Codegen::visit(const ast::WhileStmt& n)          { codegenWhileStmt(n); }
 void Codegen::visit(const ast::TryStmt& n)            { codegenTryStmt(n); }
 void Codegen::visit(const ast::ThrowStmt& n)          { codegenThrowStmt(n); }
+void Codegen::visit(const ast::AssertStmt& n)         { codegenAssertStmt(n); }
 void Codegen::visit(const ast::ImportStmt& n)         { codegenImportStmt(n); }
 void Codegen::visit(const ast::FromImportStmt& n)     { codegenFromImportStmt(n); }
 void Codegen::visit(const ast::InterfaceDef& n)       { codegenInterfaceDef(n); }

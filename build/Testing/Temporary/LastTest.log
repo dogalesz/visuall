@@ -1,10 +1,10 @@
-Start testing: Apr 25 20:07 Central Europe Daylight Time
+Start testing: Apr 28 19:39 Central Europe Daylight Time
 ----------------------------------------------------------
 1/1 Testing: visuall_tests
 1/1 Test: visuall_tests
 Command: "C:/Users/vir01/Documents/GitHub/visuall/build/visuall_tests.exe"
 Directory: C:/Users/vir01/Documents/GitHub/visuall/build
-"visuall_tests" start time: Apr 25 20:07 Central Europe Daylight Time
+"visuall_tests" start time: Apr 28 19:39 Central Europe Daylight Time
 Output:
 ----------------------------------------------------------
 === Visuall Compiler Test Suite ===
@@ -224,7 +224,21 @@ Output:
   PASS: 9b. IR contains global string constant
   PASS: 9c. IR contains the string 'world'
   PASS: 10. Optimization passes run without error
-  10/10 codegen tests passed.
+  PASS: 11a. str literal [positive] generates IR
+  PASS: 11b. IR calls __visuall_string_index for literal[1]
+  PASS: 11c. IR does NOT call list_get for string index
+  PASS: 12a. str literal [negative] generates IR
+  PASS: 12b. IR calls __visuall_string_index for literal[-1]
+  PASS: 13a. str variable [0] generates IR
+  PASS: 13b. IR calls __visuall_string_index for s[0]
+  PASS: 13c. IR does NOT call list_get for string variable index
+  PASS: 14a. try/catch/finally generates IR
+  PASS: 14b. raiser() inside try emits invoke
+  PASS: 14c. IR contains a landingpad block
+  PASS: 14d. throw emits __cxa_throw
+  PASS: 14e. catch path calls __cxa_begin_catch
+  PASS: 14f. IR contains finally.norm block
+  14/14 codegen tests passed.
 
 --- Operator Tests ---
   PASS: 1a. x += 1 parses
@@ -369,6 +383,20 @@ Output:
   PASS: 10a. FunctionType annotation generates IR
   PASS: 10b. IR contains 'apply' function
   PASS: 10c. Closure struct type used in apply signature
+  PASS: 11a. Capture detected for reassigned variable
+  PASS: 11b. Captured variable is 'x'
+  PASS: 11c. Capture is byReference because x is reassigned
+  PASS: 11d. byReference lambda generates IR
+  PASS: 11e. IR contains __visuall_alloc for box allocation
+  PASS: 11f. IR contains initial box write of 10
+  PASS: 11g. IR contains subsequent box write of 20
+  PASS: 11h. IR uses inttoptr/ptrtoint for box pointer in env
+  PASS: 12a. 'counter' capture detected
+  PASS: 12b. 'counter' is byReference (assigned twice)
+  PASS: 12c. byReference lifetime-safe lambda generates IR
+  PASS: 12d. At least two __visuall_alloc calls (box + env)
+  PASS: 12e. IR uses ptrtoint to store box pointer in closure env
+  PASS: 12f. IR uses inttoptr to reconstruct box pointer inside lambda
 
 --- Module Loader Tests ---
   PASS: 1a. module name
@@ -408,12 +436,12 @@ Output:
   PASS: size includes header
   PASS: reachable string survives GC
   PASS: 1 collection ran
-  FAIL: unreachable object collected (live bytes decreased)
+  PASS: unreachable object collected (live bytes decreased)
   PASS: circular references collected
   PASS: list element 0 survived GC
   PASS: list element 1 survived GC
   PASS: closure env survived GC (reachable through closure)
-  FAIL: dict allocation was collected
+  PASS: dict allocation was collected
   PASS: auto-collection triggered when threshold exceeded
   PASS: threshold grows after collection (no premature re-collect)
   PASS: gc_stats reports 3 collections
@@ -426,7 +454,7 @@ Output:
   PASS: 13d. list pointer recovered from field
   PASS: 13e. list survives GC (length == 1)
   PASS: 13f. list value intact after GC
-GC tests: 11/13 passed
+GC tests: 13/13 passed
 
 --- Class Analyzer Tests ---
   PASS: 1a. Two fields found from init
@@ -450,13 +478,46 @@ GC tests: 11/13 passed
   PASS: 7c. 'b' from B is second
   PASS: 7d. 'c' from C is last
 
-=== Results: 2 test(s) FAILED ===
+--- Diagnostic Tests ---
+  PASS: 1a. Undefined-var: includes filename and line
+  PASS: 1b. Undefined-var: severity is 'error'
+  PASS: 1c. Undefined-var: names the missing variable
+  PASS: 1d. Undefined-var: no internal type names
+  PASS: 1e. Undefined similar-name: error produced
+  PASS: 1f. Undefined similar-name: mentions misspelled name
+  PASS: 1g. Undefined similar-name: hint mentions 'count'
+  PASS: 1h. Undefined similar-name: contains 'did you mean'
+  PASS: 2a. Type-mismatch: error produced
+  PASS: 2b. Type-mismatch: includes filename
+  PASS: 2c. Type-mismatch: severity is 'error'
+  PASS: 2d. Type-mismatch: mentions 'str' (Visuall syntax)
+  PASS: 2e. Type-mismatch: mentions 'int' (Visuall syntax)
+  PASS: 2f. Type-mismatch: no internal 'Type::' names
+  PASS: 2g. Type-mismatch: hint suggests int(x)
+  PASS: 3a. Missing-return: error produced
+  PASS: 3b. Missing-return: includes filename
+  PASS: 3c. Missing-return: severity is 'error'
+  PASS: 3d. Missing-return: message mentions 'return'
+  PASS: 3e. Missing-return: type shown as 'int'
+  PASS: 3f. Missing-return: no internal type names
+  PASS: 3g. Missing-return: contains a hint
+  PASS: 4a. Import-not-found: error produced
+  PASS: 4b. Import-not-found: names the missing module
+  PASS: 4c. Import-not-found: no raw C++ exception text
+  PASS: 4d. Import-not-found: message is descriptive
+  PASS: 5a. Diagnostic format: filename:line:col
+  PASS: 5b. Diagnostic format: error message
+  PASS: 5c. Diagnostic format: source line included
+  PASS: 5d. Diagnostic format: caret at correct column
+  PASS: 5e. Diagnostic format: hint line included
+
+=== Results: All tests passed! ===
 <end of output>
-Test time =   0.10 sec
+Test time =   0.06 sec
 ----------------------------------------------------------
-Test Failed.
-"visuall_tests" end time: Apr 25 20:07 Central Europe Daylight Time
+Test Passed.
+"visuall_tests" end time: Apr 28 19:39 Central Europe Daylight Time
 "visuall_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Apr 25 20:07 Central Europe Daylight Time
+End testing: Apr 28 19:39 Central Europe Daylight Time
