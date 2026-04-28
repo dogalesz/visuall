@@ -141,6 +141,7 @@ public:
     void visit(const ast::ForStmt& n)             override;
     void visit(const ast::WhileStmt& n)           override;
     void visit(const ast::ThrowStmt& n)           override;
+    void visit(const ast::AssertStmt& n)          override;
     void visit(const ast::TryStmt& n)             override;
     void visit(const ast::ImportStmt& n)          override;
     void visit(const ast::FromImportStmt& n)      override;

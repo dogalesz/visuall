@@ -60,6 +60,7 @@ private:
     ast::StmtPtr  parseReturnStmt();
     ast::StmtPtr  parseTryStmt();
     ast::StmtPtr  parseThrowStmt();
+    ast::StmtPtr  parseAssertStmt();
     ast::StmtPtr  parseImportStmt();
     ast::StmtPtr  parseFromImportStmt();
     ast::StmtPtr  parseBreakStmt();

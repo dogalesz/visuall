@@ -272,6 +272,33 @@ static void test_tryCatchFinally() {
            "14f. IR contains finally.norm block");
 }
 
+// ── 15. assert statement emits branch + __visuall_print_str + __visuall_sys_exit
+static void test_assertStatement() {
+    const char* src =
+        "define check(n: int) -> void:\n"
+        "\tassert n > 0, \"must be positive\"\n";
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "15a. assert generates IR");
+    expect(ir.find("br i1") != std::string::npos,
+           "15b. assert emits conditional branch");
+    expect(ir.find("__visuall_print_str") != std::string::npos,
+           "15c. assert fail path calls __visuall_print_str");
+    expect(ir.find("__visuall_sys_exit") != std::string::npos,
+           "15d. assert fail path calls __visuall_sys_exit");
+    expect(ir.find("assert.pass") != std::string::npos,
+           "15e. assert has pass block");
+    expect(ir.find("assert.fail") != std::string::npos,
+           "15f. assert has fail block");
+
+    // Assert without message should use default "AssertionError"
+    const char* src2 =
+        "define check2(n: int) -> void:\n"
+        "\tassert n > 0\n";
+    std::string ir2 = generateIR(src2);
+    expect(ir2.find("AssertionError") != std::string::npos,
+           "15g. assert without message uses default 'AssertionError'");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Test runner
 // ════════════════════════════════════════════════════════════════════════════
@@ -293,7 +320,8 @@ int runCodegenTests() {
     test_stringIndexNegative();
     test_stringIndexVariable();
     test_tryCatchFinally();
+    test_assertStatement();
 
-    std::cout << "  " << (14 - failures) << "/14 codegen tests passed.\n";
+    std::cout << "  " << (15 - failures) << "/15 codegen tests passed.\n";
     return failures;
 }
