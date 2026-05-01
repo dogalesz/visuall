@@ -89,6 +89,7 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_list_get",  i64, {i8p, i64});
     getOrDeclareExtern(mod, ctx, "__visuall_list_set",  voidTy, {i8p, i64, i64});
     getOrDeclareExtern(mod, ctx, "__visuall_list_len",  i64, {i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_list_remove", voidTy, {i8p, i64});
 
     /* ── Dict runtime ────────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_dict_new",  i8p, {});
@@ -97,6 +98,7 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_dict_has",  i64, {i8p, i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_len",  i64, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_contains", i64, {i8p, i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_dict_remove", voidTy, {i8p, i8p});
 
     /* ── Tag introspection & membership ───────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_get_tag",        i64, {i8p});
@@ -134,7 +136,9 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_filter", i8p, {i8p, i8p, i8p});
 
     /* ── string module ───────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_string_len",         i64, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_string_index",       i8p, {i8p, i64});
+    getOrDeclareExtern(mod, ctx, "__visuall_string_slice",       i8p, {i8p, i64, i64, i64});
     getOrDeclareExtern(mod, ctx, "__visuall_string_upper",       i8p, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_string_lower",       i8p, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_string_strip",       i8p, {i8p});

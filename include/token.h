@@ -54,6 +54,11 @@ enum class TokenType {
     KW_INTERFACE,       // interface
     KW_SUPER,           // super
     KW_ASSERT,          // assert
+    KW_DEL,             // del
+    KW_WITH,            // with
+    KW_AS,              // as
+    KW_MATCH,           // match
+    KW_CASE,            // case
 
     // ── Operators ──────────────────────────────────────────────────────────
     PLUS,               // +
@@ -174,6 +179,11 @@ inline const char* tokenTypeToString(TokenType t) {
         case TokenType::KW_INTERFACE:   return "KW_INTERFACE";
         case TokenType::KW_SUPER:       return "KW_SUPER";
         case TokenType::KW_ASSERT:      return "KW_ASSERT";
+        case TokenType::KW_DEL:         return "KW_DEL";
+        case TokenType::KW_WITH:        return "KW_WITH";
+        case TokenType::KW_AS:          return "KW_AS";
+        case TokenType::KW_MATCH:       return "KW_MATCH";
+        case TokenType::KW_CASE:        return "KW_CASE";
         case TokenType::PLUS:           return "PLUS";
         case TokenType::MINUS:          return "MINUS";
         case TokenType::STAR:           return "STAR";

@@ -101,6 +101,18 @@ void __visuall_list_set(VisualList* list, int64_t index, int64_t value) {
     list->data[index] = value;
 }
 
+void __visuall_list_remove(VisualList* list, int64_t index) {
+    if (!list || index < 0 || index >= list->length) {
+        fprintf(stderr, "IndexError: del list index %lld out of range [0, %lld)\n",
+                (long long)index, (long long)(list ? list->length : 0));
+        exit(1);
+    }
+    for (int64_t i = index; i < list->length - 1; i++) {
+        list->data[i] = list->data[i + 1];
+    }
+    list->length--;
+}
+
 int64_t __visuall_list_len(VisualList* list) {
     return list ? list->length : 0;
 }
@@ -257,6 +269,23 @@ int64_t __visuall_dict_has(VisualDict* d, const char* key) {
     if (!d || !key) return 0;
     int64_t slot = dict_find_slot(d->entries, d->capacity, key);
     return (slot >= 0 && d->entries[slot].state == DICT_USED) ? 1 : 0;
+}
+
+void __visuall_dict_remove(VisualDict* d, const char* key) {
+    if (!d || !key) return;
+    int64_t cap = d->capacity;
+    uint64_t h = dict_hash(key);
+    for (int64_t i = 0; i < cap; i++) {
+        int64_t slot = (int64_t)((h + (uint64_t)i) % (uint64_t)cap);
+        uint8_t state = d->entries[slot].state;
+        if (state == DICT_EMPTY) return; /* key not present */
+        if (state == DICT_USED && d->entries[slot].key &&
+                strcmp(d->entries[slot].key, key) == 0) {
+            d->entries[slot].state = DICT_DELETED;
+            d->length--;
+            return;
+        }
+    }
 }
 
 int64_t __visuall_dict_len(VisualDict* d) {
@@ -695,6 +724,54 @@ VisualList* __visuall_filter(void* env, void* fn_ptr, VisualList* src) {
 /* ═══════════════════════════════════════════════════════════════════════════
  * Module: string
  * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Return the length of string s (strlen wrapper). */
+int64_t __visuall_string_len(const char* s) {
+    return s ? (int64_t)strlen(s) : 0;
+}
+
+/* Return a substring of s selected by [start:stop:step] (Python semantics).
+   Negative start/stop wrap from the end.  step must be non-zero.
+   Returns a new GC-managed string. */
+char* __visuall_string_slice(const char* s, int64_t start, int64_t stop, int64_t step) {
+    if (!s) return vsl_strdup("");
+    int64_t len = (int64_t)strlen(s);
+    if (step == 0) {
+        fprintf(stderr, "ValueError: string slice step cannot be zero\n");
+        exit(1);
+    }
+    /* Normalise negative indices */
+    if (start < 0) start += len;
+    if (stop  < 0) stop  += len;
+    /* Clamp */
+    if (step > 0) {
+        if (start < 0) start = 0;
+        if (start > len) start = len;
+        if (stop  < 0) stop  = 0;
+        if (stop  > len) stop  = len;
+    } else {
+        if (start >= len) start = len - 1;
+        if (stop  < -1)   stop  = -1;
+        if (start < 0)    start = -1; /* empty */
+    }
+    /* Count characters */
+    int64_t count = 0;
+    if (step > 0) {
+        for (int64_t i = start; i < stop; i += step) count++;
+    } else {
+        for (int64_t i = start; i > stop; i += step) count++;
+    }
+    if (count <= 0) return vsl_strdup("");
+    char* out = (char*)__visuall_alloc((size_t)(count + 1), VSL_TAG_STRING);
+    int64_t j = 0;
+    if (step > 0) {
+        for (int64_t i = start; i < stop; i += step) out[j++] = s[i];
+    } else {
+        for (int64_t i = start; i > stop; i += step) out[j++] = s[i];
+    }
+    out[j] = '\0';
+    return out;
+}
 
 /* Return a single-character GC-managed string for s[i].
    Negative indices wrap: s[-1] is the last character.

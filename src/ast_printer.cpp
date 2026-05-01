@@ -429,6 +429,16 @@ struct PrintVisitor : public ASTVisitorBase {
         os_ << prefix_ << connector(isLast_) << "Import: " << p.module << "\n";
     }
 
+    void visit(const ast::WithStmt& p) override {
+        std::string label = "With";
+        if (!p.asName.empty()) label += " as " + p.asName;
+        os_ << prefix_ << connector(isLast_) << label << "\n";
+        std::string cp = childPfx();
+        os_ << cp << connector(false) << "Expr\n";
+        printChildExpr(*p.expr, cp + kPipe, true);
+        printStmtListSection(p.body, cp, true, "Body");
+    }
+
     void visit(const ast::FromImportStmt& p) override {
         os_ << prefix_ << connector(isLast_) << "FromImport: " << p.module << " [";
         for (size_t i = 0; i < p.names.size(); i++) {

@@ -127,6 +127,8 @@ private:
     std::string currentClassName_;
     // Maps className → ordered list of field names (populated by ClassAnalyzer)
     std::unordered_map<std::string, std::vector<std::string>> classFields_;
+    // Set of "ClassName_methodName" keys for static methods (no implicit this)
+    std::unordered_set<std::string> classStaticMethods_;
 
     // ── Generic function store ──────────────────────────────────────────
     std::unordered_map<std::string, const ast::FuncDef*> genericFuncDefs_;
@@ -136,6 +138,11 @@ private:
     // Track which variables hold closures (fat pointers) so call sites
     // know to indirect through fn_ptr(env, args...).
     std::unordered_set<std::string> closureVars_;
+
+    // Maps variable name → class name for object instances.
+    // Populated by codegenAssignStmt when the RHS is a constructor call.
+    // Used by codegenWithStmt to resolve __enter__ / __exit__ method names.
+    std::unordered_map<std::string, std::string> varClass_;
 
     // Track which variables hold string values so that IndexExpr can
     // dispatch to __visuall_string_index instead of __visuall_list_get.
@@ -205,6 +212,9 @@ private:
     void visit(const ast::WhileStmt& n) override;
     void visit(const ast::ThrowStmt& n) override;
     void visit(const ast::AssertStmt& n) override;
+    void visit(const ast::DelStmt& n) override;
+    void visit(const ast::WithStmt& n) override;
+    void visit(const ast::MatchStmt& n) override;
     void visit(const ast::TryStmt& n) override;
     void visit(const ast::ImportStmt& n) override;
     void visit(const ast::FromImportStmt& n) override;
@@ -252,6 +262,9 @@ private:
     void codegenTryStmt(const ast::TryStmt& node);
     void codegenThrowStmt(const ast::ThrowStmt& node);
     void codegenAssertStmt(const ast::AssertStmt& node);
+    void codegenDelStmt(const ast::DelStmt& node);
+    void codegenWithStmt(const ast::WithStmt& node);
+    void codegenMatchStmt(const ast::MatchStmt& node);
     void codegenImportStmt(const ast::ImportStmt& node);
     void codegenFromImportStmt(const ast::FromImportStmt& node);
     void codegenAssignStmt(const ast::AssignStmt& node);

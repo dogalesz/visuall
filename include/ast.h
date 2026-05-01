@@ -383,6 +383,22 @@ struct AssertStmt : Stmt {
     void accept(ASTVisitor& v) const override;
 };
 
+struct DelStmt : Stmt {
+    ExprPtr target;    // Identifier, IndexExpr, or MemberExpr
+    explicit DelStmt(ExprPtr tgt) : target(std::move(tgt)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
+// ── With statement: with expr [as name]: body ──────────────────────────────
+struct WithStmt : Stmt {
+    ExprPtr     expr;    // context expression
+    std::string asName;  // may be empty
+    StmtList    body;
+    WithStmt(ExprPtr e, std::string n, StmtList b)
+        : expr(std::move(e)), asName(std::move(n)), body(std::move(b)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
 struct CatchClause {
     std::string exceptionType; // may be empty for catch-all
     std::string varName;       // may be empty
@@ -411,6 +427,20 @@ struct FromImportStmt : Stmt {
     std::vector<std::string> names;
     FromImportStmt(std::string m, std::vector<std::string> n)
         : module(std::move(m)), names(std::move(n)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
+// ── Match statement ────────────────────────────────────────────────────────
+struct MatchCase {
+    ExprPtr  pattern;   // nullptr = wildcard (_)
+    StmtList body;
+};
+
+struct MatchStmt : Stmt {
+    ExprPtr                  subject;
+    std::vector<MatchCase>   cases;
+    MatchStmt(ExprPtr subj, std::vector<MatchCase> cs)
+        : subject(std::move(subj)), cases(std::move(cs)) {}
     void accept(ASTVisitor& v) const override;
 };
 

@@ -1,4 +1,5 @@
 ﻿#include "typechecker.h"
+#include "builtins.h"
 #include <sstream>
 #include <cassert>
 #include <climits>
@@ -249,6 +250,10 @@ void TypeChecker::declare(const std::string& name, const Type& type, int line, i
 
 Type TypeChecker::lookup(const std::string& name, int line, int col) {
     if (!symbols_.isDeclared(name)) {
+        // Builtin functions are always valid as callees — don't report them as undefined.
+        if (isBuiltinFunction(name)) {
+            return Type::makeUnknown();
+        }
         // Suggest a similar name in scope via Levenshtein distance.
         std::string hint;
         auto candidates = symbols_.allNames();
@@ -651,6 +656,10 @@ void TypeChecker::visit(const ast::ReturnStmt& s) {
 
 void TypeChecker::visit(const ast::FuncDef& s) {
     for (const auto& dec : s.decorators) {
+        // Known decorator names are not expressions — skip type-checking them.
+        if (auto* id = dynamic_cast<const ast::Identifier*>(dec.get())) {
+            if (id->name == "static") continue;
+        }
         checkExpr(*dec);
     }
 
@@ -887,6 +896,20 @@ void TypeChecker::visit(const ast::WhileStmt& s) {
     exitScope();
 }
 
+void TypeChecker::visit(const ast::WithStmt& s) {
+    // Type-check the context expression.
+    checkExpr(*s.expr);
+
+    enterScope();
+    // If there is an 'as' binding, declare it with unknown type
+    // (we can't know __enter__'s return type without full method lookup).
+    if (!s.asName.empty()) {
+        declare(s.asName, Type::makeUnknown(), s.line, s.column);
+    }
+    checkStmtList(s.body);
+    exitScope();
+}
+
 void TypeChecker::visit(const ast::TryStmt& s) {
     enterScope();
     checkStmtList(s.tryBody);
@@ -927,6 +950,40 @@ void TypeChecker::visit(const ast::AssertStmt& s) {
             throw TypeError("Assert message must be str, got '" + msgType.toString() + "'",
                             filename_, s.line, s.column);
         }
+    }
+}
+
+void TypeChecker::visit(const ast::DelStmt& s) {
+    // Target must be an Identifier, IndexExpr, or MemberExpr.
+    if (!dynamic_cast<const ast::Identifier*>(s.target.get()) &&
+        !dynamic_cast<const ast::IndexExpr*>(s.target.get()) &&
+        !dynamic_cast<const ast::MemberExpr*>(s.target.get())) {
+        throw TypeError("del target must be an identifier, index expression, or member expression",
+                        filename_, s.line, s.column);
+    }
+    // Typecheck the target expression (any type is allowed).
+    checkExpr(*s.target);
+}
+
+void TypeChecker::visit(const ast::MatchStmt& s) {
+    Type subjectType = checkExpr(*s.subject);
+
+    for (const auto& c : s.cases) {
+        if (c.pattern) {
+            // Non-wildcard: pattern must be a literal compatible with subject type
+            Type patternType = checkExpr(*c.pattern);
+            if (subjectType.kind != Type::Kind::Unknown &&
+                patternType.kind != Type::Kind::Unknown &&
+                subjectType.kind != patternType.kind) {
+                throw TypeError(
+                    "Match case pattern type '" + patternType.toString() +
+                    "' is incompatible with subject type '" + subjectType.toString() + "'",
+                    filename_, s.line, s.column);
+            }
+        }
+        enterScope();
+        checkStmtList(c.body);
+        exitScope();
     }
 }
 
@@ -1099,6 +1156,18 @@ void TypeChecker::visit(const ast::UnaryExpr& e) {
 void TypeChecker::visit(const ast::CallExpr& e) {
     // ── Handle builtin functions before resolving the callee identifier ──
     if (auto* id = dynamic_cast<const ast::Identifier*>(e.callee.get())) {
+        // map(fn, list) -> list[unknown]
+        if (id->name == "map") {
+            for (const auto& a : e.args) checkExpr(*a);
+            exprResult_ = Type::makeList(Type::makeUnknown());
+            return;
+        }
+        // filter(fn, list) -> list[unknown]
+        if (id->name == "filter") {
+            for (const auto& a : e.args) checkExpr(*a);
+            exprResult_ = Type::makeList(Type::makeUnknown());
+            return;
+        }
         if (id->name == "input") {
             if (e.args.size() > 1) {
                 error("input() accepts 0 or 1 str argument, got " +

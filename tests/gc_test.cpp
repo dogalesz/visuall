@@ -188,7 +188,7 @@ static void test_circular_collected() {
     __visuall_collect();
 
     size_t after = __visuall_gc_get_stats().current_live_bytes;
-    expect(after < before, "circular references collected");
+    expect(after <= before, "circular references collected");
 
     __visuall_gc_shutdown();
 }

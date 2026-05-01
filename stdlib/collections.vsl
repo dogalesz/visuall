@@ -8,62 +8,62 @@
 ## ── Stack ──────────────────────────────────────────────────────────────────
 class Stack:
 	init():
-		this._handle = __builtin_stack_new()
+		this._handle = __visuall_stack_new()
 
-	define push(item: int) -> void:
-		__builtin_stack_push(this._handle, item)
+	define push(item) -> void:
+		__visuall_stack_push(this._handle, item)
 
 	define pop() -> int:
-		return __builtin_stack_pop(this._handle)
+		return __visuall_stack_pop(this._handle)
 
 	define peek() -> int:
-		return __builtin_stack_peek(this._handle)
+		return __visuall_stack_peek(this._handle)
 
 	define is_empty() -> bool:
-		return __builtin_stack_is_empty(this._handle)
+		return __visuall_stack_is_empty(this._handle)
 
 	define size() -> int:
-		return __builtin_stack_size(this._handle)
+		return __visuall_stack_size(this._handle)
 
 ## ── Queue ──────────────────────────────────────────────────────────────────
 class Queue:
 	init():
-		this._handle = __builtin_queue_new()
+		this._handle = __visuall_queue_new()
 
-	define enqueue(item: int) -> void:
-		__builtin_queue_enqueue(this._handle, item)
+	define enqueue(item) -> void:
+		__visuall_queue_enqueue(this._handle, item)
 
 	define dequeue() -> int:
-		return __builtin_queue_dequeue(this._handle)
+		return __visuall_queue_dequeue(this._handle)
 
 	define is_empty() -> bool:
-		return __builtin_queue_is_empty(this._handle)
+		return __visuall_queue_is_empty(this._handle)
 
 	define size() -> int:
-		return __builtin_queue_size(this._handle)
+		return __visuall_queue_size(this._handle)
 
 ## ── Set ────────────────────────────────────────────────────────────────────
 class Set:
 	init():
-		this._handle = __builtin_set_new()
+		this._handle = __visuall_set_new()
 
-	define add(item: int) -> void:
-		__builtin_set_add(this._handle, item)
+	define add(item) -> void:
+		__visuall_set_add(this._handle, item)
 
-	define remove(item: int) -> void:
-		__builtin_set_remove(this._handle, item)
+	define remove(item) -> void:
+		__visuall_set_remove(this._handle, item)
 
-	define contains(item: int) -> bool:
-		return __builtin_set_contains(this._handle, item)
+	define contains(item) -> bool:
+		return __visuall_set_contains(this._handle, item)
 
 	define size() -> int:
-		return __builtin_set_size(this._handle)
+		return __visuall_set_size(this._handle)
 
 	define to_list() -> list:
-		return __builtin_set_to_list(this._handle)
+		return __visuall_set_to_list(this._handle)
 
 	define union(other_handle) -> int:
-		return __builtin_set_union(this._handle, other_handle)
+		return __visuall_set_union(this._handle, other_handle)
 
 	define intersect(other_handle) -> int:
-		return __builtin_set_intersect(this._handle, other_handle)
+		return __visuall_set_intersect(this._handle, other_handle)

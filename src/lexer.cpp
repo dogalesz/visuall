@@ -58,6 +58,11 @@ static const std::unordered_map<std::string, TokenType> keywords = {
     {"interface",  TokenType::KW_INTERFACE},
     {"super",      TokenType::KW_SUPER},
     {"assert",     TokenType::KW_ASSERT},
+    {"del",        TokenType::KW_DEL},
+    {"with",       TokenType::KW_WITH},
+    {"as",         TokenType::KW_AS},
+    {"match",      TokenType::KW_MATCH},
+    {"case",       TokenType::KW_CASE},
 };
 
 // ════════════════════════════════════════════════════════════════════════════

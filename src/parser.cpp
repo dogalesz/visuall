@@ -293,6 +293,9 @@ ast::StmtPtr Parser::parseStatement() {
         case TokenType::KW_TRY:      return parseTryStmt();
         case TokenType::KW_THROW:    return parseThrowStmt();
         case TokenType::KW_ASSERT:   return parseAssertStmt();
+        case TokenType::KW_DEL:      return parseDelStmt();
+        case TokenType::KW_WITH:     return parseWithStmt();
+        case TokenType::KW_MATCH:    return parseMatchStmt();
         case TokenType::KW_IMPORT:   return parseImportStmt();
         case TokenType::KW_FROM:     return parseFromImportStmt();
         case TokenType::KW_BREAK:    return parseBreakStmt();
@@ -541,7 +544,9 @@ ast::StmtPtr Parser::parseTryStmt() {
         ast::CatchClause clause;
         if (check(TokenType::IDENTIFIER)) {
             clause.exceptionType = advance().lexeme;
-            if (check(TokenType::IDENTIFIER) && current().lexeme == "as") {
+            // Accept 'as' as either a keyword or an identifier
+            if ((check(TokenType::KW_AS)) ||
+                (check(TokenType::IDENTIFIER) && current().lexeme == "as")) {
                 advance(); // consume 'as'
                 clause.varName = expect(TokenType::IDENTIFIER,
                     "Expected variable name after 'as'").lexeme;
@@ -588,6 +593,89 @@ ast::StmtPtr Parser::parseAssertStmt() {
         msg = parseExpression();
     }
     auto node = std::make_unique<ast::AssertStmt>(std::move(cond), std::move(msg));
+    node->line = ln; node->column = col;
+    return node;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// del target   (Identifier / IndexExpr / MemberExpr)
+// ════════════════════════════════════════════════════════════════════════════
+ast::StmtPtr Parser::parseDelStmt() {
+    int ln = current().line, col = current().column;
+    advance(); // consume 'del'
+    auto target = parseExpression();
+    auto node = std::make_unique<ast::DelStmt>(std::move(target));
+    node->line = ln; node->column = col;
+    return node;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// with expr [as name]: INDENT body DEDENT
+// ════════════════════════════════════════════════════════════════════════════
+ast::StmtPtr Parser::parseWithStmt() {
+    int ln = current().line, col = current().column;
+    advance(); // consume 'with'
+    auto expr = parseExpression();
+
+    std::string asName;
+    if (check(TokenType::KW_AS)) {
+        advance(); // consume 'as'
+        asName = expect(TokenType::IDENTIFIER,
+            "Expected variable name after 'as' in with statement").lexeme;
+    }
+
+    expect(TokenType::COLON, "Expected ':' after with expression");
+    auto body = parseBlock();
+
+    auto node = std::make_unique<ast::WithStmt>(
+        std::move(expr), std::move(asName), std::move(body));
+    node->line = ln; node->column = col;
+    return node;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// match subject:
+//     case pattern:
+//         body
+//     case _:
+//         wildcard_body
+// ════════════════════════════════════════════════════════════════════════════
+ast::StmtPtr Parser::parseMatchStmt() {
+    int ln = current().line, col = current().column;
+    advance(); // consume 'match'
+    auto subject = parseExpression();
+    expect(TokenType::COLON, "Expected ':' after match expression");
+
+    expect(TokenType::NEWLINE, "Expected newline after match:");
+    skipNewlines();
+    expect(TokenType::INDENT, "Expected indented block for match");
+    skipNewlines();
+
+    std::vector<ast::MatchCase> cases;
+    while (!check(TokenType::DEDENT) && !isAtEnd()) {
+        expect(TokenType::KW_CASE, "Expected 'case' in match body");
+
+        // Wildcard: 'case _:' sets pattern to nullptr
+        ast::ExprPtr pattern = nullptr;
+        if (check(TokenType::IDENTIFIER) && current().lexeme == "_") {
+            advance(); // consume '_'
+        } else {
+            pattern = parseExpression();
+        }
+
+        expect(TokenType::COLON, "Expected ':' after case pattern");
+        auto body = parseBlock();
+        skipNewlines();
+
+        ast::MatchCase mc;
+        mc.pattern = std::move(pattern);
+        mc.body    = std::move(body);
+        cases.push_back(std::move(mc));
+    }
+
+    expect(TokenType::DEDENT, "Expected end of match block");
+
+    auto node = std::make_unique<ast::MatchStmt>(std::move(subject), std::move(cases));
     node->line = ln; node->column = col;
     return node;
 }

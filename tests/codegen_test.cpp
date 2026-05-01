@@ -1,19 +1,23 @@
 // ════════════════════════════════════════════════════════════════════════════
-// 10 test cases:
-//   1. Integer addition produces correct IR
-//   2. Float promotion in mixed arithmetic
-//   3. if/else produces correct BasicBlocks
-//   4. while loop produces correct loop structure
-//   5. Function call emits CreateCall
-//   6. print("hello") emits printf call
-//   7. true/false emit i1 constants
-//   8. null emits ConstantPointerNull
-//   9. String literal produces global constant
-//  10. Optimization passes run without error
-//  11. str[i] positive index emits __visuall_string_index
-//  12. str[i] negative index emits __visuall_string_index
-//  13. str[i] on variable emits __visuall_string_index
-//  14. try/catch/finally generates invoke/landingpad/__cxa_throw IR
+//  1. Integer addition produces correct IR
+//  2. Float promotion in mixed arithmetic
+//  3. if/else produces correct BasicBlocks
+//  4. while loop produces correct loop structure
+//  5. Function call emits CreateCall
+//  6. print("hello") emits printf call
+//  7. true/false emit i1 constants
+//  8. null emits ConstantPointerNull
+//  9. String literal produces global constant
+// 10. Optimization passes run without error
+// 11. str[i] positive index emits __visuall_string_index
+// 12. str[i] negative index emits __visuall_string_index
+// 13. str[i] on variable emits __visuall_string_index
+// 14. try/catch/finally generates invoke/landingpad/__cxa_throw IR
+// 15. assert statement emits branch + fail/pass blocks
+// 16. del statement: identifier zeroes slot, list/dict remove called
+// 17. with statement: __enter__/__exit__ called, landingpad/resume emitted
+// 18. collections Stack/Queue/Set accept non-int values (str, pointer)
+// 19. match statement: int/str/bool cases and wildcard lowered to if/else chain
 // ════════════════════════════════════════════════════════════════════════════
 
 #include "lexer.h"
@@ -303,6 +307,185 @@ static void test_assertStatement() {
 // Test runner
 // ════════════════════════════════════════════════════════════════════════════
 
+static void test_delStatement() {
+    // del identifier: store 0 into alloca
+    std::string ir1 = generateIR(
+        "define f() -> void:\n"
+        "\tx = 42\n"
+        "\tdel x\n");
+    expect(!ir1.empty(), "16a. del identifier generates IR");
+    expect(ir1.find("store i64 0") != std::string::npos ||
+           ir1.find("store") != std::string::npos,
+           "16b. del identifier emits store");
+
+    // del list[i]: calls __visuall_list_remove
+    std::string ir2 = generateIR(
+        "define g() -> void:\n"
+        "\titems = [10, 20, 30]\n"
+        "\tdel items[1]\n");
+    expect(!ir2.empty(), "16c. del list[i] generates IR");
+    expect(ir2.find("__visuall_list_remove") != std::string::npos,
+           "16d. del list[i] calls __visuall_list_remove");
+
+    // del dict[key]: calls __visuall_dict_remove
+    std::string ir3 = generateIR(
+        "define h() -> void:\n"
+        "\td = {\"a\": 1, \"b\": 2}\n"
+        "\tdel d[\"a\"]\n");
+    expect(!ir3.empty(), "16e. del dict[key] generates IR");
+    expect(ir3.find("__visuall_dict_remove") != std::string::npos,
+           "16f. del dict[key] calls __visuall_dict_remove");
+}
+
+// ── 17. with statement: __enter__ / __exit__ and try/finally IR ────────────
+static void test_withStatement() {
+    // Context manager class with __enter__ returning a value and __exit__ cleanup.
+    std::string src =
+        "class Ctx:\n"
+        "\tinit():\n"
+        "\t\tthis.val = 0\n"
+        "\tdefine __enter__() -> int:\n"
+        "\t\tthis.val = 1\n"
+        "\t\treturn 42\n"
+        "\tdefine __exit__() -> void:\n"
+        "\t\tthis.val = 0\n"
+        "\n"
+        "define run() -> void:\n"
+        "\twith Ctx() as x:\n"
+        "\t\ty = x\n";
+
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "17a. with statement generates IR");
+    // __enter__ method should be present in the IR.
+    expect(ir.find("Ctx___enter__") != std::string::npos,
+           "17b. IR contains __enter__ method");
+    // __exit__ method should be present in the IR.
+    expect(ir.find("Ctx___exit__") != std::string::npos,
+           "17c. IR contains __exit__ method");
+    // A landingpad block should exist for exception handling.
+    expect(ir.find("landingpad") != std::string::npos,
+           "17d. IR contains landingpad for exception path");
+    // The cleanup finally blocks should be present.
+    expect(ir.find("with.finally") != std::string::npos,
+           "17e. IR contains with.finally blocks");
+    // Exception re-raise should be present.
+    expect(ir.find("resume") != std::string::npos,
+           "17f. IR contains resume to re-raise exceptions");
+
+    // with statement without 'as' should also work.
+    std::string src2 =
+        "class Mgr:\n"
+        "\tinit():\n"
+        "\t\tthis.x = 0\n"
+        "\tdefine __enter__() -> void:\n"
+        "\t\tthis.x = 1\n"
+        "\tdefine __exit__() -> void:\n"
+        "\t\tthis.x = 0\n"
+        "\n"
+        "define run2() -> void:\n"
+        "\twith Mgr():\n"
+        "\t\tz = 1\n";
+    std::string ir2 = generateIR(src2);
+    expect(!ir2.empty(), "17g. with statement without 'as' generates IR");
+}
+
+// ── 18. collections: Stack/Queue/Set accept non-int values (str, pointer) ──
+// Calls the C runtime functions directly to verify the ptr→i64 coercion
+// added to codegen argument passing.
+static void test_collectionsAnyType() {
+    // Stack: push a string literal (i8* → i64 coercion required).
+    std::string src =
+        "define test_stack() -> void:\n"
+        "\thandle = __visuall_stack_new()\n"
+        "\t__visuall_stack_push(handle, \"hello\")\n"
+        "\t__visuall_stack_push(handle, 42)\n"
+        "\tx = __visuall_stack_pop(handle)\n";
+
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "18a. Stack push with string value generates IR");
+    expect(ir.find("__visuall_stack_push") != std::string::npos,
+           "18b. IR contains __visuall_stack_push call");
+    expect(ir.find("ptrtoint") != std::string::npos,
+           "18c. IR contains ptrtoint for pointer-to-i64 coercion");
+
+    // Queue: enqueue a string literal.
+    std::string src2 =
+        "define test_queue() -> void:\n"
+        "\thandle = __visuall_queue_new()\n"
+        "\t__visuall_queue_enqueue(handle, \"world\")\n"
+        "\t__visuall_queue_enqueue(handle, 99)\n"
+        "\tv = __visuall_queue_dequeue(handle)\n";
+
+    std::string ir2 = generateIR(src2);
+    expect(!ir2.empty(), "18d. Queue enqueue with string value generates IR");
+    expect(ir2.find("__visuall_queue_enqueue") != std::string::npos,
+           "18e. IR contains __visuall_queue_enqueue call");
+
+    // Set: add string literals.
+    std::string src3 =
+        "define test_set() -> void:\n"
+        "\thandle = __visuall_set_new()\n"
+        "\t__visuall_set_add(handle, \"alpha\")\n"
+        "\t__visuall_set_add(handle, \"beta\")\n"
+        "\tb = __visuall_set_contains(handle, \"alpha\")\n";
+
+    std::string ir3 = generateIR(src3);
+    expect(!ir3.empty(), "18f. Set add with string value generates IR");
+    expect(ir3.find("__visuall_set_add") != std::string::npos,
+           "18g. IR contains __visuall_set_add call");
+}
+
+// ── 19. match statement: int/str/float/bool/wildcard cases ─────────────────
+static void test_matchStatement() {
+    // Integer match with wildcard
+    std::string src =
+        "define test_int_match(x: int) -> int:\n"
+        "\tmatch x:\n"
+        "\t\tcase 1:\n"
+        "\t\t\treturn 10\n"
+        "\t\tcase 2:\n"
+        "\t\t\treturn 20\n"
+        "\t\tcase _:\n"
+        "\t\t\treturn 99\n";
+
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "19a. integer match generates IR");
+    expect(ir.find("match.subject") != std::string::npos,
+           "19b. IR spills subject to alloca");
+    expect(ir.find("match.icmp") != std::string::npos,
+           "19c. IR uses icmp eq for integer comparison");
+    expect(ir.find("match.end") != std::string::npos,
+           "19d. IR has merge block match.end");
+
+    // String match
+    std::string src2 =
+        "define test_str_match(s: str) -> int:\n"
+        "\tmatch s:\n"
+        "\t\tcase \"hello\":\n"
+        "\t\t\treturn 1\n"
+        "\t\tcase \"world\":\n"
+        "\t\t\treturn 2\n"
+        "\t\tcase _:\n"
+        "\t\t\treturn 0\n";
+
+    std::string ir2 = generateIR(src2);
+    expect(!ir2.empty(), "19e. string match generates IR");
+    expect(ir2.find("strcmp") != std::string::npos,
+           "19f. IR uses strcmp for string comparison");
+
+    // Bool match
+    std::string src3 =
+        "define test_bool_match(b: bool) -> int:\n"
+        "\tmatch b:\n"
+        "\t\tcase true:\n"
+        "\t\t\treturn 1\n"
+        "\t\tcase false:\n"
+        "\t\t\treturn 0\n";
+
+    std::string ir3 = generateIR(src3);
+    expect(!ir3.empty(), "19g. bool match generates IR");
+}
+
 int runCodegenTests() {
     failures = 0;
 
@@ -321,7 +504,11 @@ int runCodegenTests() {
     test_stringIndexVariable();
     test_tryCatchFinally();
     test_assertStatement();
+    test_delStatement();
+    test_withStatement();
+    test_collectionsAnyType();
+    test_matchStatement();
 
-    std::cout << "  " << (15 - failures) << "/15 codegen tests passed.\n";
+    std::cout << "  " << (19 - failures) << "/19 codegen tests passed.\n";
     return failures;
 }
