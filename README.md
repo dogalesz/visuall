@@ -43,7 +43,7 @@ Go to the [Releases page](../../releases) and grab the asset for your platform.
 
 ### Windows (x86-64)
 
-Download `visuall-v0.9.1-beta-windows-x86_64.zip` and extract it anywhere (e.g. `C:\visuall\`).
+Download `visuall-v0.9.3-beta-windows-x86_64.zip` and extract it anywhere (e.g. `C:\visuall\`).
 
 | File / Folder | Purpose |
 |---------------|---------|
@@ -171,6 +171,8 @@ The compiler binary `visuallc` will be in the `build/` directory.
 ./visuallc --tokens examples/hello.vsl    # Dump token stream
 ./visuallc --ast examples/hello.vsl       # Dump parsed AST
 ./visuallc --emit-ir examples/hello.vsl   # Emit LLVM IR to stdout
+./visuallc --dump-modules program.vsl     # Print resolved module paths
+./visuallc --gc-stats program.vsl -o prog # Print GC statistics at exit
 ```
 
 ### Running tests
@@ -188,9 +190,12 @@ visuall/
 ├── include/
 │   ├── ast.h                # AST node hierarchy
 │   ├── ast_printer.h        # AST pretty-printer
+│   ├── ast_visitor.h        # Pure-virtual visitor interface for AST nodes
 │   ├── builtins.h           # Runtime function declarations
 │   ├── capture_analyzer.h   # Closure variable capture analysis
+│   ├── class_analyzer.h     # Pre-pass to collect class field assignments
 │   ├── codegen.h            # LLVM IR code generation
+│   ├── diagnostic.h         # Unified compiler error/warning (clang-style)
 │   ├── lexer.h              # Tokenizer
 │   ├── linker.h             # Native linker interface
 │   ├── module_loader.h      # Multi-file module resolution
@@ -205,12 +210,14 @@ visuall/
 │   ├── codegen.cpp          # LLVM IR generation
 │   ├── builtins.cpp         # Runtime function prototypes
 │   ├── capture_analyzer.cpp # Closure capture analysis
+│   ├── class_analyzer.cpp   # Class field analysis
 │   ├── module_loader.cpp    # Module loader
 │   ├── linker.cpp           # Object file linking
 │   └── ast_printer.cpp      # AST printer
 ├── stdlib/
 │   ├── runtime.c            # C runtime (print, string ops, list/dict/tuple ops)
 │   ├── gc.c / gc.h          # Mark-and-sweep garbage collector
+│   ├── exception_support.cpp # C++ ABI layer for throw/catch support
 │   ├── math.vsl             # Math functions (sqrt, sin, cos, log, etc.)
 │   ├── string.vsl           # String manipulation (split, join, replace, etc.)
 │   ├── collections.vsl      # Stack, Queue, Set
@@ -226,7 +233,11 @@ visuall/
 │   ├── typesystem_test.cpp  # Type system tests
 │   ├── closure_test.cpp     # Closure/lambda tests
 │   ├── operator_test.cpp    # Operator tests
+│   ├── class_analyzer_test.cpp # Class analyzer tests
+│   ├── diagnostic_test.cpp  # Diagnostic formatting tests
 │   ├── gc_test.cpp          # GC tests
+│   ├── gc_stress.vsl        # GC stress test fixture
+│   ├── stdlib_test.vsl      # Standard library test fixture
 │   ├── module_loader_test.cpp # Module tests
 │   └── module_test/         # Multi-file module test fixtures
 └── examples/
