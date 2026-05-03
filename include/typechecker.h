@@ -2,6 +2,7 @@
 
 #include "diagnostic.h"
 #include "ast_visitor.h"
+#include <memory>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -9,52 +10,162 @@
 namespace visuall {
 
 // ════════════════════════════════════════════════════════════════════════════
-// Type — a simple structural type representation.
+// TypeNode — base class for the polymorphic type IR.
 // ════════════════════════════════════════════════════════════════════════════
-struct Type {
-    enum Kind { Int, Float, Str, Bool, Void, Null, List, Dict, Tuple, Func, Class, Unknown, Union, Interface, TypeVar };
+struct TypeNode {
+    // Kind enum — same values as the old Type::Kind for drop-in compatibility.
+    enum Kind {
+        Int, Float, Str, Bool, Void, Null,
+        List, Dict, Tuple, Func, Class, Unknown,
+        Union, Interface, TypeVar, Nullable
+    };
 
-    Kind kind = Unknown;
-    std::vector<Type> params;   // List<T> → params[0]=T, Dict<K,V> → [K,V], Tuple → [T...], Func → [ret, p0, p1, ...]
-    std::string name;           // for Class or Func (function name for diagnostics)
+    Kind kind;
 
-    Type() = default;
-    explicit Type(Kind k) : kind(k) {}
-    Type(Kind k, std::vector<Type> p) : kind(k), params(std::move(p)) {}
-    Type(Kind k, std::string n) : kind(k), name(std::move(n)) {}
-    Type(Kind k, std::string n, std::vector<Type> p)
-        : kind(k), params(std::move(p)), name(std::move(n)) {}
+    virtual ~TypeNode() = default;
 
-    bool operator==(const Type& o) const;
-    bool operator!=(const Type& o) const { return !(*this == o); }
+    // Primary virtual interface.
+    virtual std::string toString() const = 0;
+    virtual std::string toUserString() const { return toString(); }
+    virtual bool equals(const TypeNode& other) const = 0;
+    virtual bool isAssignableTo(const TypeNode& other) const;
 
-    bool isNumeric() const { return kind == Int || kind == Float; }
+    // Convenience predicates — non-virtual, derived from kind.
     bool isUnknown() const { return kind == Unknown; }
+    bool isNumeric() const { return kind == Int || kind == Float; }
 
-    // Internal string representation (also used as user-facing Visuall syntax).
-    std::string toString() const;
+    // Virtual name accessor for Class / Func / Interface / TypeVar nodes.
+    // Returns "" for primitive and composite types.
+    virtual const std::string& typeName() const;
 
-    // User-facing type name in Visuall syntax: int, str, list[int], (int)->bool.
-    // Preferred over toString() for error messages shown to users.
-    std::string toUserString() const;
-
-    // Convenience factories
-    static Type makeInt()   { return Type(Int); }
-    static Type makeFloat() { return Type(Float); }
-    static Type makeStr()   { return Type(Str); }
-    static Type makeBool()  { return Type(Bool); }
-    static Type makeVoid()  { return Type(Void); }
-    static Type makeNull()  { return Type(Null); }
-    static Type makeUnknown() { return Type(Unknown); }
-    static Type makeList(Type elem) { return Type(List, {std::move(elem)}); }
-    static Type makeDict(Type k, Type v) { return Type(Dict, {std::move(k), std::move(v)}); }
-    static Type makeTuple(std::vector<Type> elems) { return Type(Tuple, std::move(elems)); }
-    static Type makeFunc(const std::string& name, Type ret, std::vector<Type> paramTypes);
-    static Type makeClass(const std::string& name) { return Type(Class, name); }
-    static Type makeUnion(std::vector<Type> members) { return Type(Union, std::move(members)); }
-    static Type makeInterface(const std::string& name) { return Type(Interface, name); }
-    static Type makeTypeVar(const std::string& name) { return Type(TypeVar, name); }
+protected:
+    explicit TypeNode(Kind k) : kind(k) {}
 };
+
+using TypeRef = std::shared_ptr<TypeNode>;
+
+// Structural equality helper (handles null TypeRef as "Unknown").
+bool typeEquals(const TypeRef& a, const TypeRef& b);
+
+// ════════════════════════════════════════════════════════════════════════════
+// Concrete TypeNode subclasses
+// ════════════════════════════════════════════════════════════════════════════
+
+// PrimitiveType — int, float, str, bool, void, null, unknown
+struct PrimitiveType : TypeNode {
+    explicit PrimitiveType(Kind k) : TypeNode(k) {}
+    std::string toString() const override;
+    bool equals(const TypeNode& other) const override;
+};
+
+// ListType — list[T]
+struct ListType : TypeNode {
+    TypeRef elem;
+    explicit ListType(TypeRef e) : TypeNode(List), elem(std::move(e)) {}
+    std::string toString() const override;
+    bool equals(const TypeNode& other) const override;
+};
+
+// DictType — dict[K, V]
+struct DictType : TypeNode {
+    TypeRef key;
+    TypeRef value;
+    DictType(TypeRef k, TypeRef v)
+        : TypeNode(Dict), key(std::move(k)), value(std::move(v)) {}
+    std::string toString() const override;
+    bool equals(const TypeNode& other) const override;
+};
+
+// TupleType — tuple[T1, T2, ...]
+struct TupleType : TypeNode {
+    std::vector<TypeRef> elems;
+    explicit TupleType(std::vector<TypeRef> e)
+        : TypeNode(Tuple), elems(std::move(e)) {}
+    std::string toString() const override;
+    bool equals(const TypeNode& other) const override;
+};
+
+// FuncType — function signature: name(p1, p2, ...) -> ret
+// paramTypes[0..n-1] are parameter types; retType is the return type.
+struct FuncType : TypeNode {
+    std::string name;      // function's declared name (for diagnostics / equality)
+    TypeRef     retType;
+    std::vector<TypeRef> paramTypes;
+
+    FuncType(std::string n, TypeRef ret, std::vector<TypeRef> params)
+        : TypeNode(Func),
+          name(std::move(n)),
+          retType(std::move(ret)),
+          paramTypes(std::move(params)) {}
+
+    std::string toString() const override;
+    std::string toUserString() const override;
+    bool equals(const TypeNode& other) const override;
+    const std::string& typeName() const override { return name; }
+};
+
+// ClassType — a user-defined class
+struct ClassType : TypeNode {
+    std::string name;
+    explicit ClassType(std::string n) : TypeNode(Class), name(std::move(n)) {}
+    std::string toString() const override { return name; }
+    bool equals(const TypeNode& other) const override;
+    const std::string& typeName() const override { return name; }
+};
+
+// InterfaceTypeNode — a named interface
+struct InterfaceTypeNode : TypeNode {
+    std::string name;
+    explicit InterfaceTypeNode(std::string n) : TypeNode(Interface), name(std::move(n)) {}
+    std::string toString() const override { return name; }
+    bool equals(const TypeNode& other) const override;
+    const std::string& typeName() const override { return name; }
+};
+
+// TypeVarNode — generic type variable (e.g. T in identity<T>)
+struct TypeVarNode : TypeNode {
+    std::string name;
+    explicit TypeVarNode(std::string n) : TypeNode(TypeVar), name(std::move(n)) {}
+    std::string toString() const override { return name; }
+    bool equals(const TypeNode& other) const override;
+    const std::string& typeName() const override { return name; }
+};
+
+// UnionType — T1 | T2 | ...
+struct UnionType : TypeNode {
+    std::vector<TypeRef> members;
+    explicit UnionType(std::vector<TypeRef> m) : TypeNode(Union), members(std::move(m)) {}
+    std::string toString() const override;
+    bool equals(const TypeNode& other) const override;
+};
+
+// NullableType — T | null  (sugar over UnionType for common case)
+struct NullableType : TypeNode {
+    TypeRef inner;
+    explicit NullableType(TypeRef i) : TypeNode(Nullable), inner(std::move(i)) {}
+    std::string toString() const override;
+    bool equals(const TypeNode& other) const override;
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Factory functions — return TypeRef, preserve the old Type::make*() names.
+// ════════════════════════════════════════════════════════════════════════════
+TypeRef makeInt();
+TypeRef makeFloat();
+TypeRef makeStr();
+TypeRef makeBool();
+TypeRef makeVoid();
+TypeRef makeNull();
+TypeRef makeUnknown();
+TypeRef makeList(TypeRef elem);
+TypeRef makeDict(TypeRef key, TypeRef value);
+TypeRef makeTuple(std::vector<TypeRef> elems);
+TypeRef makeFunc(const std::string& name, TypeRef ret, std::vector<TypeRef> paramTypes);
+TypeRef makeClass(const std::string& name);
+TypeRef makeInterface(const std::string& name);
+TypeRef makeTypeVar(const std::string& name);
+TypeRef makeUnion(std::vector<TypeRef> members);
+TypeRef makeNullable(TypeRef inner);
 
 // ════════════════════════════════════════════════════════════════════════════
 // TypeError — thrown on all type-checking errors.
@@ -68,22 +179,22 @@ public:
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// SymbolTable — scoped name → Type mapping.
+// SymbolTable — scoped name → TypeRef mapping.
 // ════════════════════════════════════════════════════════════════════════════
 class SymbolTable {
 public:
     void enterScope();
     void exitScope();
-    void declare(const std::string& name, const Type& type);
+    void declare(const std::string& name, const TypeRef& type);
     bool isDeclared(const std::string& name) const;
-    Type lookup(const std::string& name) const;  // returns Unknown if not found
-    bool lookupInCurrentScope(const std::string& name, Type& out) const;
+    TypeRef lookup(const std::string& name) const;  // returns makeUnknown() if not found
+    bool lookupInCurrentScope(const std::string& name, TypeRef& out) const;
 
     // Return all currently visible names across all scopes.
     std::vector<std::string> allNames() const;
 
 private:
-    std::vector<std::unordered_map<std::string, Type>> scopes_;
+    std::vector<std::unordered_map<std::string, TypeRef>> scopes_;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -154,13 +265,13 @@ private:
     std::string filename_;
     SymbolTable symbols_;
     bool insideClass_ = false;
-    Type currentReturnType_;           // expected return type of the current function
+    TypeRef currentReturnType_;        // expected return type of the current function
     bool hasExplicitReturnType_ = false;
     std::string currentClassName_;     // name of the class being checked
 
     // ── Result slot for expression visits ─────────────────────────────────
     // Set by each visit(ExprNode) override; read back by checkExpr().
-    Type exprResult_;
+    TypeRef exprResult_;
 
     // ── Type parameter tracking ────────────────────────────────────
     std::vector<std::string> currentTypeParams_;
@@ -168,8 +279,8 @@ private:
     // ── Class and interface tables ─────────────────────────────────
     struct MethodInfo {
         std::string name;
-        Type returnType;
-        std::vector<Type> paramTypes;
+        TypeRef returnType;
+        std::vector<TypeRef> paramTypes;
     };
     struct ClassInfo {
         std::string name;
@@ -190,15 +301,15 @@ private:
     // ── Scope helpers ──────────────────────────────────────────────────
     void enterScope();
     void exitScope();
-    void declare(const std::string& name, const Type& type, int line, int col);
-    Type lookup(const std::string& name, int line, int col);
+    void declare(const std::string& name, const TypeRef& type, int line, int col);
+    TypeRef lookup(const std::string& name, int line, int col);
 
     // ── Type resolution ────────────────────────────────────────────────
-    Type resolveTypeName(const std::string& name) const;
-    Type unify(const Type& a, const Type& b, int line, int col);
-    Type promoteNumeric(const Type& a, const Type& b);
-    bool isSubtype(const Type& sub, const Type& super) const;
-    bool isAssignableTo(const Type& from, const Type& to) const;
+    TypeRef resolveTypeName(const std::string& name) const;
+    TypeRef unify(const TypeRef& a, const TypeRef& b, int line, int col);
+    TypeRef promoteNumeric(const TypeRef& a, const TypeRef& b);
+    bool isSubtype(const TypeRef& sub, const TypeRef& super) const;
+    bool isAssignableTo(const TypeRef& from, const TypeRef& to) const;
     bool classImplementsInterface(const std::string& className, const std::string& ifaceName) const;
 
     // ── AST traversal helpers ──────────────────────────────────────────
@@ -206,7 +317,7 @@ private:
     // They call node.accept(*this) and return/carry the result.
     void checkStmt(const ast::Stmt& stmt);
     void checkStmtList(const ast::StmtList& stmts);
-    Type checkExpr(const ast::Expr& expr);
+    TypeRef checkExpr(const ast::Expr& expr);
 
     void error(const std::string& msg, int line, int col,
                const std::string& hint = "");

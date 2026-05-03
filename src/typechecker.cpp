@@ -51,131 +51,125 @@ static bool stmtListHasReturn(const ast::StmtList& stmts) {
 // Type
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-bool Type::operator==(const Type& o) const {
-    if (kind != o.kind) return false;
-    if (kind == Class || kind == Func || kind == Interface || kind == TypeVar) {
-        if (name != o.name) return false;
+
+// â”€â”€â”€ TypeNode base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+static const std::string& emptyStr() { static std::string s; return s; }
+const std::string& TypeNode::typeName() const { return emptyStr(); }
+bool TypeNode::isAssignableTo(const TypeNode& /*other*/) const { return false; }
+
+bool typeEquals(const TypeRef& a, const TypeRef& b) {
+    if (!a && !b) return true; if (!a || !b) return false;
+    return a->equals(*b);
+}
+
+// â”€â”€â”€ PrimitiveType â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+std::string PrimitiveType::toString() const {
+    switch (kind) {
+        case Int: return "int"; case Float: return "float"; case Str: return "str";
+        case Bool: return "bool"; case Void: return "void"; case Null: return "null";
+        default: return "unknown";
     }
-    if (params.size() != o.params.size()) return false;
-    for (size_t i = 0; i < params.size(); i++) {
-        if (!(params[i] == o.params[i])) return false;
-    }
+}
+bool PrimitiveType::equals(const TypeNode& o) const { return kind == o.kind; }
+
+// â”€â”€â”€ ListType â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+std::string ListType::toString() const { return "list[" + (elem ? elem->toString() : "unknown") + "]"; }
+bool ListType::equals(const TypeNode& o) const {
+    if (o.kind != List) return false;
+    return typeEquals(elem, static_cast<const ListType&>(o).elem);
+}
+
+// â”€â”€â”€ DictType â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+std::string DictType::toString() const {
+    return "dict[" + (key?key->toString():"unknown") + ", " + (value?value->toString():"unknown") + "]";
+}
+bool DictType::equals(const TypeNode& o) const {
+    if (o.kind != Dict) return false;
+    auto& d = static_cast<const DictType&>(o);
+    return typeEquals(key, d.key) && typeEquals(value, d.value);
+}
+
+// â”€â”€â”€ TupleType â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+std::string TupleType::toString() const {
+    std::string s = "tuple[";
+    for (size_t i = 0; i < elems.size(); i++) { if (i) s += ", "; s += elems[i]?elems[i]->toString():"unknown"; }
+    return s + "]";
+}
+bool TupleType::equals(const TypeNode& o) const {
+    if (o.kind != Tuple) return false;
+    auto& t = static_cast<const TupleType&>(o);
+    if (elems.size() != t.elems.size()) return false;
+    for (size_t i = 0; i < elems.size(); i++) if (!typeEquals(elems[i], t.elems[i])) return false;
     return true;
 }
 
-std::string Type::toString() const {
-    switch (kind) {
-        case Int:     return "int";
-        case Float:   return "float";
-        case Str:     return "str";
-        case Bool:    return "bool";
-        case Void:    return "void";
-        case Null:    return "null";
-        case Unknown: return "unknown";
-        case List:
-            return "list[" + (params.empty() ? "unknown" : params[0].toString()) + "]";
-        case Dict:
-            return "dict[" +
-                   (params.size() > 0 ? params[0].toString() : "unknown") + ", " +
-                   (params.size() > 1 ? params[1].toString() : "unknown") + "]";
-        case Tuple: {
-            std::string s = "tuple[";
-            for (size_t i = 0; i < params.size(); i++) {
-                if (i > 0) s += ", ";
-                s += params[i].toString();
-            }
-            return s + "]";
-        }
-        case Func: {
-            std::string s = "func " + name + "(";
-            for (size_t i = 1; i < params.size(); i++) {
-                if (i > 1) s += ", ";
-                s += params[i].toString();
-            }
-            s += ") -> ";
-            s += params.empty() ? "void" : params[0].toString();
-            return s;
-        }
-        case Class:
-            return name;
-        case Union: {
-            std::string s;
-            for (size_t i = 0; i < params.size(); i++) {
-                if (i > 0) s += " | ";
-                s += params[i].toString();
-            }
-            return s;
-        }
-        case Interface:
-            return name;
-        case TypeVar:
-            return name;
-    }
-    return "unknown";
+// â”€â”€â”€ FuncType â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+std::string FuncType::toString() const {
+    std::string s = "func " + name + "(";
+    for (size_t i = 0; i < paramTypes.size(); i++) { if (i) s += ", "; s += paramTypes[i]?paramTypes[i]->toString():"unknown"; }
+    return s + ") -> " + (retType?retType->toString():"void");
+}
+std::string FuncType::toUserString() const {
+    std::string s = "(";
+    for (size_t i = 0; i < paramTypes.size(); i++) { if (i) s += ", "; s += paramTypes[i]?paramTypes[i]->toUserString():"unknown"; }
+    return s + ") -> " + (retType?retType->toUserString():"void");
+}
+bool FuncType::equals(const TypeNode& o) const {
+    if (o.kind != Func) return false;
+    auto& f = static_cast<const FuncType&>(o);
+    if (name != f.name || !typeEquals(retType, f.retType)) return false;
+    if (paramTypes.size() != f.paramTypes.size()) return false;
+    for (size_t i = 0; i < paramTypes.size(); i++) if (!typeEquals(paramTypes[i], f.paramTypes[i])) return false;
+    return true;
 }
 
-// toUserString — user-facing Visuall type syntax.
-// Identical to toString() except Func uses (p1, p2) -> ret notation.
-std::string Type::toUserString() const {
-    switch (kind) {
-        case Int:     return "int";
-        case Float:   return "float";
-        case Str:     return "str";
-        case Bool:    return "bool";
-        case Void:    return "void";
-        case Null:    return "null";
-        case Unknown: return "unknown";
-        case List:
-            return "list[" + (params.empty() ? "unknown" : params[0].toUserString()) + "]";
-        case Dict:
-            return "dict[" +
-                   (params.size() > 0 ? params[0].toUserString() : "unknown") + ", " +
-                   (params.size() > 1 ? params[1].toUserString() : "unknown") + "]";
-        case Tuple: {
-            std::string s = "tuple[";
-            for (size_t i = 0; i < params.size(); i++) {
-                if (i > 0) s += ", ";
-                s += params[i].toUserString();
-            }
-            return s + "]";
-        }
-        case Func: {
-            // User-facing: (int, str) -> bool  (omit internal name)
-            std::string s = "(";
-            for (size_t i = 1; i < params.size(); i++) {
-                if (i > 1) s += ", ";
-                s += params[i].toUserString();
-            }
-            s += ") -> ";
-            s += params.empty() ? "void" : params[0].toUserString();
-            return s;
-        }
-        case Class:
-            return name;
-        case Union: {
-            std::string s;
-            for (size_t i = 0; i < params.size(); i++) {
-                if (i > 0) s += " | ";
-                s += params[i].toUserString();
-            }
-            return s;
-        }
-        case Interface:
-            return name;
-        case TypeVar:
-            return name;
-    }
-    return "unknown";
+// â”€â”€â”€ Other TypeNode subclasses â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+bool ClassType::equals(const TypeNode& o) const {
+    return o.kind == Class && name == static_cast<const ClassType&>(o).name;
+}
+bool InterfaceTypeNode::equals(const TypeNode& o) const {
+    return o.kind == Interface && name == static_cast<const InterfaceTypeNode&>(o).name;
+}
+bool TypeVarNode::equals(const TypeNode& o) const {
+    return o.kind == TypeVar && name == static_cast<const TypeVarNode&>(o).name;
+}
+std::string UnionType::toString() const {
+    std::string s;
+    for (size_t i = 0; i < members.size(); i++) { if (i) s += " | "; s += members[i]?members[i]->toString():"unknown"; }
+    return s;
+}
+bool UnionType::equals(const TypeNode& o) const {
+    if (o.kind != Union) return false;
+    auto& u = static_cast<const UnionType&>(o);
+    if (members.size() != u.members.size()) return false;
+    for (size_t i = 0; i < members.size(); i++) if (!typeEquals(members[i], u.members[i])) return false;
+    return true;
+}
+std::string NullableType::toString() const { return (inner?inner->toString():"unknown") + " | null"; }
+bool NullableType::equals(const TypeNode& o) const {
+    if (o.kind != Nullable) return false;
+    return typeEquals(inner, static_cast<const NullableType&>(o).inner);
 }
 
-Type Type::makeFunc(const std::string& n, Type ret, std::vector<Type> paramTypes) {
-    // params[0] = return type, params[1..] = parameter types
-    std::vector<Type> all;
-    all.push_back(std::move(ret));
-    for (auto& p : paramTypes) all.push_back(std::move(p));
-    return Type(Func, n, std::move(all));
+// â”€â”€â”€ Factory functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+TypeRef makeInt()     { return std::make_shared<PrimitiveType>(TypeNode::Int); }
+TypeRef makeFloat()   { return std::make_shared<PrimitiveType>(TypeNode::Float); }
+TypeRef makeStr()     { return std::make_shared<PrimitiveType>(TypeNode::Str); }
+TypeRef makeBool()    { return std::make_shared<PrimitiveType>(TypeNode::Bool); }
+TypeRef makeVoid()    { return std::make_shared<PrimitiveType>(TypeNode::Void); }
+TypeRef makeNull()    { return std::make_shared<PrimitiveType>(TypeNode::Null); }
+TypeRef makeUnknown() { return std::make_shared<PrimitiveType>(TypeNode::Unknown); }
+TypeRef makeList(TypeRef e) { return std::make_shared<ListType>(std::move(e)); }
+TypeRef makeDict(TypeRef k, TypeRef v) { return std::make_shared<DictType>(std::move(k),std::move(v)); }
+TypeRef makeTuple(std::vector<TypeRef> e) { return std::make_shared<TupleType>(std::move(e)); }
+TypeRef makeFunc(const std::string& n, TypeRef r, std::vector<TypeRef> p) {
+    return std::make_shared<FuncType>(n,std::move(r),std::move(p));
 }
-
+TypeRef makeClass(const std::string& n)     { return std::make_shared<ClassType>(n); }
+TypeRef makeInterface(const std::string& n) { return std::make_shared<InterfaceTypeNode>(n); }
+TypeRef makeTypeVar(const std::string& n)   { return std::make_shared<TypeVarNode>(n); }
+TypeRef makeUnion(std::vector<TypeRef> m) { return std::make_shared<UnionType>(std::move(m)); }
+TypeRef makeNullable(TypeRef i) { return std::make_shared<NullableType>(std::move(i)); }
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // SymbolTable
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -188,7 +182,7 @@ void SymbolTable::exitScope() {
     if (!scopes_.empty()) scopes_.pop_back();
 }
 
-void SymbolTable::declare(const std::string& name, const Type& type) {
+void SymbolTable::declare(const std::string& name, const TypeRef& type) {
     if (!scopes_.empty()) {
         scopes_.back()[name] = type;
     }
@@ -201,15 +195,15 @@ bool SymbolTable::isDeclared(const std::string& name) const {
     return false;
 }
 
-Type SymbolTable::lookup(const std::string& name) const {
+TypeRef SymbolTable::lookup(const std::string& name) const {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
         auto found = it->find(name);
         if (found != it->end()) return found->second;
     }
-    return Type::makeUnknown();
+    return makeUnknown();
 }
 
-bool SymbolTable::lookupInCurrentScope(const std::string& name, Type& out) const {
+bool SymbolTable::lookupInCurrentScope(const std::string& name, TypeRef& out) const {
     if (scopes_.empty()) return false;
     auto it = scopes_.back().find(name);
     if (it != scopes_.back().end()) {
@@ -234,7 +228,7 @@ std::vector<std::string> SymbolTable::allNames() const {
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 TypeChecker::TypeChecker(const std::string& filename)
-    : filename_(filename), currentReturnType_(Type::makeVoid()) {}
+    : filename_(filename), currentReturnType_(makeVoid()) {}
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Scope helpers
@@ -243,16 +237,16 @@ TypeChecker::TypeChecker(const std::string& filename)
 void TypeChecker::enterScope() { symbols_.enterScope(); }
 void TypeChecker::exitScope()  { symbols_.exitScope(); }
 
-void TypeChecker::declare(const std::string& name, const Type& type, int line, int col) {
+void TypeChecker::declare(const std::string& name, const TypeRef& type, int line, int col) {
     (void)line; (void)col;
     symbols_.declare(name, type);
 }
 
-Type TypeChecker::lookup(const std::string& name, int line, int col) {
+TypeRef TypeChecker::lookup(const std::string& name, int line, int col) {
     if (!symbols_.isDeclared(name)) {
         // Builtin functions are always valid as callees — don't report them as undefined.
         if (isBuiltinFunction(name)) {
-            return Type::makeUnknown();
+            return makeUnknown();
         }
         // Suggest a similar name in scope via Levenshtein distance.
         std::string hint;
@@ -278,16 +272,16 @@ Type TypeChecker::lookup(const std::string& name, int line, int col) {
 // Type resolution from annotation strings
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-Type TypeChecker::resolveTypeName(const std::string& name) const {
+TypeRef TypeChecker::resolveTypeName(const std::string& name) const {
     // Function types: (int,str)->bool
     if (!name.empty() && name[0] == '(') {
         auto arrowPos = name.find(")->");
         if (arrowPos != std::string::npos) {
             std::string paramPart = name.substr(1, arrowPos - 1);
             std::string retPart = name.substr(arrowPos + 3);
-            Type retType = resolveTypeName(retPart);
+            TypeRef retType = resolveTypeName(retPart);
 
-            std::vector<Type> paramTypes;
+            std::vector<TypeRef> paramTypes;
             if (!paramPart.empty()) {
                 // Split on commas (simple split â€” no nested commas expected)
                 size_t start = 0;
@@ -298,14 +292,14 @@ Type TypeChecker::resolveTypeName(const std::string& name) const {
                     start = comma + 1;
                 }
             }
-            return Type::makeFunc("<fn_type>", retType, std::move(paramTypes));
+            return makeFunc("<fn_type>", retType, std::move(paramTypes));
         }
     }
 
     // Union types: "int|null"
     auto pipePos = name.find('|');
     if (pipePos != std::string::npos) {
-        std::vector<Type> members;
+        std::vector<TypeRef> members;
         size_t start = 0;
         while (start < name.size()) {
             auto end = name.find('|', start);
@@ -313,7 +307,7 @@ Type TypeChecker::resolveTypeName(const std::string& name) const {
             members.push_back(resolveTypeName(name.substr(start, end - start)));
             start = end + 1;
         }
-        return Type(Type::Union, std::move(members));
+        return makeUnion(std::move(members));
     }
 
     // Generic type args: list[int]
@@ -324,63 +318,63 @@ Type TypeChecker::resolveTypeName(const std::string& name) const {
         if (closeBracket != std::string::npos && closeBracket > bracketPos) {
             std::string inner = name.substr(bracketPos + 1, closeBracket - bracketPos - 1);
             if (base == "list") {
-                return Type::makeList(resolveTypeName(inner));
+                return makeList(resolveTypeName(inner));
             }
             if (base == "dict") {
                 auto comma = inner.find(',');
                 if (comma != std::string::npos) {
-                    return Type::makeDict(
+                    return makeDict(
                         resolveTypeName(inner.substr(0, comma)),
                         resolveTypeName(inner.substr(comma + 1)));
                 }
             }
         }
-        return Type::makeClass(base);
+        return makeClass(base);
     }
 
     // Check for type variable
     for (const auto& tp : currentTypeParams_) {
-        if (tp == name) return Type::makeTypeVar(name);
+        if (tp == name) return makeTypeVar(name);
     }
 
-    if (name == "int")   return Type::makeInt();
-    if (name == "float") return Type::makeFloat();
-    if (name == "str")   return Type::makeStr();
-    if (name == "bool")  return Type::makeBool();
-    if (name == "void")  return Type::makeVoid();
-    if (name == "null")  return Type::makeNull();
+    if (name == "int")   return makeInt();
+    if (name == "float") return makeFloat();
+    if (name == "str")   return makeStr();
+    if (name == "bool")  return makeBool();
+    if (name == "void")  return makeVoid();
+    if (name == "null")  return makeNull();
 
     // Check for interface
     if (interfaceTable_.count(name)) {
-        return Type::makeInterface(name);
+        return makeInterface(name);
     }
 
     // Treat anything else as a class type.
-    return Type::makeClass(name);
+    return makeClass(name);
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Unification â€” resolve two types to a common type, or error.
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-Type TypeChecker::unify(const Type& a, const Type& b, int line, int col) {
-    if (a.isUnknown()) return b;
-    if (b.isUnknown()) return a;
-    if (a == b) return a;
+TypeRef TypeChecker::unify(const TypeRef& a, const TypeRef& b, int line, int col) {
+    if (a->isUnknown()) return b;
+    if (b->isUnknown()) return a;
+    if (typeEquals(a, b)) return a;
 
     // Numeric promotion: int + float â†’ float
-    if (a.isNumeric() && b.isNumeric()) {
+    if (a->isNumeric() && b->isNumeric()) {
         return promoteNumeric(a, b);
     }
 
     // null is assignable to any reference type
-    if (a.kind == Type::Null || b.kind == Type::Null) {
-        return a.kind == Type::Null ? b : a;
+    if (a->kind == TypeNode::Null || b->kind == TypeNode::Null) {
+        return a->kind == TypeNode::Null ? b : a;
     }
 
     // TypeVar matches anything
-    if (a.kind == Type::TypeVar || b.kind == Type::TypeVar) {
-        return a.kind == Type::TypeVar ? b : a;
+    if (a->kind == TypeNode::TypeVar || b->kind == TypeNode::TypeVar) {
+        return a->kind == TypeNode::TypeVar ? b : a;
     }
 
     // Subtype relationships
@@ -389,30 +383,30 @@ Type TypeChecker::unify(const Type& a, const Type& b, int line, int col) {
 
     // Suggest a conversion function when types are simple primitives.
     std::string hint;
-    if (b.kind == Type::Int && !a.isUnknown())
+    if (b->kind == TypeNode::Int && !a->isUnknown())
         hint = "did you mean to call int(x)?";
-    else if (b.kind == Type::Float && !a.isUnknown())
+    else if (b->kind == TypeNode::Float && !a->isUnknown())
         hint = "did you mean to call float(x)?";
-    else if (b.kind == Type::Str && !a.isUnknown())
+    else if (b->kind == TypeNode::Str && !a->isUnknown())
         hint = "did you mean to call str(x)?";
-    else if (b.kind == Type::Bool && !a.isUnknown())
+    else if (b->kind == TypeNode::Bool && !a->isUnknown())
         hint = "did you mean to call bool(x)?";
-    error("Cannot assign " + a.toUserString() + " to " + b.toUserString(), line, col, hint);
-    return Type::makeUnknown();
+    error("Cannot assign " + a->toUserString() + " to " + b->toUserString(), line, col, hint);
+    return makeUnknown();
 }
 
-Type TypeChecker::promoteNumeric(const Type& a, const Type& b) {
-    if (a.kind == Type::Float || b.kind == Type::Float)
-        return Type::makeFloat();
-    return Type::makeInt();
+TypeRef TypeChecker::promoteNumeric(const TypeRef& a, const TypeRef& b) {
+    if (a->kind == TypeNode::Float || b->kind == TypeNode::Float)
+        return makeFloat();
+    return makeInt();
 }
 
-bool TypeChecker::isSubtype(const Type& sub, const Type& super) const {
-    if (sub == super) return true;
-    if (sub.kind == Type::Class && super.kind == Type::Class) {
-        std::string current = sub.name;
+bool TypeChecker::isSubtype(const TypeRef& sub, const TypeRef& super) const {
+    if (typeEquals(sub, super)) return true;
+    if (sub->kind == TypeNode::Class && super->kind == TypeNode::Class) {
+        std::string current = static_cast<const ClassType*>(sub.get())->name;
         while (!current.empty()) {
-            if (current == super.name) return true;
+            if (current == static_cast<const ClassType*>(super.get())->name) return true;
             auto it = classTable_.find(current);
             if (it == classTable_.end()) break;
             current = it->second.baseClass;
@@ -421,47 +415,47 @@ bool TypeChecker::isSubtype(const Type& sub, const Type& super) const {
     return false;
 }
 
-bool TypeChecker::isAssignableTo(const Type& from, const Type& to) const {
-    if (from == to) return true;
-    if (from.isUnknown() || to.isUnknown()) return true;
-    if (from.kind == Type::Null) return true; // null assignable to any ref
+bool TypeChecker::isAssignableTo(const TypeRef& from, const TypeRef& to) const {
+    if (typeEquals(from, to)) return true;
+    if (from->isUnknown() || to->isUnknown()) return true;
+    if (from->kind == TypeNode::Null) return true; // null assignable to any ref
 
     // TypeVar matches anything
-    if (from.kind == Type::TypeVar || to.kind == Type::TypeVar) return true;
+    if (from->kind == TypeNode::TypeVar || to->kind == TypeNode::TypeVar) return true;
 
     // Numeric promotion (int â†’ float only)
-    if (from.isNumeric() && to.isNumeric()) {
-        if (from.kind == Type::Int && to.kind == Type::Float) return true;
+    if (from->isNumeric() && to->isNumeric()) {
+        if (from->kind == TypeNode::Int && to->kind == TypeNode::Float) return true;
     }
 
     // Union target: check if from is any member
-    if (to.kind == Type::Union) {
-        for (const auto& m : to.params) {
+    if (to->kind == TypeNode::Union) {
+        for (const auto& m : static_cast<const UnionType*>(to.get())->members) {
             if (isAssignableTo(from, m)) return true;
         }
         return false;
     }
 
     // Class subtyping
-    if (from.kind == Type::Class && to.kind == Type::Class) {
+    if (from->kind == TypeNode::Class && to->kind == TypeNode::Class) {
         return isSubtype(from, to);
     }
 
     // Function type compatibility: two Func types are compatible if they have
     // the same number of params and compatible param/return types.
-    if (from.kind == Type::Func && to.kind == Type::Func) {
-        if (from.params.size() != to.params.size()) return false;
+    if (from->kind == TypeNode::Func && to->kind == TypeNode::Func) {
+        if (static_cast<const FuncType*>(from.get())->paramTypes.size() != static_cast<const FuncType*>(to.get())->paramTypes.size()) return false;
         // params[0] = return type, params[1..] = parameter types
-        for (size_t i = 0; i < from.params.size(); i++) {
-            if (from.params[i].isUnknown() || to.params[i].isUnknown()) continue;
-            if (from.params[i] != to.params[i]) return false;
+        for (size_t i = 0; i < static_cast<const FuncType*>(from.get())->paramTypes.size(); i++) {
+            if (static_cast<const FuncType*>(from.get())->paramTypes[i]->isUnknown() || static_cast<const FuncType*>(to.get())->paramTypes[i]->isUnknown()) continue;
+            if (!typeEquals(static_cast<const FuncType*>(from.get())->paramTypes[i], static_cast<const FuncType*>(to.get())->paramTypes[i])) return false;
         }
         return true;
     }
 
     // Interface: class implements interface
-    if (from.kind == Type::Class && to.kind == Type::Interface) {
-        return classImplementsInterface(from.name, to.name);
+    if (from->kind == TypeNode::Class && to->kind == TypeNode::Interface) {
+        return classImplementsInterface(static_cast<const ClassType*>(from.get())->name, static_cast<const ClassType*>(to.get())->name);
     }
 
     return false;
@@ -501,22 +495,22 @@ void TypeChecker::check(const ast::Program& program) {
         if (auto* f = dynamic_cast<const ast::FuncDef*>(stmt.get())) {
             auto savedTP = currentTypeParams_;
             currentTypeParams_ = f->typeParams;
-            std::vector<Type> paramTypes;
+            std::vector<TypeRef> paramTypes;
             for (const auto& p : f->params) {
                 paramTypes.push_back(
-                    p.typeAnnotation.empty() ? Type::makeUnknown()
+                    p.typeAnnotation.empty() ? makeUnknown()
                                              : resolveTypeName(p.typeAnnotation));
             }
-            Type retType = f->returnType.empty() ? Type::makeUnknown()
+            TypeRef retType = f->returnType.empty() ? makeUnknown()
                                                   : resolveTypeName(f->returnType);
-            declare(f->name, Type::makeFunc(f->name, retType, std::move(paramTypes)),
+            declare(f->name, makeFunc(f->name, retType, std::move(paramTypes)),
                     f->line, f->column);
             if (!f->typeParams.empty()) {
                 funcTypeParams_[f->name] = f->typeParams;
             }
             currentTypeParams_ = savedTP;
         } else if (auto* c = dynamic_cast<const ast::ClassDef*>(stmt.get())) {
-            declare(c->name, Type::makeClass(c->name), c->line, c->column);
+            declare(c->name, makeClass(c->name), c->line, c->column);
             ClassInfo info;
             info.name = c->name;
             info.baseClass = c->baseClass.value_or("");
@@ -529,11 +523,11 @@ void TypeChecker::check(const ast::Program& program) {
                 if (auto* m = dynamic_cast<const ast::FuncDef*>(s.get())) {
                     MethodInfo method;
                     method.name = m->name;
-                    method.returnType = m->returnType.empty() ? Type::makeUnknown()
+                    method.returnType = m->returnType.empty() ? makeUnknown()
                                                                : resolveTypeName(m->returnType);
                     for (const auto& p : m->params) {
                         method.paramTypes.push_back(
-                            p.typeAnnotation.empty() ? Type::makeUnknown()
+                            p.typeAnnotation.empty() ? makeUnknown()
                                                      : resolveTypeName(p.typeAnnotation));
                     }
                     info.methods.push_back(method);
@@ -542,17 +536,17 @@ void TypeChecker::check(const ast::Program& program) {
             currentTypeParams_ = savedTP;
             classTable_[c->name] = info;
         } else if (auto* i = dynamic_cast<const ast::InterfaceDef*>(stmt.get())) {
-            declare(i->name, Type::makeInterface(i->name), i->line, i->column);
+            declare(i->name, makeInterface(i->name), i->line, i->column);
             InterfaceInfo info;
             info.name = i->name;
             for (const auto& m : i->methods) {
                 MethodInfo method;
                 method.name = m.name;
-                method.returnType = m.returnType.empty() ? Type::makeUnknown()
+                method.returnType = m.returnType.empty() ? makeUnknown()
                                                           : resolveTypeName(m.returnType);
                 for (const auto& p : m.params) {
                     method.paramTypes.push_back(
-                        p.typeAnnotation.empty() ? Type::makeUnknown()
+                        p.typeAnnotation.empty() ? makeUnknown()
                                                  : resolveTypeName(p.typeAnnotation));
                 }
                 info.methods.push_back(method);
@@ -584,8 +578,8 @@ void TypeChecker::checkStmt(const ast::Stmt& stmt) {
 }
 
 // â”€â”€ checkExpr â€” delegates to visit() via double dispatch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-Type TypeChecker::checkExpr(const ast::Expr& expr) {
-    exprResult_ = Type::makeUnknown();
+TypeRef TypeChecker::checkExpr(const ast::Expr& expr) {
+    exprResult_ = makeUnknown();
     expr.accept(*this);
     return exprResult_;
 }
@@ -599,24 +593,24 @@ void TypeChecker::visit(const ast::ExprStmt& s) {
 }
 
 void TypeChecker::visit(const ast::AssignStmt& s) {
-    Type rhsType = checkExpr(*s.value);
+    TypeRef rhsType = checkExpr(*s.value);
 
     if (auto* id = dynamic_cast<const ast::Identifier*>(s.target.get())) {
         if (symbols_.isDeclared(id->name)) {
-            Type existing = symbols_.lookup(id->name);
-            if (!existing.isUnknown() && !rhsType.isUnknown() && existing != rhsType) {
-                if (existing.isNumeric() && rhsType.isNumeric()) {
-                    if (existing.kind == Type::Int && rhsType.kind == Type::Float) {
-                        error("Cannot assign " + rhsType.toUserString() +
-                              " to " + existing.toUserString(), s.line, s.column);
+            TypeRef existing = symbols_.lookup(id->name);
+            if (!existing->isUnknown() && !rhsType->isUnknown() && !typeEquals(existing, rhsType)) {
+                if (existing->isNumeric() && rhsType->isNumeric()) {
+                    if (existing->kind == TypeNode::Int && rhsType->kind == TypeNode::Float) {
+                        error("Cannot assign " + rhsType->toUserString() +
+                              " to " + existing->toUserString(), s.line, s.column);
                     }
                 } else {
                     std::string hint;
-                    if (existing.kind == Type::Int) hint = "did you mean to call int(x)?";
-                    else if (existing.kind == Type::Str) hint = "did you mean to call str(x)?";
-                    else if (existing.kind == Type::Float) hint = "did you mean to call float(x)?";
-                    error("Cannot assign " + rhsType.toUserString() +
-                          " to " + existing.toUserString(), s.line, s.column, hint);
+                    if (existing->kind == TypeNode::Int) hint = "did you mean to call int(x)?";
+                    else if (existing->kind == TypeNode::Str) hint = "did you mean to call str(x)?";
+                    else if (existing->kind == TypeNode::Float) hint = "did you mean to call float(x)?";
+                    error("Cannot assign " + rhsType->toUserString() +
+                          " to " + existing->toUserString(), s.line, s.column, hint);
                 }
             }
         } else {
@@ -628,27 +622,27 @@ void TypeChecker::visit(const ast::AssignStmt& s) {
 }
 
 void TypeChecker::visit(const ast::ReturnStmt& s) {
-    Type retType = Type::makeVoid();
+    TypeRef retType = makeVoid();
     if (s.value) {
         retType = checkExpr(*s.value);
     }
-    if (hasExplicitReturnType_ && !currentReturnType_.isUnknown()) {
-        if (retType != currentReturnType_ && !retType.isUnknown()) {
-            if (retType.isNumeric() && currentReturnType_.isNumeric()) {
-                if (currentReturnType_.kind == Type::Int && retType.kind == Type::Float) {
-                    error("Return type mismatch: expected " + currentReturnType_.toUserString() +
-                          ", got " + retType.toUserString(), s.line, s.column);
+    if (hasExplicitReturnType_ && !currentReturnType_->isUnknown()) {
+        if (!typeEquals(retType, currentReturnType_) && !retType->isUnknown()) {
+            if (retType->isNumeric() && currentReturnType_->isNumeric()) {
+                if (currentReturnType_->kind == TypeNode::Int && retType->kind == TypeNode::Float) {
+                    error("Return type mismatch: expected " + currentReturnType_->toUserString() +
+                          ", got " + retType->toUserString(), s.line, s.column);
                 }
             } else {
                 std::string hint;
-                if (currentReturnType_.kind == Type::Int)
+                if (currentReturnType_->kind == TypeNode::Int)
                     hint = "did you mean to call int(x)?";
-                else if (currentReturnType_.kind == Type::Str)
+                else if (currentReturnType_->kind == TypeNode::Str)
                     hint = "did you mean to call str(x)?";
-                else if (currentReturnType_.kind == Type::Float)
+                else if (currentReturnType_->kind == TypeNode::Float)
                     hint = "did you mean to call float(x)?";
-                error("Return type mismatch: expected " + currentReturnType_.toUserString() +
-                      ", got " + retType.toUserString(), s.line, s.column, hint);
+                error("Return type mismatch: expected " + currentReturnType_->toUserString() +
+                      ", got " + retType->toUserString(), s.line, s.column, hint);
             }
         }
     }
@@ -663,7 +657,7 @@ void TypeChecker::visit(const ast::FuncDef& s) {
         checkExpr(*dec);
     }
 
-    Type savedRetType = currentReturnType_;
+    TypeRef savedRetType = currentReturnType_;
     bool savedHasExplicit = hasExplicitReturnType_;
     auto savedTP = currentTypeParams_;
     currentTypeParams_.insert(currentTypeParams_.end(),
@@ -673,16 +667,16 @@ void TypeChecker::visit(const ast::FuncDef& s) {
         currentReturnType_ = resolveTypeName(s.returnType);
         hasExplicitReturnType_ = true;
     } else {
-        currentReturnType_ = Type::makeUnknown();
+        currentReturnType_ = makeUnknown();
         hasExplicitReturnType_ = false;
     }
 
     enterScope();
     for (const auto& tp : s.typeParams) {
-        declare(tp, Type::makeTypeVar(tp), s.line, s.column);
+        declare(tp, makeTypeVar(tp), s.line, s.column);
     }
     for (const auto& p : s.params) {
-        Type pType = p.typeAnnotation.empty() ? Type::makeUnknown()
+        TypeRef pType = p.typeAnnotation.empty() ? makeUnknown()
                                                : resolveTypeName(p.typeAnnotation);
         if (p.defaultValue) {
             checkExpr(*p.defaultValue);
@@ -693,11 +687,11 @@ void TypeChecker::visit(const ast::FuncDef& s) {
 
     // Check for missing return in non-void functions.
     if (hasExplicitReturnType_ &&
-        currentReturnType_.kind != Type::Void &&
-        !currentReturnType_.isUnknown() &&
+        currentReturnType_->kind != TypeNode::Void &&
+        !currentReturnType_->isUnknown() &&
         !stmtListHasReturn(s.body)) {
         error("function '" + s.name + "' missing return statement; "
-              "return type is '" + currentReturnType_.toUserString() + "'",
+              "return type is '" + currentReturnType_->toUserString() + "'",
               s.line, s.column,
               "add 'return <value>' at the end of the function");
     }
@@ -710,14 +704,14 @@ void TypeChecker::visit(const ast::FuncDef& s) {
 }
 
 void TypeChecker::visit(const ast::InitDef& s) {
-    Type savedRetType = currentReturnType_;
+    TypeRef savedRetType = currentReturnType_;
     bool savedHasExplicit = hasExplicitReturnType_;
-    currentReturnType_ = Type::makeVoid();
+    currentReturnType_ = makeVoid();
     hasExplicitReturnType_ = false;
 
     enterScope();
     for (const auto& p : s.params) {
-        Type pType = p.typeAnnotation.empty() ? Type::makeUnknown()
+        TypeRef pType = p.typeAnnotation.empty() ? makeUnknown()
                                                : resolveTypeName(p.typeAnnotation);
         if (p.defaultValue) {
             checkExpr(*p.defaultValue);
@@ -741,14 +735,14 @@ void TypeChecker::visit(const ast::ClassDef& s) {
     currentTypeParams_ = s.typeParams;
 
     enterScope();
-    declare("this", Type::makeClass(s.name), s.line, s.column);
+    declare("this", makeClass(s.name), s.line, s.column);
 
     for (const auto& tp : s.typeParams) {
-        declare(tp, Type::makeTypeVar(tp), s.line, s.column);
+        declare(tp, makeTypeVar(tp), s.line, s.column);
     }
 
     if (s.baseClass) {
-        declare("super", Type::makeClass(*s.baseClass), s.line, s.column);
+        declare("super", makeClass(*s.baseClass), s.line, s.column);
     }
 
     checkStmtList(s.body);
@@ -768,23 +762,23 @@ void TypeChecker::visit(const ast::ClassDef& s) {
                         }
                         for (size_t i = 0; i < childMethod.paramTypes.size() &&
                              i < baseMethod.paramTypes.size(); i++) {
-                            if (!childMethod.paramTypes[i].isUnknown() &&
-                                !baseMethod.paramTypes[i].isUnknown() &&
-                                childMethod.paramTypes[i] != baseMethod.paramTypes[i]) {
+                            if (!childMethod.paramTypes[i]->isUnknown() &&
+                                !baseMethod.paramTypes[i]->isUnknown() &&
+                                !typeEquals(childMethod.paramTypes[i], baseMethod.paramTypes[i])) {
                                 error("Override '" + childMethod.name +
                                       "' has incompatible parameter type: expected " +
-                                      baseMethod.paramTypes[i].toString() +
-                                      ", got " + childMethod.paramTypes[i].toString(),
+                                      baseMethod.paramTypes[i]->toString() +
+                                      ", got " + childMethod.paramTypes[i]->toString(),
                                       s.line, s.column);
                             }
                         }
-                        if (!childMethod.returnType.isUnknown() &&
-                            !baseMethod.returnType.isUnknown() &&
-                            childMethod.returnType != baseMethod.returnType) {
+                        if (!childMethod.returnType->isUnknown() &&
+                            !baseMethod.returnType->isUnknown() &&
+                            !typeEquals(childMethod.returnType, baseMethod.returnType)) {
                             error("Override '" + childMethod.name +
                                   "' has incompatible return type: expected " +
-                                  baseMethod.returnType.toString() +
-                                  ", got " + childMethod.returnType.toString(),
+                                  baseMethod.returnType->toString() +
+                                  ", got " + childMethod.returnType->toString(),
                                   s.line, s.column);
                         }
                     }
@@ -826,28 +820,28 @@ void TypeChecker::visit(const ast::ClassDef& s) {
 }
 
 void TypeChecker::visit(const ast::IfStmt& s) {
-    Type condType = checkExpr(*s.condition);
+    TypeRef condType = checkExpr(*s.condition);
     (void)condType;
 
     // Nullable narrowing: analyze "x != null" conditions
     std::string narrowVar;
-    Type narrowType;
+    TypeRef narrowType;
     bool hasNarrowing = false;
     if (auto* bin = dynamic_cast<const ast::BinaryExpr*>(s.condition.get())) {
         if (bin->op == ast::BinOp::Neq) {
             auto* ident = dynamic_cast<const ast::Identifier*>(bin->left.get());
             auto* null_ = dynamic_cast<const ast::NullLiteral*>(bin->right.get());
             if (ident && null_) {
-                Type varType = symbols_.lookup(ident->name);
-                if (varType.kind == Type::Union) {
-                    std::vector<Type> remaining;
-                    for (const auto& m : varType.params) {
-                        if (m.kind != Type::Null) remaining.push_back(m);
+                TypeRef varType = symbols_.lookup(ident->name);
+                if (varType->kind == TypeNode::Union) {
+                    std::vector<TypeRef> remaining;
+                    for (const auto& m : static_cast<const UnionType*>(varType.get())->members) {
+                        if (m->kind != TypeNode::Null) remaining.push_back(m);
                     }
                     if (remaining.size() == 1) {
                         narrowType = remaining[0];
                     } else if (!remaining.empty()) {
-                        narrowType = Type(Type::Union, std::move(remaining));
+                        narrowType = makeUnion(std::move(remaining));
                     }
                     narrowVar = ident->name;
                     hasNarrowing = true;
@@ -878,11 +872,11 @@ void TypeChecker::visit(const ast::IfStmt& s) {
 }
 
 void TypeChecker::visit(const ast::ForStmt& s) {
-    Type iterType = checkExpr(*s.iterable);
+    TypeRef iterType = checkExpr(*s.iterable);
     enterScope();
-    Type elemType = Type::makeUnknown();
-    if (iterType.kind == Type::List && !iterType.params.empty()) {
-        elemType = iterType.params[0];
+    TypeRef elemType = makeUnknown();
+    if (iterType->kind == TypeNode::List && true) {
+        elemType = static_cast<const ListType*>(iterType.get())->elem;
     }
     declare(s.variable, elemType, s.line, s.column);
     checkStmtList(s.body);
@@ -904,7 +898,7 @@ void TypeChecker::visit(const ast::WithStmt& s) {
     // If there is an 'as' binding, declare it with unknown type
     // (we can't know __enter__'s return type without full method lookup).
     if (!s.asName.empty()) {
-        declare(s.asName, Type::makeUnknown(), s.line, s.column);
+        declare(s.asName, makeUnknown(), s.line, s.column);
     }
     checkStmtList(s.body);
     exitScope();
@@ -918,8 +912,8 @@ void TypeChecker::visit(const ast::TryStmt& s) {
     for (const auto& c : s.catchClauses) {
         enterScope();
         if (!c.varName.empty()) {
-            Type excType = c.exceptionType.empty()
-                               ? Type::makeUnknown()
+            TypeRef excType = c.exceptionType.empty()
+                               ? makeUnknown()
                                : resolveTypeName(c.exceptionType);
             declare(c.varName, excType, s.line, s.column);
         }
@@ -939,15 +933,15 @@ void TypeChecker::visit(const ast::ThrowStmt& s) {
 }
 
 void TypeChecker::visit(const ast::AssertStmt& s) {
-    Type condType = checkExpr(*s.condition);
-    if (condType.kind != Type::Kind::Bool && condType.kind != Type::Kind::Unknown) {
-        throw TypeError("Assert condition must be bool, got '" + condType.toString() + "'",
+    TypeRef condType = checkExpr(*s.condition);
+    if (condType->kind != TypeNode::Kind::Bool && condType->kind != TypeNode::Kind::Unknown) {
+        throw TypeError("Assert condition must be bool, got '" + condType->toString() + "'",
                         filename_, s.line, s.column);
     }
     if (s.message) {
-        Type msgType = checkExpr(*s.message);
-        if (msgType.kind != Type::Kind::Str && msgType.kind != Type::Kind::Unknown) {
-            throw TypeError("Assert message must be str, got '" + msgType.toString() + "'",
+        TypeRef msgType = checkExpr(*s.message);
+        if (msgType->kind != TypeNode::Kind::Str && msgType->kind != TypeNode::Kind::Unknown) {
+            throw TypeError("Assert message must be str, got '" + msgType->toString() + "'",
                             filename_, s.line, s.column);
         }
     }
@@ -966,18 +960,18 @@ void TypeChecker::visit(const ast::DelStmt& s) {
 }
 
 void TypeChecker::visit(const ast::MatchStmt& s) {
-    Type subjectType = checkExpr(*s.subject);
+    TypeRef subjectType = checkExpr(*s.subject);
 
     for (const auto& c : s.cases) {
         if (c.pattern) {
             // Non-wildcard: pattern must be a literal compatible with subject type
-            Type patternType = checkExpr(*c.pattern);
-            if (subjectType.kind != Type::Kind::Unknown &&
-                patternType.kind != Type::Kind::Unknown &&
-                subjectType.kind != patternType.kind) {
+            TypeRef patternType = checkExpr(*c.pattern);
+            if (subjectType->kind != TypeNode::Kind::Unknown &&
+                patternType->kind != TypeNode::Kind::Unknown &&
+                subjectType->kind != patternType->kind) {
                 throw TypeError(
-                    "Match case pattern type '" + patternType.toString() +
-                    "' is incompatible with subject type '" + subjectType.toString() + "'",
+                    "Match case pattern type '" + patternType->toString() +
+                    "' is incompatible with subject type '" + subjectType->toString() + "'",
                     filename_, s.line, s.column);
             }
         }
@@ -991,12 +985,12 @@ void TypeChecker::visit(const ast::ImportStmt& s) {
     std::string modName = s.module;
     auto dotPos = modName.find('.');
     if (dotPos != std::string::npos) modName = modName.substr(0, dotPos);
-    declare(modName, Type::makeUnknown(), s.line, s.column);
+    declare(modName, makeUnknown(), s.line, s.column);
 }
 
 void TypeChecker::visit(const ast::FromImportStmt& s) {
     for (const auto& name : s.names) {
-        declare(name, Type::makeUnknown(), s.line, s.column);
+        declare(name, makeUnknown(), s.line, s.column);
     }
 }
 
@@ -1006,9 +1000,9 @@ void TypeChecker::visit(const ast::PassStmt&)     { /* nothing to check */ }
 void TypeChecker::visit(const ast::InterfaceDef&) { /* registered in first pass */ }
 
 void TypeChecker::visit(const ast::TupleUnpackStmt& s) {
-    Type rhsType = checkExpr(*s.value);
+    TypeRef rhsType = checkExpr(*s.value);
     for (const auto& target : s.targets) {
-        Type elemType = Type::makeUnknown();
+        TypeRef elemType = makeUnknown();
         (void)rhsType;
         declare(target, elemType, s.line, s.column);
     }
@@ -1018,13 +1012,13 @@ void TypeChecker::visit(const ast::TupleUnpackStmt& s) {
 // Expression visit() overrides
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-void TypeChecker::visit(const ast::IntLiteral&)    { exprResult_ = Type::makeInt(); }
-void TypeChecker::visit(const ast::FloatLiteral&)  { exprResult_ = Type::makeFloat(); }
-void TypeChecker::visit(const ast::StringLiteral&) { exprResult_ = Type::makeStr(); }
-void TypeChecker::visit(const ast::FStringLiteral&){ exprResult_ = Type::makeStr(); }
-void TypeChecker::visit(const ast::FStringExpr&)   { exprResult_ = Type::makeUnknown(); }
-void TypeChecker::visit(const ast::BoolLiteral&)   { exprResult_ = Type::makeBool(); }
-void TypeChecker::visit(const ast::NullLiteral&)   { exprResult_ = Type::makeNull(); }
+void TypeChecker::visit(const ast::IntLiteral&)    { exprResult_ = makeInt(); }
+void TypeChecker::visit(const ast::FloatLiteral&)  { exprResult_ = makeFloat(); }
+void TypeChecker::visit(const ast::StringLiteral&) { exprResult_ = makeStr(); }
+void TypeChecker::visit(const ast::FStringLiteral&){ exprResult_ = makeStr(); }
+void TypeChecker::visit(const ast::FStringExpr&)   { exprResult_ = makeUnknown(); }
+void TypeChecker::visit(const ast::BoolLiteral&)   { exprResult_ = makeBool(); }
+void TypeChecker::visit(const ast::NullLiteral&)   { exprResult_ = makeNull(); }
 
 void TypeChecker::visit(const ast::Identifier& e) {
     exprResult_ = lookup(e.name, e.line, e.column);
@@ -1040,117 +1034,117 @@ void TypeChecker::visit(const ast::ThisExpr& e) {
 void TypeChecker::visit(const ast::SuperExpr& e) {
     if (!insideClass_) {
         error("'super' used outside of class", e.line, e.column);
-        exprResult_ = Type::makeUnknown();
+        exprResult_ = makeUnknown();
         return;
     }
     auto clsIt = classTable_.find(currentClassName_);
     if (currentClassName_.empty() || clsIt == classTable_.end() ||
         clsIt->second.baseClass.empty()) {
         error("'super' used in class without base class", e.line, e.column);
-        exprResult_ = Type::makeUnknown();
+        exprResult_ = makeUnknown();
         return;
     }
-    exprResult_ = Type::makeClass(clsIt->second.baseClass);
+    exprResult_ = makeClass(clsIt->second.baseClass);
 }
 
 void TypeChecker::visit(const ast::BinaryExpr& e) {
-    Type lt = checkExpr(*e.left);
-    Type rt = checkExpr(*e.right);
+    TypeRef lt = checkExpr(*e.left);
+    TypeRef rt = checkExpr(*e.right);
 
     switch (e.op) {
         case ast::BinOp::Add:
-            if (lt.kind == Type::Str && rt.kind == Type::Str) { exprResult_ = Type::makeStr(); return; }
-            if (lt.isNumeric() && rt.isNumeric()) { exprResult_ = promoteNumeric(lt, rt); return; }
-            if (!lt.isUnknown() && !rt.isUnknown()) {
-                error("Cannot apply '+' to " + lt.toString() + " and " + rt.toString(),
+            if (lt->kind == TypeNode::Str && rt->kind == TypeNode::Str) { exprResult_ = makeStr(); return; }
+            if (lt->isNumeric() && rt->isNumeric()) { exprResult_ = promoteNumeric(lt, rt); return; }
+            if (!lt->isUnknown() && !rt->isUnknown()) {
+                error("Cannot apply '+' to " + lt->toString() + " and " + rt->toString(),
                       e.line, e.column);
             }
-            exprResult_ = Type::makeUnknown(); return;
+            exprResult_ = makeUnknown(); return;
 
         case ast::BinOp::Sub:
         case ast::BinOp::Mul:
         case ast::BinOp::Div:
         case ast::BinOp::Mod:
         case ast::BinOp::Pow:
-            if (lt.isNumeric() && rt.isNumeric()) { exprResult_ = promoteNumeric(lt, rt); return; }
-            if (!lt.isUnknown() && !rt.isUnknown()) {
+            if (lt->isNumeric() && rt->isNumeric()) { exprResult_ = promoteNumeric(lt, rt); return; }
+            if (!lt->isUnknown() && !rt->isUnknown()) {
                 error("Cannot apply arithmetic to " +
-                      lt.toString() + " and " + rt.toString(), e.line, e.column);
+                      lt->toString() + " and " + rt->toString(), e.line, e.column);
             }
-            exprResult_ = Type::makeUnknown(); return;
+            exprResult_ = makeUnknown(); return;
 
         case ast::BinOp::IntDiv:
-            if (lt.isNumeric() && rt.isNumeric()) { exprResult_ = Type::makeInt(); return; }
-            if (!lt.isUnknown() && !rt.isUnknown()) {
-                error("Cannot apply '//' to " + lt.toString() + " and " + rt.toString(),
+            if (lt->isNumeric() && rt->isNumeric()) { exprResult_ = makeInt(); return; }
+            if (!lt->isUnknown() && !rt->isUnknown()) {
+                error("Cannot apply '//' to " + lt->toString() + " and " + rt->toString(),
                       e.line, e.column);
             }
-            exprResult_ = Type::makeUnknown(); return;
+            exprResult_ = makeUnknown(); return;
 
         case ast::BinOp::Eq:
         case ast::BinOp::Neq:
-            exprResult_ = Type::makeBool(); return;
+            exprResult_ = makeBool(); return;
 
         case ast::BinOp::Lt:
         case ast::BinOp::Gt:
         case ast::BinOp::Lte:
         case ast::BinOp::Gte:
-            if (lt.isNumeric() && rt.isNumeric()) { exprResult_ = Type::makeBool(); return; }
-            if (lt.kind == Type::Str && rt.kind == Type::Str) { exprResult_ = Type::makeBool(); return; }
-            if (!lt.isUnknown() && !rt.isUnknown()) {
-                error("Cannot compare " + lt.toString() + " and " + rt.toString(),
+            if (lt->isNumeric() && rt->isNumeric()) { exprResult_ = makeBool(); return; }
+            if (lt->kind == TypeNode::Str && rt->kind == TypeNode::Str) { exprResult_ = makeBool(); return; }
+            if (!lt->isUnknown() && !rt->isUnknown()) {
+                error("Cannot compare " + lt->toString() + " and " + rt->toString(),
                       e.line, e.column);
             }
-            exprResult_ = Type::makeBool(); return;
+            exprResult_ = makeBool(); return;
 
         case ast::BinOp::And:
         case ast::BinOp::Or:
-            exprResult_ = Type::makeBool(); return;
+            exprResult_ = makeBool(); return;
 
         case ast::BinOp::In:
         case ast::BinOp::NotIn:
-            exprResult_ = Type::makeBool(); return;
+            exprResult_ = makeBool(); return;
 
         case ast::BinOp::BitAnd:
         case ast::BinOp::BitOr:
         case ast::BinOp::BitXor:
         case ast::BinOp::Shl:
         case ast::BinOp::Shr:
-            if ((lt.kind == Type::Int || lt.kind == Type::Bool) &&
-                (rt.kind == Type::Int || rt.kind == Type::Bool)) {
-                exprResult_ = Type::makeInt(); return;
+            if ((lt->kind == TypeNode::Int || lt->kind == TypeNode::Bool) &&
+                (rt->kind == TypeNode::Int || rt->kind == TypeNode::Bool)) {
+                exprResult_ = makeInt(); return;
             }
-            if (lt.kind == Type::Float || rt.kind == Type::Float) {
+            if (lt->kind == TypeNode::Float || rt->kind == TypeNode::Float) {
                 error("Cannot apply bitwise operator to float", e.line, e.column);
-            } else if (!lt.isUnknown() && !rt.isUnknown()) {
+            } else if (!lt->isUnknown() && !rt->isUnknown()) {
                 error("Cannot apply bitwise operator to " +
-                      lt.toString() + " and " + rt.toString(), e.line, e.column);
+                      lt->toString() + " and " + rt->toString(), e.line, e.column);
             }
-            exprResult_ = Type::makeUnknown(); return;
+            exprResult_ = makeUnknown(); return;
     }
-    exprResult_ = Type::makeUnknown();
+    exprResult_ = makeUnknown();
 }
 
 void TypeChecker::visit(const ast::UnaryExpr& e) {
-    Type operandType = checkExpr(*e.operand);
+    TypeRef operandType = checkExpr(*e.operand);
     if (e.op == ast::UnaryOp::Neg) {
-        if (operandType.isNumeric()) { exprResult_ = operandType; return; }
-        if (!operandType.isUnknown()) {
-            error("Cannot negate " + operandType.toString(), e.line, e.column);
+        if (operandType->isNumeric()) { exprResult_ = operandType; return; }
+        if (!operandType->isUnknown()) {
+            error("Cannot negate " + operandType->toString(), e.line, e.column);
         }
-        exprResult_ = Type::makeUnknown(); return;
+        exprResult_ = makeUnknown(); return;
     }
     if (e.op == ast::UnaryOp::BitNot) {
-        if (operandType.kind == Type::Int) { exprResult_ = Type::makeInt(); return; }
-        if (operandType.kind == Type::Float) {
+        if (operandType->kind == TypeNode::Int) { exprResult_ = makeInt(); return; }
+        if (operandType->kind == TypeNode::Float) {
             error("Cannot apply ~ to float", e.line, e.column);
-        } else if (!operandType.isUnknown()) {
-            error("Cannot apply ~ to " + operandType.toString(), e.line, e.column);
+        } else if (!operandType->isUnknown()) {
+            error("Cannot apply ~ to " + operandType->toString(), e.line, e.column);
         }
-        exprResult_ = Type::makeUnknown(); return;
+        exprResult_ = makeUnknown(); return;
     }
     // Not
-    exprResult_ = Type::makeBool();
+    exprResult_ = makeBool();
 }
 
 void TypeChecker::visit(const ast::CallExpr& e) {
@@ -1159,13 +1153,13 @@ void TypeChecker::visit(const ast::CallExpr& e) {
         // map(fn, list) -> list[unknown]
         if (id->name == "map") {
             for (const auto& a : e.args) checkExpr(*a);
-            exprResult_ = Type::makeList(Type::makeUnknown());
+            exprResult_ = makeList(makeUnknown());
             return;
         }
         // filter(fn, list) -> list[unknown]
         if (id->name == "filter") {
             for (const auto& a : e.args) checkExpr(*a);
-            exprResult_ = Type::makeList(Type::makeUnknown());
+            exprResult_ = makeList(makeUnknown());
             return;
         }
         if (id->name == "input") {
@@ -1174,52 +1168,52 @@ void TypeChecker::visit(const ast::CallExpr& e) {
                       std::to_string(e.args.size()), e.line, e.column);
             }
             for (const auto& a : e.args) {
-                Type argType = checkExpr(*a);
-                if (!argType.isUnknown() && argType.kind != Type::Str) {
-                    error("input() argument must be str, got " + argType.toString(),
+                TypeRef argType = checkExpr(*a);
+                if (!argType->isUnknown() && argType->kind != TypeNode::Str) {
+                    error("input() argument must be str, got " + argType->toString(),
                           e.line, e.column);
                 }
             }
-            exprResult_ = Type::makeStr();
+            exprResult_ = makeStr();
             return;
         }
     }
 
-    Type calleeType = checkExpr(*e.callee);
+    TypeRef calleeType = checkExpr(*e.callee);
 
-    std::vector<Type> argTypes;
+    std::vector<TypeRef> argTypes;
     for (const auto& a : e.args) {
         argTypes.push_back(checkExpr(*a));
     }
 
-    if (calleeType.kind == Type::Func) {
-        std::string funcName = calleeType.name;
+    if (calleeType->kind == TypeNode::Func) {
+        std::string funcName = static_cast<const ClassType*>(calleeType.get())->name;
         auto tpIt = funcTypeParams_.find(funcName);
 
         if (tpIt != funcTypeParams_.end() && !tpIt->second.empty()) {
             const auto& typeParamNames = tpIt->second;
-            std::unordered_map<std::string, Type> typeArgMap;
+            std::unordered_map<std::string, TypeRef> typeArgMap;
 
             if (!e.typeArgs.empty()) {
                 for (size_t i = 0; i < typeParamNames.size() && i < e.typeArgs.size(); i++) {
                     typeArgMap[typeParamNames[i]] = resolveTypeName(e.typeArgs[i]);
                 }
             } else {
-                for (size_t i = 0; i < argTypes.size() && i + 1 < calleeType.params.size(); i++) {
-                    const Type& paramType = calleeType.params[i + 1];
-                    if (paramType.kind == Type::TypeVar) {
-                        typeArgMap[paramType.name] = argTypes[i];
+                for (size_t i = 0; i < argTypes.size() && i + 1 < (1 + static_cast<const FuncType*>(calleeType.get())->paramTypes.size()); i++) {
+                    const TypeRef& paramType = static_cast<const FuncType*>(calleeType.get())->paramTypes[i];
+                    if (paramType->kind == TypeNode::TypeVar) {
+                        typeArgMap[static_cast<const TypeVarNode*>(paramType.get())->name] = argTypes[i];
                     }
                 }
             }
 
-            Type retType = calleeType.params.empty() ? Type::makeVoid() : calleeType.params[0];
-            if (retType.kind == Type::TypeVar) {
-                auto it = typeArgMap.find(retType.name);
+            TypeRef retType = static_cast<const FuncType*>(calleeType.get())->retType;
+            if (retType->kind == TypeNode::TypeVar) {
+                auto it = typeArgMap.find(static_cast<const TypeVarNode*>(retType.get())->name);
                 if (it != typeArgMap.end()) retType = it->second;
             }
 
-            size_t expectedArgs = calleeType.params.size() - 1;
+            size_t expectedArgs = (static_cast<const FuncType*>(calleeType.get())->paramTypes.size());
             if (argTypes.size() != expectedArgs) {
                 error("Function '" + funcName + "' expects " +
                       std::to_string(expectedArgs) + " argument(s), got " +
@@ -1230,155 +1224,155 @@ void TypeChecker::visit(const ast::CallExpr& e) {
         }
 
         // Non-generic function
-        size_t expectedArgs = calleeType.params.size() - 1;
+        size_t expectedArgs = (static_cast<const FuncType*>(calleeType.get())->paramTypes.size());
         if (argTypes.size() != expectedArgs) {
-            error("Function '" + calleeType.name + "' expects " +
+            error("Function '" + static_cast<const ClassType*>(calleeType.get())->name + "' expects " +
                   std::to_string(expectedArgs) + " argument(s), got " +
                   std::to_string(argTypes.size()), e.line, e.column);
         }
-        for (size_t i = 0; i < argTypes.size() && i + 1 < calleeType.params.size(); i++) {
-            const Type& expected = calleeType.params[i + 1];
-            const Type& actual = argTypes[i];
-            if (!expected.isUnknown() && !actual.isUnknown() && expected != actual) {
+        for (size_t i = 0; i < argTypes.size() && i + 1 < (1 + static_cast<const FuncType*>(calleeType.get())->paramTypes.size()); i++) {
+            const TypeRef& expected = static_cast<const FuncType*>(calleeType.get())->paramTypes[i];
+            const TypeRef& actual = argTypes[i];
+            if (!expected->isUnknown() && !actual->isUnknown() && expected != actual) {
                 if (!isAssignableTo(actual, expected)) {
-                    error("Function '" + calleeType.name + "' expects " +
-                          expected.toString() + ", got " + actual.toString(),
+                    error("Function '" + static_cast<const ClassType*>(calleeType.get())->name + "' expects " +
+                          expected->toString() + ", got " + actual->toString(),
                           e.line, e.column);
                 }
             }
         }
-        exprResult_ = calleeType.params.empty() ? Type::makeVoid() : calleeType.params[0];
+        exprResult_ = static_cast<const FuncType*>(calleeType.get())->retType;
         return;
     }
 
-    if (calleeType.kind == Type::Class) {
+    if (calleeType->kind == TypeNode::Class) {
         exprResult_ = calleeType; return;
     }
 
-    if (!calleeType.isUnknown()) {
+    if (!calleeType->isUnknown()) {
         if (auto* id = dynamic_cast<const ast::Identifier*>(e.callee.get())) {
             error("Cannot call non-function '" + id->name + "'", e.line, e.column);
         } else {
-            error("Cannot call non-function type " + calleeType.toString(), e.line, e.column);
+            error("Cannot call non-function type " + calleeType->toString(), e.line, e.column);
         }
     }
 
-    exprResult_ = Type::makeUnknown();
+    exprResult_ = makeUnknown();
 }
 
 void TypeChecker::visit(const ast::MemberExpr& e) {
     checkExpr(*e.object);
-    exprResult_ = Type::makeUnknown();
+    exprResult_ = makeUnknown();
 }
 
 void TypeChecker::visit(const ast::IndexExpr& e) {
-    Type objType = checkExpr(*e.object);
-    Type idxType = checkExpr(*e.index);
+    TypeRef objType = checkExpr(*e.object);
+    TypeRef idxType = checkExpr(*e.index);
     (void)idxType;
 
-    if (objType.kind == Type::List && !objType.params.empty()) {
-        exprResult_ = objType.params[0]; return;
+    if (objType->kind == TypeNode::List) {
+        exprResult_ = static_cast<const ListType*>(objType.get())->elem; return;
     }
-    if (objType.kind == Type::Dict && objType.params.size() >= 2) {
-        exprResult_ = objType.params[1]; return;
+    if (objType->kind == TypeNode::Dict && (objType->kind == TypeNode::Dict)) {
+        exprResult_ = static_cast<const DictType*>(objType.get())->value; return;
     }
-    if (objType.kind == Type::Str) {
-        exprResult_ = Type::makeStr(); return;
+    if (objType->kind == TypeNode::Str) {
+        exprResult_ = makeStr(); return;
     }
-    exprResult_ = Type::makeUnknown();
+    exprResult_ = makeUnknown();
 }
 
 void TypeChecker::visit(const ast::LambdaExpr& e) {
     enterScope();
-    std::vector<Type> paramTypes;
+    std::vector<TypeRef> paramTypes;
     for (const auto& p : e.params) {
-        declare(p, Type::makeUnknown(), e.line, e.column);
-        paramTypes.push_back(Type::makeUnknown());
+        declare(p, makeUnknown(), e.line, e.column);
+        paramTypes.push_back(makeUnknown());
     }
-    Type bodyType = checkExpr(*e.body);
+    TypeRef bodyType = checkExpr(*e.body);
     exitScope();
-    exprResult_ = Type::makeFunc("<lambda>", bodyType, std::move(paramTypes));
+    exprResult_ = makeFunc("<lambda>", bodyType, std::move(paramTypes));
 }
 
 void TypeChecker::visit(const ast::ListExpr& e) {
     if (e.elements.empty()) {
-        exprResult_ = Type::makeList(Type::makeUnknown()); return;
+        exprResult_ = makeList(makeUnknown()); return;
     }
-    Type elemType = checkExpr(*e.elements[0]);
+    TypeRef elemType = checkExpr(*e.elements[0]);
     for (size_t i = 1; i < e.elements.size(); i++) {
-        Type t = checkExpr(*e.elements[i]);
+        TypeRef t = checkExpr(*e.elements[i]);
         elemType = unify(elemType, t, e.line, e.column);
     }
-    exprResult_ = Type::makeList(elemType);
+    exprResult_ = makeList(elemType);
 }
 
 void TypeChecker::visit(const ast::DictExpr& e) {
     if (e.entries.empty()) {
-        exprResult_ = Type::makeDict(Type::makeUnknown(), Type::makeUnknown()); return;
+        exprResult_ = makeDict(makeUnknown(), makeUnknown()); return;
     }
-    Type keyType = checkExpr(*e.entries[0].first);
-    Type valType = checkExpr(*e.entries[0].second);
+    TypeRef keyType = checkExpr(*e.entries[0].first);
+    TypeRef valType = checkExpr(*e.entries[0].second);
     for (size_t i = 1; i < e.entries.size(); i++) {
-        Type kt = checkExpr(*e.entries[i].first);
-        Type vt = checkExpr(*e.entries[i].second);
+        TypeRef kt = checkExpr(*e.entries[i].first);
+        TypeRef vt = checkExpr(*e.entries[i].second);
         keyType = unify(keyType, kt, e.line, e.column);
         valType = unify(valType, vt, e.line, e.column);
     }
-    exprResult_ = Type::makeDict(keyType, valType);
+    exprResult_ = makeDict(keyType, valType);
 }
 
 void TypeChecker::visit(const ast::TupleExpr& e) {
-    std::vector<Type> elemTypes;
+    std::vector<TypeRef> elemTypes;
     for (const auto& el : e.elements) {
         elemTypes.push_back(checkExpr(*el));
     }
-    exprResult_ = Type::makeTuple(std::move(elemTypes));
+    exprResult_ = makeTuple(std::move(elemTypes));
 }
 
 void TypeChecker::visit(const ast::TernaryExpr& e) {
     checkExpr(*e.condition);
-    Type thenType = checkExpr(*e.thenExpr);
-    Type elseType = checkExpr(*e.elseExpr);
+    TypeRef thenType = checkExpr(*e.thenExpr);
+    TypeRef elseType = checkExpr(*e.elseExpr);
     exprResult_ = unify(thenType, elseType, e.line, e.column);
 }
 
 void TypeChecker::visit(const ast::SliceExpr& e) {
-    Type objType = checkExpr(*e.object);
+    TypeRef objType = checkExpr(*e.object);
     if (e.start) checkExpr(*e.start);
     if (e.stop)  checkExpr(*e.stop);
     if (e.step)  checkExpr(*e.step);
-    if (objType.kind == Type::List) { exprResult_ = objType; return; }
-    if (objType.kind == Type::Str)  { exprResult_ = Type::makeStr(); return; }
-    exprResult_ = Type::makeUnknown();
+    if (objType->kind == TypeNode::List) { exprResult_ = objType; return; }
+    if (objType->kind == TypeNode::Str)  { exprResult_ = makeStr(); return; }
+    exprResult_ = makeUnknown();
 }
 
 void TypeChecker::visit(const ast::ListComprehension& e) {
-    Type iterType = checkExpr(*e.iterable);
+    TypeRef iterType = checkExpr(*e.iterable);
     enterScope();
-    Type elemType = Type::makeUnknown();
-    if (iterType.kind == Type::List && !iterType.params.empty()) {
-        elemType = iterType.params[0];
+    TypeRef elemType = makeUnknown();
+    if (iterType->kind == TypeNode::List && true) {
+        elemType = static_cast<const ListType*>(iterType.get())->elem;
     }
     declare(e.variable, elemType, e.line, e.column);
     if (e.condition) checkExpr(*e.condition);
-    Type bodyType = checkExpr(*e.body);
+    TypeRef bodyType = checkExpr(*e.body);
     exitScope();
-    exprResult_ = Type::makeList(bodyType);
+    exprResult_ = makeList(bodyType);
 }
 
 void TypeChecker::visit(const ast::DictComprehension& e) {
-    Type iterType = checkExpr(*e.iterable);
+    TypeRef iterType = checkExpr(*e.iterable);
     enterScope();
-    Type elemType = Type::makeUnknown();
-    if (iterType.kind == Type::List && !iterType.params.empty()) {
-        elemType = iterType.params[0];
+    TypeRef elemType = makeUnknown();
+    if (iterType->kind == TypeNode::List && true) {
+        elemType = static_cast<const ListType*>(iterType.get())->elem;
     }
     declare(e.variable, elemType, e.line, e.column);
     if (e.condition) checkExpr(*e.condition);
-    Type keyType = checkExpr(*e.key);
-    Type valType = checkExpr(*e.value);
+    TypeRef keyType = checkExpr(*e.key);
+    TypeRef valType = checkExpr(*e.value);
     exitScope();
-    exprResult_ = Type::makeDict(keyType, valType);
+    exprResult_ = makeDict(keyType, valType);
 }
 
 void TypeChecker::visit(const ast::SpreadExpr& e) {

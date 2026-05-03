@@ -19,7 +19,7 @@ Source (.vsl) → Lexer → Parser → Type Checker → LLVM IR → O2 Optimizat
 Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best of 3 runs):
 
 | Test | C++ (ms) | Visuall (ms) | Python (ms) | Visuall/C++ | Py/C++ |
-|------|----------|--------------|-------------|-------------|--------|
+|------|----------|--------------|-------------|-------------|--------|+
 | Primes (sieve to 100K ×3) | 7.6 | 7.9 | 196.8 | 1.0x | 25.9x |
 | Collatz (sequence ×5) | 16.7 | 17.5 | 630.6 | 1.0x | 37.8x |
 | Strings (200K f-string builds) | 28.0 | 30.3 | 29.6 | 1.1x | 1.1x |
