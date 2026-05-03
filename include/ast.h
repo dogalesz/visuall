@@ -219,8 +219,11 @@ struct ExprStmt : Stmt {
 struct AssignStmt : Stmt {
     ExprPtr target;
     ExprPtr value;
+    std::vector<ExprPtr> extraTargets; // for chained assignment: a = b = 1
     AssignStmt(ExprPtr t, ExprPtr v)
         : target(std::move(t)), value(std::move(v)) {}
+    AssignStmt(ExprPtr t, ExprPtr v, std::vector<ExprPtr> extras)
+        : target(std::move(t)), value(std::move(v)), extraTargets(std::move(extras)) {}
     void accept(ASTVisitor& v) const override;
 };
 
@@ -293,6 +296,13 @@ struct SpreadExpr : Expr {
     void accept(ASTVisitor& v) const override;
 };
 
+// ── Dict-spread expression: **expr ───────────────────────────────────────
+struct DictSpreadExpr : Expr {
+    ExprPtr operand;
+    explicit DictSpreadExpr(ExprPtr e) : operand(std::move(e)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
 // ── Parameters ─────────────────────────────────────────────────────────────
 struct Param {
     std::string name;
@@ -318,7 +328,8 @@ struct FuncDef : Stmt {
 // ── Class definition ───────────────────────────────────────────────────────
 struct ClassDef : Stmt {
     std::string name;
-    std::optional<std::string> baseClass;       // extends Base
+    std::optional<std::string> baseClass;       // extends Base (primary)
+    std::vector<std::string>   extraBases;      // additional bases (multiple inheritance)
     std::vector<std::string>   interfaces;      // implements I1, I2
     std::vector<std::string>   typeParams;      // <T, U>
     StmtList    body; // methods, init, etc.
@@ -351,9 +362,11 @@ struct IfStmt : Stmt {
 };
 
 struct ForStmt : Stmt {
-    std::string variable;
-    ExprPtr     iterable;
-    StmtList    body;
+    std::string              variable;  // primary loop var (= variables[0] or standalone)
+    std::vector<std::string> variables; // for k,v unpacking; empty = use variable only
+    ExprPtr                  iterable;
+    StmtList                 body;
+    StmtList                 elseBranch; // for...else
     ForStmt(std::string var, ExprPtr iter, StmtList b)
         : variable(std::move(var)), iterable(std::move(iter)),
           body(std::move(b)) {}
@@ -363,6 +376,7 @@ struct ForStmt : Stmt {
 struct WhileStmt : Stmt {
     ExprPtr  condition;
     StmtList body;
+    StmtList elseBranch; // while...else
     WhileStmt(ExprPtr cond, StmtList b)
         : condition(std::move(cond)), body(std::move(b)) {}
     void accept(ASTVisitor& v) const override;
@@ -370,8 +384,9 @@ struct WhileStmt : Stmt {
 
 // ── Error handling ─────────────────────────────────────────────────────────
 struct ThrowStmt : Stmt {
-    ExprPtr expr;
+    std::optional<ExprPtr> expr; // nullopt = bare re-raise
     explicit ThrowStmt(ExprPtr e) : expr(std::move(e)) {}
+    explicit ThrowStmt() : expr(std::nullopt) {} // bare re-raise
     void accept(ASTVisitor& v) const override;
 };
 

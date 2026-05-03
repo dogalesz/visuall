@@ -223,7 +223,8 @@ void CaptureAnalyzer::analyzeStmt(ast::Stmt& stmt) {
     // ── ThrowStmt ──────────────────────────────────────────────────────
     if (auto* s = dynamic_cast<ast::ThrowStmt*>(&stmt)) {
         std::unordered_set<std::string> fv;
-        analyzeExpr(*s->expr, fv);
+        if (s->expr)
+            analyzeExpr(*s->expr.value(), fv);
         return;
     }
 
@@ -361,6 +362,12 @@ void CaptureAnalyzer::analyzeExpr(ast::Expr& expr,
 
     // ── SpreadExpr ─────────────────────────────────────────────────────
     if (auto* e = dynamic_cast<ast::SpreadExpr*>(&expr)) {
+        analyzeExpr(*e->operand, freeVars);
+        return;
+    }
+
+    // ── DictSpreadExpr ─────────────────────────────────────────────────
+    if (auto* e = dynamic_cast<ast::DictSpreadExpr*>(&expr)) {
         analyzeExpr(*e->operand, freeVars);
         return;
     }

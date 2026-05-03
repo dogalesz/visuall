@@ -467,9 +467,12 @@ bool TypeChecker::classImplementsInterface(const std::string& className, const s
     for (const auto& iface : cit->second.interfaces) {
         if (iface == ifaceName) return true;
     }
-    // Also check parent classes
+    // Check parent classes (primary base + extra bases for multiple inheritance).
     if (!cit->second.baseClass.empty()) {
-        return classImplementsInterface(cit->second.baseClass, ifaceName);
+        if (classImplementsInterface(cit->second.baseClass, ifaceName)) return true;
+    }
+    for (const auto& eb : cit->second.extraBases) {
+        if (classImplementsInterface(eb, ifaceName)) return true;
     }
     return false;
 }
@@ -514,6 +517,7 @@ void TypeChecker::check(const ast::Program& program) {
             ClassInfo info;
             info.name = c->name;
             info.baseClass = c->baseClass.value_or("");
+            info.extraBases = c->extraBases;
             info.interfaces = c->interfaces;
             info.typeParams = c->typeParams;
             // Scan methods
@@ -929,7 +933,8 @@ void TypeChecker::visit(const ast::TryStmt& s) {
 }
 
 void TypeChecker::visit(const ast::ThrowStmt& s) {
-    checkExpr(*s.expr);
+    if (s.expr)
+        checkExpr(*s.expr.value());
 }
 
 void TypeChecker::visit(const ast::AssertStmt& s) {
@@ -1376,6 +1381,10 @@ void TypeChecker::visit(const ast::DictComprehension& e) {
 }
 
 void TypeChecker::visit(const ast::SpreadExpr& e) {
+    exprResult_ = checkExpr(*e.operand);
+}
+
+void TypeChecker::visit(const ast::DictSpreadExpr& e) {
     exprResult_ = checkExpr(*e.operand);
 }
 

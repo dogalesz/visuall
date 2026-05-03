@@ -39,6 +39,7 @@ struct ModuleFuncInfo {
 inline bool isBuiltinFunction(const std::string& name) {
     static const std::unordered_set<std::string> builtins = {
         "print", "println", "input", "len", "range", "type",
+        "isinstance",
         "int", "float", "str", "bool",
         "abs", "min", "max", "round",
         "sorted", "reversed", "enumerate", "zip",

@@ -122,17 +122,39 @@ private:
     // ── Loop control ────────────────────────────────────────────────────
     // Stack of (loopHeader, loopExit) blocks for break/continue.
     std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> loopStack_;
+    // Parallel stack: alloca tracking whether a break was taken (for for/while...else).
+    // nullptr means no else branch for the corresponding loop level.
+    std::vector<llvm::AllocaInst*> loopElseAllocas_;
 
     // ── Class context ───────────────────────────────────────────────────
     std::string currentClassName_;
+    std::string currentClassBase_;   // base class name, empty if none
+    // Maps className → primary base class name (for inherited method dispatch and isinstance).
+    std::unordered_map<std::string, std::string> classBaseMap_;
+    // Maps className → all additional bases (multiple inheritance).
+    std::unordered_map<std::string, std::vector<std::string>> classExtraBases_;
     // Maps className → ordered list of field names (populated by ClassAnalyzer)
     std::unordered_map<std::string, std::vector<std::string>> classFields_;
     // Set of "ClassName_methodName" keys for static methods (no implicit this)
     std::unordered_set<std::string> classStaticMethods_;
+    // @property: keys = "ClassName_propName" that have a getter method.
+    std::unordered_set<std::string> classProperties_;
+    // @property setter: keys = "ClassName_propName" that have a setter method.
+    std::unordered_set<std::string> classSetters_;
 
     // ── Generic function store ──────────────────────────────────────────
     std::unordered_map<std::string, const ast::FuncDef*> genericFuncDefs_;
     std::unordered_set<std::string> emittedMonomorphizations_;
+
+    // ── Default parameter support ────────────────────────────────────────
+    // Maps function name → FuncDef* so call sites can fill in missing args
+    // with default values.
+    std::unordered_map<std::string, const ast::FuncDef*> funcDefMap_;
+
+    // ── Variadic (*args) functions ───────────────────────────────────────
+    // Names of functions whose last parameter is variadic; call sites pack
+    // extra args into a VisualList and pass it as the final argument.
+    std::unordered_set<std::string> variadicFuncs_;
 
     // ── Closure support ───────────────────────────────────────────────
     // Track which variables hold closures (fat pointers) so call sites
@@ -155,7 +177,9 @@ private:
     // (byReference captures).  The stack alloca for such a variable holds
     // an i8* pointing to an 8-byte VSL_TAG_BOXED allocation; all reads and
     // writes go through that pointer.
-    std::unordered_set<std::string> boxedVars_;
+    // The mapped llvm::Type* records the original LLVM type of the boxed value
+    // so that reads can reverse the i64 normalization (nullptr = not yet written).
+    std::unordered_map<std::string, llvm::Type*> boxedVars_;
 
     // Scan a flat statement list for any LambdaExpr whose captures are
     // byReference, and populate boxedVars_ with those variable names.
@@ -173,6 +197,9 @@ private:
     // Stack of unwind landing-pad BasicBlocks.  Non-empty when inside a try
     // body; the top is the landing pad that all invoke instructions target.
     std::vector<llvm::BasicBlock*> landingpadStack_;
+
+    // Last caught exception message pointer (for bare 'throw' re-raise).
+    llvm::Value* lastExceptionVal_ = nullptr;
 
     // Set the C++ personality function on fn (idempotent).
     void setPersonalityFn(llvm::Function* fn);
@@ -245,6 +272,7 @@ private:
     void visit(const ast::ListComprehension& n) override;
     void visit(const ast::DictComprehension& n) override;
     void visit(const ast::SpreadExpr& n) override;
+    void visit(const ast::DictSpreadExpr& n) override;
 
     // Result slot set by expression visit()s, read by codegenExpr().
     llvm::Value* valueResult_ = nullptr;
@@ -296,6 +324,7 @@ private:
     llvm::Value* codegenListComprehension(const ast::ListComprehension& node);
     llvm::Value* codegenDictComprehension(const ast::DictComprehension& node);
     llvm::Value* codegenSpreadExpr(const ast::SpreadExpr& node);
+    llvm::Value* codegenDictSpreadExpr(const ast::DictSpreadExpr& node);
 
     void emitMonomorphization(const ast::FuncDef* def,
                                const std::vector<std::string>& typeArgs,
@@ -306,6 +335,8 @@ private:
                                               const std::string& name,
                                               llvm::Type* type);
     llvm::Type* getLLVMType(const std::string& typeName);
+    // Look up a required runtime function; throws CodegenError if not found.
+    llvm::Function* getRequiredFn(const std::string& name, int ln = 0, int col = 0);
     llvm::Value* promoteToDouble(llvm::Value* v);
     llvm::Value* toBool(llvm::Value* v);
 

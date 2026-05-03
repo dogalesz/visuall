@@ -236,6 +236,7 @@ public:
     void visit(const ast::ListComprehension& n)   override;
     void visit(const ast::DictComprehension& n)   override;
     void visit(const ast::SpreadExpr& n)          override;
+    void visit(const ast::DictSpreadExpr& n)      override;
 
     // ── ASTVisitor overrides — statement nodes ───────────────────────────
     void visit(const ast::ExprStmt& n)            override;
@@ -285,6 +286,7 @@ private:
     struct ClassInfo {
         std::string name;
         std::string baseClass;
+        std::vector<std::string> extraBases;  // multiple inheritance
         std::vector<std::string> interfaces;
         std::vector<std::string> typeParams;
         std::vector<MethodInfo> methods;

@@ -99,6 +99,7 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_dict_len",  i64, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_contains", i64, {i8p, i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_remove", voidTy, {i8p, i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_dict_keys",   i8p, {i8p});
 
     /* ── Tag introspection & membership ───────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_get_tag",        i64, {i8p});

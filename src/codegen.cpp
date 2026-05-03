@@ -98,6 +98,14 @@ llvm::Value* Codegen::allocBox() {
         "box.raw");
 }
 
+llvm::Function* Codegen::getRequiredFn(const std::string& name, int ln, int col) {
+    auto* fn = module_->getFunction(name);
+    if (!fn)
+        throw CodegenError("Required runtime function '" + name + "' not declared",
+                           ln, col);
+    return fn;
+}
+
 // collectBoxedVarsFromStmts() — scan a flat statement list for lambdas that
 // have byReference captures, and populate boxedVars_ with those names so
 // that codegenAssignStmt / codegenIdentifier emit box read/write IR.
@@ -107,7 +115,7 @@ void Codegen::collectBoxedVarsFromStmts(const ast::StmtList& stmts) {
             if (auto* lambda = dynamic_cast<const ast::LambdaExpr*>(assign->value.get())) {
                 for (const auto& cap : lambda->captures) {
                     if (cap.byReference) {
-                        boxedVars_.insert(cap.name);
+                        boxedVars_[cap.name] = nullptr;
                     }
                 }
             }
@@ -344,10 +352,17 @@ void Codegen::generate(const ast::Program& program) {
                 ? llvm::Type::getVoidTy(*context_)
                 : getLLVMType(f->returnType);
             std::vector<llvm::Type*> paramTys;
-            for (const auto& p : f->params)
-                paramTys.push_back(
-                    p.typeAnnotation.empty() ? llvm::Type::getInt64Ty(*context_)
-                                             : getLLVMType(p.typeAnnotation));
+            for (const auto& p : f->params) {
+                if (p.isVariadic)
+                    paramTys.push_back(llvm::PointerType::getUnqual(
+                        llvm::Type::getInt8Ty(*context_)));
+                else
+                    paramTys.push_back(
+                        p.typeAnnotation.empty() ? llvm::Type::getInt64Ty(*context_)
+                                                 : getLLVMType(p.typeAnnotation));
+            }
+            if (!f->params.empty() && f->params.back().isVariadic)
+                variadicFuncs_.insert(f->name);
             auto* fnTy = llvm::FunctionType::get(retTy, paramTys, false);
             auto linkage = moduleMode_
                 ? llvm::Function::ExternalLinkage
@@ -412,7 +427,6 @@ void Codegen::generate(const ast::Program& program) {
         {
             auto* i8Ptr = llvm::PointerType::getUnqual(
                 llvm::Type::getInt8Ty(*context_));
-            auto* voidTy = llvm::Type::getVoidTy(*context_);
 
             // Create a stack anchor alloca (address near bottom of the
             // C stack) and pass it to gc_init.
@@ -421,13 +435,13 @@ void Codegen::generate(const ast::Program& program) {
             auto* anchorPtr = builder_->CreateBitCast(anchor, i8Ptr, "gc.anchor.ptr");
 
             // Use already-declared gc_init from declareRuntimeFunctions.
-            auto* gcInitFn = module_->getFunction("__visuall_gc_init");
+            auto* gcInitFn = getRequiredFn("__visuall_gc_init");
             builder_->CreateCall(gcInitFn, {anchorPtr});
 
             // If --gc-stats was requested, call __visuall_gc_enable_stats(1).
             auto* i32Ty = llvm::Type::getInt32Ty(*context_);
-            auto* enableStatsFn = module_->getFunction("__visuall_gc_enable_stats");
             if (gcStatsEnabled_) {
+                auto* enableStatsFn = getRequiredFn("__visuall_gc_enable_stats");
                 builder_->CreateCall(enableStatsFn,
                     {llvm::ConstantInt::get(i32Ty, 1)});
             }
@@ -613,10 +627,15 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
             ? llvm::Type::getVoidTy(*context_)
             : getLLVMType(node.returnType);
         std::vector<llvm::Type*> paramTys;
-        for (const auto& p : node.params)
-            paramTys.push_back(
-                p.typeAnnotation.empty() ? llvm::Type::getInt64Ty(*context_)
-                                         : getLLVMType(p.typeAnnotation));
+        for (const auto& p : node.params) {
+            if (p.isVariadic)
+                paramTys.push_back(llvm::PointerType::getUnqual(
+                    llvm::Type::getInt8Ty(*context_)));
+            else
+                paramTys.push_back(
+                    p.typeAnnotation.empty() ? llvm::Type::getInt64Ty(*context_)
+                                             : getLLVMType(p.typeAnnotation));
+        }
         auto* fnTy = llvm::FunctionType::get(retTy, paramTys, false);
         auto linkage = moduleMode_
             ? llvm::Function::ExternalLinkage
@@ -632,6 +651,11 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
         if (idx < node.params.size())
             arg.setName(node.params[idx++].name);
     }
+
+    // Register for default-param and variadic support at call sites.
+    funcDefMap_[node.name] = &node;
+    if (!node.params.empty() && node.params.back().isVariadic)
+        variadicFuncs_.insert(node.name);
 
     auto* savedBB = builder_->GetInsertBlock();
     auto* savedFn = currentFunction_;
@@ -685,7 +709,15 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
 // ── ClassDef ───────────────────────────────────────────────────────────────
 void Codegen::codegenClassDef(const ast::ClassDef& node) {
     std::string savedClass = currentClassName_;
+    std::string savedBase  = currentClassBase_;
     currentClassName_ = node.name;
+    currentClassBase_ = node.baseClass.has_value() ? *node.baseClass : "";
+    // Record base class mapping for inherited dispatch and isinstance checks.
+    if (!currentClassBase_.empty())
+        classBaseMap_[node.name] = currentClassBase_;
+    // Multiple inheritance: record extra bases.
+    if (!node.extraBases.empty())
+        classExtraBases_[node.name] = node.extraBases;
 
     // Forward-declare the constructor wrapper (ClassName(...) -> i8*) so that
     // static methods emitted below can call it (e.g. factory methods).
@@ -715,13 +747,33 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
         if (auto* m = dynamic_cast<const ast::FuncDef*>(s.get())) {
             // Check if this method is decorated with @static
             bool isStatic = false;
+            bool isProperty = false;
+            bool isSetter   = false;
+            std::string setterPropName;
             for (const auto& dec : m->decorators) {
                 if (auto* id = dynamic_cast<const ast::Identifier*>(dec.get())) {
-                    if (id->name == "static") { isStatic = true; break; }
+                    if (id->name == "static")   { isStatic   = true; }
+                    if (id->name == "property") { isProperty = true; }
+                } else if (auto* mem = dynamic_cast<const ast::MemberExpr*>(dec.get())) {
+                    if (mem->member == "setter") {
+                        if (auto* id2 = dynamic_cast<const ast::Identifier*>(mem->object.get())) {
+                            isSetter       = true;
+                            setterPropName = id2->name;
+                        }
+                    }
                 }
             }
 
             std::string mangledName = node.name + "_" + m->name;
+            if (isProperty) {
+                classProperties_.insert(mangledName);
+            }
+            if (isSetter) {
+                // Register setter and use a distinct mangled name.
+                std::string propKey = node.name + "_" + setterPropName;
+                classSetters_.insert(propKey);
+                mangledName = propKey + "_setter";
+            }
 
             if (isStatic) {
                 // Register as a static method (no implicit 'this' parameter)
@@ -947,6 +999,7 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
     }
 
     currentClassName_ = savedClass;
+    currentClassBase_ = savedBase;
 }
 
 // ── InitDef ────────────────────────────────────────────────────────────────
@@ -1081,7 +1134,50 @@ void Codegen::codegenIfStmt(const ast::IfStmt& node) {
 void Codegen::codegenForStmt(const ast::ForStmt& node) {
     auto* fn = builder_->GetInsertBlock()->getParent();
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* i1Ty  = llvm::Type::getInt1Ty(*context_);
     auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+
+    // for...else: alloca to track if a break was taken (0 = normal exit, 1 = break).
+    llvm::AllocaInst* didBreakAlloca = nullptr;
+    if (!node.elseBranch.empty()) {
+        didBreakAlloca = createEntryBlockAlloca(currentFunction_, "__for_didbreak", i1Ty);
+        builder_->CreateStore(llvm::ConstantInt::get(i1Ty, 0), didBreakAlloca);
+    }
+
+    // Helper: emit else-branch check after a loop exit block.
+    // Precondition: insert point is at the loop's exitBB.
+    auto emitForElse = [&]() {
+        if (node.elseBranch.empty()) return;
+        auto* elseBB  = llvm::BasicBlock::Create(*context_, "for.else",  fn);
+        auto* afterBB = llvm::BasicBlock::Create(*context_, "for.after", fn);
+        auto* didBreakVal = builder_->CreateLoad(i1Ty, didBreakAlloca, "did.break");
+        builder_->CreateCondBr(didBreakVal, afterBB, elseBB);
+        builder_->SetInsertPoint(elseBB);
+        pushScope();
+        codegenStmtList(node.elseBranch);
+        popScope();
+        if (!builder_->GetInsertBlock()->getTerminator())
+            builder_->CreateBr(afterBB);
+        builder_->SetInsertPoint(afterBB);
+    };
+
+    // Helper: emit tuple-unpacking stores after storing elemVal into var[0].
+    // Only active when node.variables.size() > 1.
+    auto emitUnpackRest = [&](llvm::Value* elemVal) {
+        if (node.variables.size() <= 1) return;
+        auto* listGetFn = module_->getFunction("__visuall_list_get");
+        if (!listGetFn) return;
+        // elemVal is an i64 that holds a pointer (ptrtoint) to a list/tuple.
+        auto* elemPtr = builder_->CreateIntToPtr(elemVal, i8Ptr, "unpack.ptr");
+        for (size_t vi = 1; vi < node.variables.size(); ++vi) {
+            auto* subIdx = llvm::ConstantInt::get(i64Ty, static_cast<uint64_t>(vi));
+            auto* sub = builder_->CreateCall(listGetFn, {elemPtr, subIdx},
+                                             "unpack." + node.variables[vi]);
+            auto* subAlloca = createEntryBlockAlloca(currentFunction_, node.variables[vi], i64Ty);
+            builder_->CreateStore(sub, subAlloca);
+            declareVar(node.variables[vi], subAlloca);
+        }
+    };
 
     // Evaluate the iterable.
     llvm::Value* iterVal = codegenExpr(*node.iterable);
@@ -1131,7 +1227,9 @@ void Codegen::codegenForStmt(const ast::ForStmt& node) {
         stringVars_.insert(node.variable);
 
         loopStack_.push_back({condBB, exitBB});
+        loopElseAllocas_.push_back(didBreakAlloca);
         codegenStmtList(node.body);
+        loopElseAllocas_.pop_back();
         loopStack_.pop_back();
 
         stringVars_.erase(node.variable);
@@ -1146,11 +1244,136 @@ void Codegen::codegenForStmt(const ast::ForStmt& node) {
         }
 
         builder_->SetInsertPoint(exitBB);
+        emitForElse();
         return;
     }
 
-    // If the iterable is a pointer (list), iterate using list_len and list_get.
+    // If the iterable is a pointer, detect dict vs list/tuple via runtime tag.
     if (iterVal->getType()->isPointerTy()) {
+        // ── Dict iteration: for key in dict → iterate over keys ──────────
+        auto* getTagFn   = module_->getFunction("__visuall_get_tag");
+        auto* dictKeysFn = module_->getFunction("__visuall_dict_keys");
+        auto* listLenFnD = module_->getFunction("__visuall_list_len");
+        auto* listGetFnD = module_->getFunction("__visuall_list_get");
+        if (getTagFn && dictKeysFn && listLenFnD && listGetFnD) {
+            auto* tag      = builder_->CreateCall(getTagFn, {iterVal}, "iter.tag");
+            auto* isDict   = builder_->CreateICmpEQ(
+                tag, llvm::ConstantInt::get(i64Ty, 3), "iter.isdict");
+
+            auto* dictIterBB = llvm::BasicBlock::Create(*context_, "for.dict.iter", fn);
+            auto* notDictBB  = llvm::BasicBlock::Create(*context_, "for.notdict",   fn);
+            builder_->CreateCondBr(isDict, dictIterBB, notDictBB);
+
+            // ── dict path ─────────────────────────────────────────────────
+            builder_->SetInsertPoint(dictIterBB);
+            auto* keyList  = builder_->CreateCall(dictKeysFn, {iterVal}, "dict.keys");
+            auto* dBound   = builder_->CreateCall(listLenFnD, {keyList}, "dict.keylen");
+            auto* dIdxAlloca = createEntryBlockAlloca(currentFunction_, "__dfor_idx", i64Ty);
+            builder_->CreateStore(llvm::ConstantInt::get(i64Ty, 0), dIdxAlloca);
+            auto* dCondBB  = llvm::BasicBlock::Create(*context_, "dfor.cond", fn);
+            auto* dBodyBB  = llvm::BasicBlock::Create(*context_, "dfor.body", fn);
+            auto* dExitBB  = llvm::BasicBlock::Create(*context_, "dfor.end",  fn);
+            builder_->CreateBr(dCondBB);
+
+            builder_->SetInsertPoint(dCondBB);
+            {
+                auto* di  = builder_->CreateLoad(i64Ty, dIdxAlloca, "dfor.i");
+                auto* cmp = builder_->CreateICmpSLT(di, dBound, "dfor.cmp");
+                builder_->CreateCondBr(cmp, dBodyBB, dExitBB);
+            }
+            builder_->SetInsertPoint(dBodyBB);
+            pushScope();
+            {
+                auto* di      = builder_->CreateLoad(i64Ty, dIdxAlloca, "dfor.cur");
+                auto* keyRaw  = builder_->CreateCall(listGetFnD, {keyList, di}, "dfor.key");
+                // keyRaw is an int64 holding a char* (ptrtoint). Store as i64 in alloca.
+                auto* varAlloca = createEntryBlockAlloca(currentFunction_, node.variable, i64Ty);
+                builder_->CreateStore(keyRaw, varAlloca);
+                declareVar(node.variable, varAlloca);
+                stringVars_.insert(node.variable);   // keys are char*
+                loopStack_.push_back({dCondBB, dExitBB});
+                loopElseAllocas_.push_back(didBreakAlloca);
+                codegenStmtList(node.body);
+                loopElseAllocas_.pop_back();
+                loopStack_.pop_back();
+                stringVars_.erase(node.variable);
+            }
+            popScope();
+            if (!builder_->GetInsertBlock()->getTerminator()) {
+                auto* nxt = builder_->CreateAdd(
+                    builder_->CreateLoad(i64Ty, dIdxAlloca, "dfor.i2"),
+                    llvm::ConstantInt::get(i64Ty, 1), "dfor.inc");
+                builder_->CreateStore(nxt, dIdxAlloca);
+                builder_->CreateBr(dCondBB);
+            }
+            builder_->SetInsertPoint(dExitBB);
+            // After the dict loop we need to jump past the list-loop below.
+            auto* skipListBB = llvm::BasicBlock::Create(*context_, "for.skip", fn);
+            builder_->CreateBr(skipListBB);
+
+            // ── non-dict path falls through to the list loop ──────────────
+            fn->insert(fn->end(), notDictBB);
+            builder_->SetInsertPoint(notDictBB);
+
+            auto* listLenFn = module_->getFunction("__visuall_list_len");
+            auto* listGetFn = module_->getFunction("__visuall_list_get");
+
+            llvm::Value* bound;
+            if (listLenFn) {
+                bound = builder_->CreateCall(listLenFn, {iterVal}, "list.len");
+            } else {
+                bound = llvm::ConstantInt::get(i64Ty, 0);
+            }
+
+            auto* idxAlloca = createEntryBlockAlloca(currentFunction_, "__for_idx", i64Ty);
+            builder_->CreateStore(llvm::ConstantInt::get(i64Ty, 0), idxAlloca);
+
+            auto* condBB = llvm::BasicBlock::Create(*context_, "for.cond", fn);
+            auto* bodyBB = llvm::BasicBlock::Create(*context_, "for.body", fn);
+            auto* exitBB = llvm::BasicBlock::Create(*context_, "for.end",  fn);
+            builder_->CreateBr(condBB);
+
+            builder_->SetInsertPoint(condBB);
+            {
+                auto* idx = builder_->CreateLoad(i64Ty, idxAlloca, "idx");
+                auto* cmp = builder_->CreateICmpSLT(idx, bound, "for.cmp");
+                builder_->CreateCondBr(cmp, bodyBB, exitBB);
+            }
+            builder_->SetInsertPoint(bodyBB);
+            pushScope();
+            {
+                auto* curIdx = builder_->CreateLoad(i64Ty, idxAlloca, "cur_idx");
+                llvm::Value* elemVal = listGetFn
+                    ? static_cast<llvm::Value*>(builder_->CreateCall(listGetFn, {iterVal, curIdx}, "elem"))
+                    : static_cast<llvm::Value*>(llvm::ConstantInt::get(i64Ty, 0));
+                auto* varAlloca = createEntryBlockAlloca(currentFunction_, node.variable, i64Ty);
+                builder_->CreateStore(elemVal, varAlloca);
+                declareVar(node.variable, varAlloca);
+                emitUnpackRest(elemVal); // for k,v tuple unpacking
+                loopStack_.push_back({condBB, exitBB});
+                loopElseAllocas_.push_back(didBreakAlloca);
+                codegenStmtList(node.body);
+                loopElseAllocas_.pop_back();
+                loopStack_.pop_back();
+            }
+            popScope();
+            if (!builder_->GetInsertBlock()->getTerminator()) {
+                auto* nxt = builder_->CreateAdd(
+                    builder_->CreateLoad(i64Ty, idxAlloca, "idx"),
+                    llvm::ConstantInt::get(i64Ty, 1), "inc");
+                builder_->CreateStore(nxt, idxAlloca);
+                builder_->CreateBr(condBB);
+            }
+            builder_->SetInsertPoint(exitBB);
+            builder_->CreateBr(skipListBB);
+
+            fn->insert(fn->end(), skipListBB);
+            builder_->SetInsertPoint(skipListBB);
+            emitForElse();
+            return;
+        }
+
+        // Fallback when tag functions not available: plain list loop.
         auto* listLenFn = module_->getFunction("__visuall_list_len");
         auto* listGetFn = module_->getFunction("__visuall_list_get");
 
@@ -1190,9 +1413,12 @@ void Codegen::codegenForStmt(const ast::ForStmt& node) {
         auto* varAlloca = createEntryBlockAlloca(currentFunction_, node.variable, i64Ty);
         builder_->CreateStore(elemVal, varAlloca);
         declareVar(node.variable, varAlloca);
+        emitUnpackRest(elemVal); // for k,v tuple unpacking
 
         loopStack_.push_back({condBB, exitBB});
+        loopElseAllocas_.push_back(didBreakAlloca);
         codegenStmtList(node.body);
+        loopElseAllocas_.pop_back();
         loopStack_.pop_back();
 
         popScope();
@@ -1206,6 +1432,7 @@ void Codegen::codegenForStmt(const ast::ForStmt& node) {
         }
 
         builder_->SetInsertPoint(exitBB);
+        emitForElse();
         return;
     }
 
@@ -1240,7 +1467,9 @@ void Codegen::codegenForStmt(const ast::ForStmt& node) {
     declareVar(node.variable, varAlloca);
 
     loopStack_.push_back({condBB, exitBB});
+    loopElseAllocas_.push_back(didBreakAlloca);
     codegenStmtList(node.body);
+    loopElseAllocas_.pop_back();
     loopStack_.pop_back();
 
     popScope();
@@ -1255,11 +1484,21 @@ void Codegen::codegenForStmt(const ast::ForStmt& node) {
     }
 
     builder_->SetInsertPoint(exitBB);
+    emitForElse();
 }
 
 // ── WhileStmt ──────────────────────────────────────────────────────────────
 void Codegen::codegenWhileStmt(const ast::WhileStmt& node) {
     auto* fn = builder_->GetInsertBlock()->getParent();
+    auto* i1Ty = llvm::Type::getInt1Ty(*context_);
+
+    // while...else: track whether break was used.
+    llvm::AllocaInst* didBreakAlloca = nullptr;
+    if (!node.elseBranch.empty()) {
+        didBreakAlloca = createEntryBlockAlloca(currentFunction_, "__while_didbreak", i1Ty);
+        builder_->CreateStore(llvm::ConstantInt::get(i1Ty, 0), didBreakAlloca);
+    }
+
     auto* condBB = llvm::BasicBlock::Create(*context_, "while.cond", fn);
     auto* bodyBB = llvm::BasicBlock::Create(*context_, "while.body", fn);
     auto* exitBB = llvm::BasicBlock::Create(*context_, "while.end", fn);
@@ -1273,13 +1512,28 @@ void Codegen::codegenWhileStmt(const ast::WhileStmt& node) {
     builder_->SetInsertPoint(bodyBB);
     pushScope();
     loopStack_.push_back({condBB, exitBB});
+    loopElseAllocas_.push_back(didBreakAlloca);
     codegenStmtList(node.body);
+    loopElseAllocas_.pop_back();
     loopStack_.pop_back();
     popScope();
     if (!builder_->GetInsertBlock()->getTerminator())
         builder_->CreateBr(condBB);
 
     builder_->SetInsertPoint(exitBB);
+    if (!node.elseBranch.empty()) {
+        auto* elseBB  = llvm::BasicBlock::Create(*context_, "while.else",  fn);
+        auto* afterBB = llvm::BasicBlock::Create(*context_, "while.after", fn);
+        auto* didBreak = builder_->CreateLoad(i1Ty, didBreakAlloca, "did.break");
+        builder_->CreateCondBr(didBreak, afterBB, elseBB);
+        builder_->SetInsertPoint(elseBB);
+        pushScope();
+        codegenStmtList(node.elseBranch);
+        popScope();
+        if (!builder_->GetInsertBlock()->getTerminator())
+            builder_->CreateBr(afterBB);
+        builder_->SetInsertPoint(afterBB);
+    }
 }
 
 // ── ReturnStmt ─────────────────────────────────────────────────────────────
@@ -1379,6 +1633,9 @@ void Codegen::codegenTryStmt(const ast::TryStmt& node) {
                 excMsg = builder_->CreateCall(excMsgFn, {excObj}, "exc.msg");
             }
         }
+
+        // Save exception message for bare re-raise ('throw' with no expr).
+        lastExceptionVal_ = excMsg;
 
         // ── Emit catch clause bodies ─────────────────────────────────────
         for (const auto& clause : node.catchClauses) {
@@ -1595,14 +1852,22 @@ void Codegen::codegenThrowStmt(const ast::ThrowStmt& node) {
     auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
 
     // ── 1. Evaluate the exception message expression ────────────────────
-    llvm::Value* msgVal = codegenExpr(*node.expr);
-    // Ensure we have an i8* (string pointer).
-    if (!msgVal->getType()->isPointerTy()) {
-        auto* toStrFn = module_->getFunction("__visuall_int_to_str");
-        if (toStrFn) {
-            msgVal = builder_->CreateCall(toStrFn, {msgVal}, "throw.msg.str");
-        } else {
-            msgVal = llvm::ConstantPointerNull::get(i8Ptr);
+    // Bare 'throw' (no expression): re-raise the last caught exception.
+    llvm::Value* msgVal;
+    if (!node.expr) {
+        msgVal = lastExceptionVal_
+                     ? lastExceptionVal_
+                     : llvm::ConstantPointerNull::get(i8Ptr);
+    } else {
+        msgVal = codegenExpr(*node.expr.value());
+        // Ensure we have an i8* (string pointer).
+        if (!msgVal->getType()->isPointerTy()) {
+            auto* toStrFn = module_->getFunction("__visuall_int_to_str");
+            if (toStrFn) {
+                msgVal = builder_->CreateCall(toStrFn, {msgVal}, "throw.msg.str");
+            } else {
+                msgVal = llvm::ConstantPointerNull::get(i8Ptr);
+            }
         }
     }
 
@@ -1975,6 +2240,8 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
             auto* i64Ptr = llvm::PointerType::getUnqual(i64Ty);
 
             // Normalize val to i64 for box storage.
+            // Record original type so the read path can reverse the conversion.
+            boxedVars_[ident->name] = val->getType();
             llvm::Value* storeVal = val;
             if (val->getType() != i64Ty) {
                 if (val->getType()->isIntegerTy()) {
@@ -2058,6 +2325,38 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
     if (auto* mem = dynamic_cast<const ast::MemberExpr*>(node.target.get())) {
         llvm::Value* obj = codegenExpr(*mem->object);
         auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+        auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+
+        // ── @property setter: obj.prop = val → ClassName_prop_setter(self, val)
+        auto trySetterFor = [&](const std::string& className) -> bool {
+            std::string propKey = className + "_" + mem->member;
+            if (!classSetters_.count(propKey)) return false;
+            auto* setterFn = module_->getFunction(propKey + "_setter");
+            if (!setterFn) return false;
+            // Coerce val to setter's second param type.
+            llvm::Value* setVal = val;
+            if (setterFn->arg_size() >= 2) {
+                auto* expectedTy = setterFn->getFunctionType()->getParamType(1);
+                if (expectedTy->isDoubleTy() && setVal->getType()->isIntegerTy())
+                    setVal = promoteToDouble(setVal);
+                else if (expectedTy->isIntegerTy(64) && setVal->getType()->isPointerTy())
+                    setVal = builder_->CreatePtrToInt(setVal, expectedTy, "set.p2i");
+            }
+            emitCallOrInvoke(setterFn, {obj, setVal});
+            return true;
+        };
+
+        // Determine class for the object being assigned to.
+        std::string objClassName;
+        if (auto* oi = dynamic_cast<const ast::Identifier*>(mem->object.get())) {
+            auto it = varClass_.find(oi->name);
+            if (it != varClass_.end()) objClassName = it->second;
+        } else if (dynamic_cast<const ast::ThisExpr*>(mem->object.get())) {
+            objClassName = currentClassName_;
+        }
+        if (!objClassName.empty() && trySetterFor(objClassName))
+            return;
+        (void)i8Ptr;
 
         // Find the field index by searching known classes
         int fieldIdx = -1;
@@ -2089,6 +2388,26 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
                 val = builder_->CreateIntCast(val, i64Ty, true, "val.widen");
             }
             builder_->CreateStore(val, gep);
+        }
+    }
+
+    // ── Chained assignment: a = b = 1  (assign val to extraTargets) ────
+    for (const auto& extraTarget : node.extraTargets) {
+        if (auto* ident = dynamic_cast<const ast::Identifier*>(extraTarget.get())) {
+            auto* existing = lookupVar(ident->name);
+            if (existing) {
+                if (existing->getAllocatedType() == val->getType()) {
+                    builder_->CreateStore(val, existing);
+                } else {
+                    auto* alloca = createEntryBlockAlloca(currentFunction_, ident->name, val->getType());
+                    builder_->CreateStore(val, alloca);
+                    declareVar(ident->name, alloca);
+                }
+            } else {
+                auto* alloca = createEntryBlockAlloca(currentFunction_, ident->name, val->getType());
+                builder_->CreateStore(val, alloca);
+                declareVar(ident->name, alloca);
+            }
         }
     }
 }
@@ -2268,7 +2587,16 @@ llvm::Value* Codegen::codegenIdentifier(const ast::Identifier& node) {
             auto* boxPtr = builder_->CreateLoad(i8Ptr, alloca,
                                                  node.name + ".boxptr");
             auto* boxPayload = builder_->CreateBitCast(boxPtr, i64Ptr, "box.payload");
-            return builder_->CreateLoad(i64Ty, boxPayload, node.name);
+            auto* loaded = builder_->CreateLoad(i64Ty, boxPayload, node.name + ".raw");
+            // Reverse the i64 normalization applied on write.
+            llvm::Type* origTy = boxedVars_.at(node.name);
+            if (origTy && origTy->isDoubleTy())
+                return builder_->CreateBitCast(loaded, origTy, node.name);
+            if (origTy && origTy->isPointerTy())
+                return builder_->CreateIntToPtr(loaded, origTy, node.name);
+            if (origTy && origTy != i64Ty && origTy->isIntegerTy())
+                return builder_->CreateTrunc(loaded, origTy, node.name);
+            return loaded;
         }
         return builder_->CreateLoad(alloca->getAllocatedType(),
                                      alloca, node.name);
@@ -2333,6 +2661,28 @@ llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
 
     llvm::Value* L = codegenExpr(*node.left);
     llvm::Value* R = codegenExpr(*node.right);
+
+    // ── Operator overloading: check if left operand is a class instance ─
+    if (auto* ident = dynamic_cast<const ast::Identifier*>(node.left.get())) {
+        auto clsIt = varClass_.find(ident->name);
+        if (clsIt != varClass_.end()) {
+            static const std::unordered_map<ast::BinOp, std::string> opMethods = {
+                {ast::BinOp::Add, "__add__"}, {ast::BinOp::Sub, "__sub__"},
+                {ast::BinOp::Mul, "__mul__"}, {ast::BinOp::Div, "__div__"},
+                {ast::BinOp::Eq,  "__eq__"},  {ast::BinOp::Neq, "__neq__"},
+                {ast::BinOp::Lt,  "__lt__"},  {ast::BinOp::Gt,  "__gt__"},
+                {ast::BinOp::Lte, "__lte__"}, {ast::BinOp::Gte, "__gte__"},
+                {ast::BinOp::Mod, "__mod__"},
+            };
+            auto opIt = opMethods.find(node.op);
+            if (opIt != opMethods.end()) {
+                std::string mangledName = clsIt->second + "_" + opIt->second;
+                auto* overloadFn = module_->getFunction(mangledName);
+                if (overloadFn)
+                    return emitCallOrInvoke(overloadFn, {L, R}, "op.overload");
+            }
+        }
+    }
 
     // ── Pointer-type comparisons (string content comparison) ───────────
     if (L->getType()->isPointerTy() && R->getType()->isPointerTy()) {
@@ -2604,6 +2954,104 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
         std::vector<llvm::Value*> args;
         size_t paramIdx = 0;
         for (const auto& a : node.args) {
+            // ── Dict-spread: **dict → pass dict pointer as i64 arg ───────
+            if (auto* ds = dynamic_cast<const ast::DictSpreadExpr*>(a.get())) {
+                auto* dictVal = codegenExpr(*ds->operand);
+                // Coerce to i64 so it can be passed as a regular arg slot.
+                llvm::Value* argVal = dictVal;
+                auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+                if (argVal->getType()->isPointerTy())
+                    argVal = builder_->CreatePtrToInt(argVal, i64Ty, "ds.p2i");
+                else if (argVal->getType() != i64Ty)
+                    argVal = builder_->CreateIntCast(argVal, i64Ty, false, "ds.cast");
+                args.push_back(argVal);
+                paramIdx++;
+                continue;
+            }
+            // ── Spread unpacking: *iterable ──────────────────────────────
+            if (auto* spread = dynamic_cast<const ast::SpreadExpr*>(a.get())) {
+                auto* spreadList = codegenExpr(*spread->operand);
+                auto* listLenFnS = module_->getFunction("__visuall_list_len");
+                auto* listGetFnS = module_->getFunction("__visuall_list_get");
+                auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+                if (listLenFnS && listGetFnS) {
+                    // Ensure spreadList is a pointer (may need ptrtoint→cast)
+                    if (spreadList->getType()->isIntegerTy())
+                        spreadList = builder_->CreateIntToPtr(spreadList,
+                            llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)),
+                            "spread.ptr");
+                    if (variadicFuncs_.count(funcName)) {
+                        // For variadic: push all spread elements into extra args vector;
+                        // the variadic packing loop below will pack them into the list.
+                        auto* sLen = builder_->CreateCall(listLenFnS, {spreadList}, "slen");
+                        // We need a compile-time count for IR generation.
+                        // Use a runtime loop to push elements.
+                        auto* sIdxAlloca = createEntryBlockAlloca(
+                            currentFunction_, "__spread_i", i64Ty);
+                        builder_->CreateStore(llvm::ConstantInt::get(i64Ty, 0), sIdxAlloca);
+                        auto* sCondBB = llvm::BasicBlock::Create(*context_, "spr.cond", currentFunction_);
+                        auto* sBodyBB = llvm::BasicBlock::Create(*context_, "spr.body", currentFunction_);
+                        auto* sExitBB = llvm::BasicBlock::Create(*context_, "spr.end",  currentFunction_);
+                        // Temporarily store the extra elements in a VisualList*
+                        auto* listNewFnS  = module_->getFunction("__visuall_list_new");
+                        auto* listPushFnS = module_->getFunction("__visuall_list_push");
+                        if (listNewFnS && listPushFnS) {
+                            auto* tmpList = builder_->CreateCall(listNewFnS, {}, "spread.tmp");
+                            builder_->CreateBr(sCondBB);
+                            builder_->SetInsertPoint(sCondBB);
+                            {
+                                auto* si  = builder_->CreateLoad(i64Ty, sIdxAlloca, "si");
+                                auto* cmp = builder_->CreateICmpSLT(si, sLen, "spr.cmp");
+                                builder_->CreateCondBr(cmp, sBodyBB, sExitBB);
+                            }
+                            builder_->SetInsertPoint(sBodyBB);
+                            {
+                                auto* si  = builder_->CreateLoad(i64Ty, sIdxAlloca, "si2");
+                                auto* el  = builder_->CreateCall(listGetFnS, {spreadList, si}, "spr.el");
+                                builder_->CreateCall(listPushFnS, {tmpList, el});
+                                auto* nxt = builder_->CreateAdd(si, llvm::ConstantInt::get(i64Ty, 1), "si.inc");
+                                builder_->CreateStore(nxt, sIdxAlloca);
+                                builder_->CreateBr(sCondBB);
+                            }
+                            builder_->SetInsertPoint(sExitBB);
+                            // Push all tmpList elements as extra args by treating tmpList as a spread arg.
+                            // For the outer variadic packing, just push the elements at call time.
+                            // Simplest: recurse list_get per slot — but we don't know count.
+                            // Push tmpList pointer as i64 so it gets added raw (will be packed separately).
+                            // Actually: pass the spread list through directly to the variadic pack.
+                            // We mark it via a convention: push the list ptr as i64 tagged.
+                            // Cleanest: unroll at codegen time using __visuall_list_len value.
+                            // Since we can't know count at compile time, push each element
+                            // of the spread list as an individual arg (via ptrtoint to i64).
+                            // The variadic packing loop will pack them.
+                            auto* listPtrAsI64 = builder_->CreatePtrToInt(tmpList, i64Ty, "spread.list.i64");
+                            args.push_back(listPtrAsI64);
+                        }
+                    } else {
+                        // Fixed-arity: fill remaining param slots from spread list
+                        size_t remaining = (callee->arg_size() > args.size())
+                            ? callee->arg_size() - args.size() : 0;
+                        for (size_t si = 0; si < remaining; ++si) {
+                            auto* el = builder_->CreateCall(listGetFnS,
+                                {spreadList, llvm::ConstantInt::get(i64Ty, (int64_t)si)},
+                                "spread.el");
+                            // Type coercion for each slot
+                            llvm::Value* val = el;
+                            size_t pIdx2 = args.size();
+                            if (pIdx2 < callee->arg_size()) {
+                                auto* expectedTy = callee->getFunctionType()->getParamType(pIdx2);
+                                if (expectedTy->isDoubleTy() && val->getType()->isIntegerTy())
+                                    val = promoteToDouble(val);
+                                else if (expectedTy->isIntegerTy(64) && val->getType()->isIntegerTy(1))
+                                    val = builder_->CreateZExt(val, i64Ty, "zext");
+                            }
+                            args.push_back(val);
+                        }
+                    }
+                }
+                paramIdx++;
+                continue;
+            }
             llvm::Value* val = codegenExpr(*a);
             // Coerce argument type to match parameter type.
             if (paramIdx < callee->arg_size()) {
@@ -2619,6 +3067,45 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
             }
             args.push_back(val);
             paramIdx++;
+        }
+
+        // Fill in default parameter values for any missing arguments.
+        if (funcDefMap_.count(funcName)) {
+            const auto& fparams = funcDefMap_.at(funcName)->params;
+            while (args.size() < callee->arg_size() && args.size() < fparams.size()) {
+                size_t i = args.size();
+                if (fparams[i].isVariadic) break;
+                if (!fparams[i].defaultValue)
+                    throw CodegenError("Too few arguments to '" + funcName +
+                        "': parameter '" + fparams[i].name + "' has no default",
+                        node.line, node.column);
+                args.push_back(codegenExpr(*fparams[i].defaultValue));
+            }
+        }
+
+        // Pack extra arguments into a VisualList for variadic functions.
+        if (variadicFuncs_.count(funcName) && funcDefMap_.count(funcName)) {
+            const auto& fparams = funcDefMap_.at(funcName)->params;
+            size_t fixedCount = fparams.size() > 0 ? fparams.size() - 1 : 0;
+            auto* listNewFn  = module_->getFunction("__visuall_list_new");
+            auto* listPushFn = module_->getFunction("__visuall_list_push");
+            if (listNewFn && listPushFn) {
+                auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+                auto* varList = builder_->CreateCall(listNewFn, {}, "varargs.list");
+                std::vector<llvm::Value*> extra(args.begin() + fixedCount, args.end());
+                args.resize(fixedCount);
+                for (auto* ea : extra) {
+                    llvm::Value* ea64 = ea;
+                    if (ea->getType()->isPointerTy())
+                        ea64 = builder_->CreatePtrToInt(ea, i64Ty, "va.ptoi");
+                    else if (ea->getType()->isDoubleTy())
+                        ea64 = builder_->CreateBitCast(ea, i64Ty, "va.f2i");
+                    else if (ea->getType() != i64Ty)
+                        ea64 = builder_->CreateIntCast(ea, i64Ty, true, "va.widen");
+                    builder_->CreateCall(listPushFn, {varList, ea64});
+                }
+                args.push_back(varList);
+            }
         }
 
         if (callee->getReturnType()->isVoidTy()) {
@@ -2671,7 +3158,99 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
                 }
             }
         }
-        // Stub: would need to look up ClassName_methodName.
+
+        // ── Instance method call: obj.method(args) ───────────────────────
+        // Also handles `this.method(args)` and `super.method(args)`.
+        {
+            std::string className;
+            llvm::Value* selfVal = nullptr;
+
+            if (auto* superExpr = dynamic_cast<const ast::SuperExpr*>(member->object.get())) {
+                (void)superExpr;
+                // super.method() → dispatch to base class method with current this
+                if (currentClassBase_.empty())
+                    throw CodegenError("super used outside a class with a base class",
+                                       node.line, node.column);
+                className = currentClassBase_;
+                auto* thisAlloca = lookupVar("this");
+                if (thisAlloca)
+                    selfVal = builder_->CreateLoad(
+                        thisAlloca->getAllocatedType(), thisAlloca, "this");
+            } else if (dynamic_cast<const ast::ThisExpr*>(member->object.get())) {
+                // this.method()
+                className = currentClassName_;
+                auto* thisAlloca = lookupVar("this");
+                if (thisAlloca)
+                    selfVal = builder_->CreateLoad(
+                        thisAlloca->getAllocatedType(), thisAlloca, "this");
+            } else if (auto* objIdent = dynamic_cast<const ast::Identifier*>(member->object.get())) {
+                // obj.method() — look up the class of the variable
+                auto it = varClass_.find(objIdent->name);
+                if (it != varClass_.end()) {
+                    className = it->second;
+                    auto* alloca = lookupVar(objIdent->name);
+                    if (alloca)
+                        selfVal = builder_->CreateLoad(
+                            alloca->getAllocatedType(), alloca, "obj");
+                }
+            }
+
+            if (!className.empty()) {
+                // Walk class hierarchy (MRO): try direct class first, then base classes.
+                // Uses BFS across classBaseMap_ (primary base) and classExtraBases_ (extra).
+                std::string searchClass = className;
+                llvm::Function* methodFn = nullptr;
+                std::string mangledName;
+                // BFS queue to handle multiple inheritance.
+                std::vector<std::string> toSearch = {className};
+                std::unordered_set<std::string> visited;
+                for (size_t qi = 0; qi < toSearch.size() && !methodFn; ++qi) {
+                    const std::string& cls = toSearch[qi];
+                    if (visited.count(cls)) continue;
+                    visited.insert(cls);
+                    mangledName = cls + "_" + member->member;
+                    methodFn = module_->getFunction(mangledName);
+                    if (!methodFn) {
+                        // Enqueue primary base.
+                        auto bit = classBaseMap_.find(cls);
+                        if (bit != classBaseMap_.end() && !bit->second.empty())
+                            toSearch.push_back(bit->second);
+                        // Enqueue extra bases.
+                        auto eit = classExtraBases_.find(cls);
+                        if (eit != classExtraBases_.end())
+                            for (const auto& eb : eit->second)
+                                toSearch.push_back(eb);
+                    }
+                }
+                if (methodFn) {
+                    std::vector<llvm::Value*> args;
+                    // First param is the implicit `this` pointer (unless static)
+                    if (!classStaticMethods_.count(mangledName) && selfVal)
+                        args.push_back(selfVal);
+                    for (const auto& a : node.args) {
+                        llvm::Value* val = codegenExpr(*a);
+                        size_t pIdx = args.size();
+                        if (pIdx < methodFn->arg_size()) {
+                            auto* expectedTy = methodFn->getFunctionType()->getParamType(pIdx);
+                            if (expectedTy->isDoubleTy() && val->getType()->isIntegerTy())
+                                val = promoteToDouble(val);
+                            else if (expectedTy->isIntegerTy(64) && val->getType()->isIntegerTy(1))
+                                val = builder_->CreateZExt(val,
+                                    llvm::Type::getInt64Ty(*context_), "zext");
+                            else if (expectedTy->isIntegerTy(64) && val->getType()->isPointerTy())
+                                val = builder_->CreatePtrToInt(val,
+                                    llvm::Type::getInt64Ty(*context_), "ptoi");
+                        }
+                        args.push_back(val);
+                    }
+                    if (methodFn->getReturnType()->isVoidTy()) {
+                        emitCallOrInvoke(methodFn, args);
+                        return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+                    }
+                    return emitCallOrInvoke(methodFn, args, "method.call");
+                }
+            }
+        }
     }
 
     return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
@@ -2693,6 +3272,39 @@ llvm::Value* Codegen::codegenMemberExpr(const ast::MemberExpr& node) {
             if (fn) return fn;
         }
     }
+    // ── @property getter: obj.prop → ClassName_propName(self) ──────────
+    if (auto* ident = dynamic_cast<const ast::Identifier*>(node.object.get())) {
+        auto clsIt = varClass_.find(ident->name);
+        if (clsIt != varClass_.end()) {
+            std::string propKey = clsIt->second + "_" + node.member;
+            if (classProperties_.count(propKey)) {
+                auto* getterFn = module_->getFunction(propKey);
+                if (getterFn) {
+                    auto* selfAlloca = lookupVar(ident->name);
+                    if (selfAlloca) {
+                        auto* self = builder_->CreateLoad(
+                            selfAlloca->getAllocatedType(), selfAlloca, "prop.self");
+                        return emitCallOrInvoke(getterFn, {self}, "prop.get");
+                    }
+                }
+            }
+        }
+    }
+    if (dynamic_cast<const ast::ThisExpr*>(node.object.get())) {
+        std::string propKey = currentClassName_ + "_" + node.member;
+        if (classProperties_.count(propKey)) {
+            auto* getterFn = module_->getFunction(propKey);
+            if (getterFn) {
+                auto* thisAlloca = lookupVar("this");
+                if (thisAlloca) {
+                    auto* self = builder_->CreateLoad(
+                        thisAlloca->getAllocatedType(), thisAlloca, "prop.this");
+                    return emitCallOrInvoke(getterFn, {self}, "prop.get");
+                }
+            }
+        }
+    }
+
     // ── Non-module member access: obj.field via GEP ──────────────────
     llvm::Value* obj = codegenExpr(*node.object);
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
@@ -2852,7 +3464,7 @@ llvm::Value* Codegen::codegenLambdaExpr(const ast::LambdaExpr& node) {
     boxedVars_.clear();
     for (const auto& cap : node.captures) {
         if (cap.byReference) {
-            boxedVars_.insert(cap.name);
+            boxedVars_[cap.name] = nullptr;
         }
     }
 
@@ -3286,14 +3898,118 @@ llvm::Value* Codegen::codegenListComprehension(const ast::ListComprehension& nod
 }
 
 // ── DictComprehension ──────────────────────────────────────────────────────
-llvm::Value* Codegen::codegenDictComprehension(const ast::DictComprehension& /*node*/) {
-    // Dict comprehensions require runtime hash map; stub returns 0.
-    return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+llvm::Value* Codegen::codegenDictComprehension(const ast::DictComprehension& node) {
+    auto* dictNewFn  = module_->getFunction("__visuall_dict_new");
+    auto* dictSetFn  = module_->getFunction("__visuall_dict_set");
+    auto* listLenFn  = module_->getFunction("__visuall_list_len");
+    auto* listGetFn  = module_->getFunction("__visuall_list_get");
+    if (!dictNewFn || !dictSetFn || !listLenFn || !listGetFn)
+        return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
+
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* fn = currentFunction_;
+
+    // Create result dict
+    auto* result = builder_->CreateCall(dictNewFn, {}, "dcomp.dict");
+
+    // Evaluate iterable
+    llvm::Value* iterVal = codegenExpr(*node.iterable);
+
+    // Get iteration bound
+    llvm::Value* bound;
+    if (iterVal->getType()->isPointerTy())
+        bound = builder_->CreateCall(listLenFn, {iterVal}, "dcomp.len");
+    else
+        bound = iterVal;
+
+    // Loop index alloca
+    auto* idxAlloca = createEntryBlockAlloca(fn, "__dcomp_idx", i64Ty);
+    builder_->CreateStore(llvm::ConstantInt::get(i64Ty, 0), idxAlloca);
+
+    auto* varAlloca = createEntryBlockAlloca(fn, node.variable, i64Ty);
+
+    auto* condBB = llvm::BasicBlock::Create(*context_, "dcomp.cond", fn);
+    auto* bodyBB = llvm::BasicBlock::Create(*context_, "dcomp.body", fn);
+    auto* exitBB = llvm::BasicBlock::Create(*context_, "dcomp.end", fn);
+
+    builder_->CreateBr(condBB);
+
+    // Condition: idx < bound
+    builder_->SetInsertPoint(condBB);
+    auto* idx = builder_->CreateLoad(i64Ty, idxAlloca, "dcomp.i");
+    auto* cmp = builder_->CreateICmpSLT(idx, bound, "dcomp.cmp");
+    builder_->CreateCondBr(cmp, bodyBB, exitBB);
+
+    // Body
+    builder_->SetInsertPoint(bodyBB);
+    pushScope();
+
+    auto* curIdx = builder_->CreateLoad(i64Ty, idxAlloca, "dcomp.cur");
+    llvm::Value* elemVal;
+    if (iterVal->getType()->isPointerTy())
+        elemVal = builder_->CreateCall(listGetFn, {iterVal, curIdx}, "dcomp.elem");
+    else
+        elemVal = curIdx;
+    builder_->CreateStore(elemVal, varAlloca);
+    declareVar(node.variable, varAlloca);
+
+    // Optional filter condition
+    llvm::BasicBlock* insertBB = nullptr;
+    llvm::BasicBlock* skipBB   = nullptr;
+    if (node.condition) {
+        insertBB = llvm::BasicBlock::Create(*context_, "dcomp.insert", fn);
+        skipBB   = llvm::BasicBlock::Create(*context_, "dcomp.skip",   fn);
+        llvm::Value* condVal = toBool(codegenExpr(*node.condition));
+        builder_->CreateCondBr(condVal, insertBB, skipBB);
+        builder_->SetInsertPoint(insertBB);
+    }
+
+    // Evaluate key (must be i8*)
+    llvm::Value* keyVal = codegenExpr(*node.key);
+    if (!keyVal->getType()->isPointerTy()) {
+        auto* toStrFn = module_->getFunction("__visuall_int_to_str");
+        if (toStrFn)
+            keyVal = builder_->CreateCall(toStrFn, {keyVal}, "dcomp.key.str");
+    }
+
+    // Evaluate value (coerce to i64)
+    llvm::Value* valVal = codegenExpr(*node.value);
+    if (valVal->getType()->isPointerTy())
+        valVal = builder_->CreatePtrToInt(valVal, i64Ty, "dcomp.val.p2i");
+    else if (valVal->getType()->isDoubleTy())
+        valVal = builder_->CreateBitCast(valVal, i64Ty, "dcomp.val.f2i");
+    else if (valVal->getType() != i64Ty)
+        valVal = builder_->CreateIntCast(valVal, i64Ty, true, "dcomp.val.widen");
+
+    builder_->CreateCall(dictSetFn, {result, keyVal, valVal});
+
+    if (node.condition) {
+        builder_->CreateBr(skipBB);
+        builder_->SetInsertPoint(skipBB);
+    }
+
+    popScope();
+
+    // Increment index
+    auto* next = builder_->CreateAdd(
+        builder_->CreateLoad(i64Ty, idxAlloca, "dcomp.i2"),
+        llvm::ConstantInt::get(i64Ty, 1), "dcomp.inc");
+    builder_->CreateStore(next, idxAlloca);
+    builder_->CreateBr(condBB);
+
+    builder_->SetInsertPoint(exitBB);
+    return result;
 }
 
 // ── SpreadExpr ─────────────────────────────────────────────────────────────
 llvm::Value* Codegen::codegenSpreadExpr(const ast::SpreadExpr& node) {
     // Spread is handled at call sites; just return the operand value.
+    return codegenExpr(*node.operand);
+}
+
+// ── DictSpreadExpr ─────────────────────────────────────────────────────────
+llvm::Value* Codegen::codegenDictSpreadExpr(const ast::DictSpreadExpr& node) {
+    // Dict-spread is handled at call sites; just return the operand value.
     return codegenExpr(*node.operand);
 }
 
@@ -3441,6 +4157,65 @@ llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallEx
         auto* fn = module_->getFunction("__visuall_range");
         if (fn) return builder_->CreateCall(fn, {start, stop, step}, "range.result");
         return llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(i8Ptr));
+    }
+
+    // ── isinstance(obj, ClassName) ─────────────────────────────────────
+    if (name == "isinstance") {
+        auto* i1Ty = llvm::Type::getInt1Ty(*context_);
+        if (node.args.size() < 2)
+            return llvm::ConstantInt::get(i1Ty, 0);
+        llvm::Value* obj = codegenExpr(*node.args[0]);
+        // Extract class name from second argument (identifier or string literal).
+        std::string className;
+        if (auto* ident = dynamic_cast<const ast::Identifier*>(node.args[1].get()))
+            className = ident->name;
+        else if (auto* strLit = dynamic_cast<const ast::StringLiteral*>(node.args[1].get()))
+            className = strLit->value;
+        if (className.empty())
+            return llvm::ConstantInt::get(i1Ty, 0);
+        // Compile-time check: variable has known class.
+        if (auto* ident = dynamic_cast<const ast::Identifier*>(node.args[0].get())) {
+            auto it = varClass_.find(ident->name);
+            if (it != varClass_.end()) {
+                // BFS over class hierarchy (supports multiple inheritance).
+                std::vector<std::string> toCheck = {it->second};
+                std::unordered_set<std::string> visited;
+                for (size_t qi = 0; qi < toCheck.size(); ++qi) {
+                    const std::string& cls = toCheck[qi];
+                    if (visited.count(cls)) continue;
+                    visited.insert(cls);
+                    if (cls == className)
+                        return llvm::ConstantInt::get(i1Ty, 1);
+                    // Primary base.
+                    auto bit = classBaseMap_.find(cls);
+                    if (bit != classBaseMap_.end() && !bit->second.empty())
+                        toCheck.push_back(bit->second);
+                    // Extra bases.
+                    auto eit = classExtraBases_.find(cls);
+                    if (eit != classExtraBases_.end())
+                        for (const auto& eb : eit->second)
+                            toCheck.push_back(eb);
+                }
+                return llvm::ConstantInt::get(i1Ty, 0);
+            }
+        }
+        // Runtime tag check for built-in types.
+        static const std::unordered_map<std::string, int64_t> builtinTags = {
+            {"str", 1}, {"string", 1},
+            {"list", 2}, {"List", 2},
+            {"dict", 3}, {"Dict", 3},
+            {"tuple", 6}, {"Tuple", 6},
+        };
+        auto tagIt = builtinTags.find(className);
+        if (tagIt != builtinTags.end() && obj->getType()->isPointerTy()) {
+            auto* getTagFn = module_->getFunction("__visuall_get_tag");
+            if (getTagFn) {
+                auto* tag = builder_->CreateCall(getTagFn, {obj}, "isinstance.tag");
+                return builder_->CreateICmpEQ(
+                    tag, llvm::ConstantInt::get(i64Ty, tagIt->second), "isinstance");
+            }
+        }
+        return llvm::ConstantInt::get(i1Ty, 0);
     }
 
     // ── type(x) ────────────────────────────────────────────────────────
@@ -3904,6 +4679,12 @@ void Codegen::visit(const ast::InterfaceDef& n)       { codegenInterfaceDef(n); 
 
 void Codegen::visit(const ast::BreakStmt&) {
     if (!loopStack_.empty()) {
+        // Mark that a break occurred (for for...else / while...else).
+        if (!loopElseAllocas_.empty() && loopElseAllocas_.back()) {
+            builder_->CreateStore(
+                llvm::ConstantInt::get(llvm::Type::getInt1Ty(*context_), 1),
+                loopElseAllocas_.back());
+        }
         builder_->CreateBr(loopStack_.back().second); // exit block
     }
 }
@@ -3942,6 +4723,7 @@ void Codegen::visit(const ast::SliceExpr& n)          { valueResult_ = codegenSl
 void Codegen::visit(const ast::ListComprehension& n)  { valueResult_ = codegenListComprehension(n); }
 void Codegen::visit(const ast::DictComprehension& n)  { valueResult_ = codegenDictComprehension(n); }
 void Codegen::visit(const ast::SpreadExpr& n)         { valueResult_ = codegenSpreadExpr(n); }
+void Codegen::visit(const ast::DictSpreadExpr& n)     { valueResult_ = codegenDictSpreadExpr(n); }
 
 void Codegen::visit(const ast::ThisExpr&) {
     auto* thisAlloca = lookupVar("this");

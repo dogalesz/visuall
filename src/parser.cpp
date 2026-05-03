@@ -148,6 +148,11 @@ static ast::ExprPtr cloneExpr(const ast::Expr& expr) {
         n->line = p->line; n->column = p->column;
         return n;
     }
+    if (auto* p = dynamic_cast<const ast::DictSpreadExpr*>(&expr)) {
+        auto n = std::make_unique<ast::DictSpreadExpr>(cloneExpr(*p->operand));
+        n->line = p->line; n->column = p->column;
+        return n;
+    }
     // Fallback — should not happen for well-formed trees.
     auto n = std::make_unique<ast::NullLiteral>();
     n->line = expr.line; n->column = expr.column;
@@ -410,10 +415,26 @@ ast::StmtPtr Parser::parseClassDef() {
         expect(TokenType::GT, "Expected '>' after type parameters");
     }
 
-    // Inheritance: class Dog extends Animal
+    // Inheritance: class Dog extends Animal  OR  class Dog(Animal, Mixin):
     std::optional<std::string> baseClass;
+    std::vector<std::string> extraBases;
     if (match(TokenType::KW_EXTENDS)) {
         baseClass = expect(TokenType::IDENTIFIER, "Expected base class name").lexeme;
+        // Also allow: class Foo extends A, B (multiple inheritance)
+        while (match(TokenType::COMMA)) {
+            extraBases.push_back(expect(TokenType::IDENTIFIER, "Expected base class name").lexeme);
+        }
+    } else if (current().type == TokenType::LPAREN) {
+        // Python-style: class Foo(Base1, Base2):
+        advance(); // consume '('
+        if (current().type != TokenType::RPAREN) {
+            baseClass = expect(TokenType::IDENTIFIER, "Expected base class name").lexeme;
+            while (match(TokenType::COMMA)) {
+                if (current().type == TokenType::RPAREN) break;
+                extraBases.push_back(expect(TokenType::IDENTIFIER, "Expected base class name").lexeme);
+            }
+        }
+        expect(TokenType::RPAREN, "Expected ')' after base classes");
     }
 
     // Interfaces: class Circle implements Drawable, Clickable
@@ -428,6 +449,7 @@ ast::StmtPtr Parser::parseClassDef() {
     auto body = parseBlock();
     auto node = std::make_unique<ast::ClassDef>(name, std::move(body));
     node->baseClass = baseClass;
+    node->extraBases = std::move(extraBases);
     node->interfaces = std::move(interfaces);
     node->typeParams = std::move(typeParams);
     node->line = ln; node->column = col;
@@ -480,12 +502,29 @@ ast::StmtPtr Parser::parseIfStmt() {
 ast::StmtPtr Parser::parseForStmt() {
     int ln = current().line, col = current().column;
     advance(); // consume 'for'
-    std::string var = expect(TokenType::IDENTIFIER, "Expected loop variable").lexeme;
+    // Parse one or more comma-separated loop variables: for k, v in ...
+    std::string firstVar = expect(TokenType::IDENTIFIER, "Expected loop variable").lexeme;
+    std::vector<std::string> extraVars;
+    while (match(TokenType::COMMA)) {
+        extraVars.push_back(
+            expect(TokenType::IDENTIFIER, "Expected identifier in for-loop variable list").lexeme);
+    }
     expect(TokenType::KW_IN, "Expected 'in' in for loop");
     auto iter = parseExpression();
     expect(TokenType::COLON, "Expected ':' after for header");
     auto body = parseBlock();
-    auto node = std::make_unique<ast::ForStmt>(var, std::move(iter), std::move(body));
+    // Optional else: block
+    ast::StmtList elseBranch;
+    if (match(TokenType::KW_ELSE)) {
+        expect(TokenType::COLON, "Expected ':' after 'else'");
+        elseBranch = parseBlock();
+    }
+    auto node = std::make_unique<ast::ForStmt>(firstVar, std::move(iter), std::move(body));
+    if (!extraVars.empty()) {
+        node->variables.push_back(firstVar);
+        for (auto& v : extraVars) node->variables.push_back(v);
+    }
+    node->elseBranch = std::move(elseBranch);
     node->line = ln; node->column = col;
     return node;
 }
@@ -500,7 +539,14 @@ ast::StmtPtr Parser::parseWhileStmt() {
     auto cond = parseExpression();
     expect(TokenType::COLON, "Expected ':' after while condition");
     auto body = parseBlock();
+    // Optional else: block
+    ast::StmtList elseBranch;
+    if (match(TokenType::KW_ELSE)) {
+        expect(TokenType::COLON, "Expected ':' after 'else'");
+        elseBranch = parseBlock();
+    }
     auto node = std::make_unique<ast::WhileStmt>(std::move(cond), std::move(body));
+    node->elseBranch = std::move(elseBranch);
     node->line = ln; node->column = col;
     return node;
 }
@@ -575,6 +621,14 @@ ast::StmtPtr Parser::parseTryStmt() {
 ast::StmtPtr Parser::parseThrowStmt() {
     int ln = current().line, col = current().column;
     advance(); // consume 'throw'
+    // Bare 'throw' (re-raise) when followed by newline/dedent/EOF
+    if (current().type == TokenType::NEWLINE ||
+        current().type == TokenType::DEDENT  ||
+        current().type == TokenType::END_OF_FILE) {
+        auto node = std::make_unique<ast::ThrowStmt>();
+        node->line = ln; node->column = col;
+        return node;
+    }
     auto expr = parseExpression();
     auto node = std::make_unique<ast::ThrowStmt>(std::move(expr));
     node->line = ln; node->column = col;
@@ -811,8 +865,25 @@ ast::StmtPtr Parser::parseExpressionStatement() {
     }
 
     if (match(TokenType::ASSIGN)) {
+        // Collect all LHS targets for chained assignment: a = b = 1
+        std::vector<ast::ExprPtr> targets;
+        targets.push_back(std::move(expr));
         auto value = parseExpression();
-        auto node = std::make_unique<ast::AssignStmt>(std::move(expr), std::move(value));
+        while (match(TokenType::ASSIGN)) {
+            targets.push_back(std::move(value));
+            value = parseExpression();
+        }
+        // targets holds all but the final RHS; value holds the RHS
+        ast::ExprPtr primaryTarget = std::move(targets[0]);
+        std::vector<ast::ExprPtr> extras;
+        for (size_t i = 1; i < targets.size(); ++i)
+            extras.push_back(std::move(targets[i]));
+        std::unique_ptr<ast::AssignStmt> node;
+        if (extras.empty()) {
+            node = std::make_unique<ast::AssignStmt>(std::move(primaryTarget), std::move(value));
+        } else {
+            node = std::make_unique<ast::AssignStmt>(std::move(primaryTarget), std::move(value), std::move(extras));
+        }
         node->line = ln; node->column = col;
         return node;
     }
@@ -1266,6 +1337,14 @@ ast::ExprPtr Parser::parsePrimary() {
     if (match(TokenType::STAR)) {
         auto operand = parseUnary();
         auto node = std::make_unique<ast::SpreadExpr>(std::move(operand));
+        node->line = ln; node->column = col;
+        return node;
+    }
+
+    // ── Dict-spread: **expr ───────────────────────────────────────────
+    if (match(TokenType::DOUBLE_STAR)) {
+        auto operand = parseUnary();
+        auto node = std::make_unique<ast::DictSpreadExpr>(std::move(operand));
         node->line = ln; node->column = col;
         return node;
     }

@@ -292,6 +292,16 @@ int64_t __visuall_dict_len(VisualDict* d) {
     return d ? d->length : 0;
 }
 
+VisualList* __visuall_dict_keys(VisualDict* d) {
+    VisualList* keys = __visuall_list_new();
+    if (!d) return keys;
+    for (int64_t i = 0; i < d->capacity; i++) {
+        if (d->entries[i].state == DICT_USED)
+            __visuall_list_push(keys, (int64_t)d->entries[i].key);
+    }
+    return keys;
+}
+
 int64_t __visuall_dict_contains(VisualDict* d, const char* key) {
     return __visuall_dict_has(d, key);
 }

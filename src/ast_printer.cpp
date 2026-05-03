@@ -119,6 +119,11 @@ struct CompactVisitor : public ASTVisitorBase {
         e.operand->accept(ov);
         if (!ov.result.empty()) result = "*" + ov.result;
     }
+    void visit(const ast::DictSpreadExpr& e) override {
+        CompactVisitor ov;
+        e.operand->accept(ov);
+        if (!ov.result.empty()) result = "**" + ov.result;
+    }
     // All other nodes leave result empty (too complex for inline)
 };
 
@@ -264,6 +269,11 @@ struct PrintVisitor : public ASTVisitorBase {
         printChildExpr(*e.operand, childPfx(), true);
     }
 
+    void visit(const ast::DictSpreadExpr& e) override {
+        os_ << prefix_ << connector(isLast_) << "DictSpread\n";
+        printChildExpr(*e.operand, childPfx(), true);
+    }
+
     void visit(const ast::FStringExpr&) override {
         os_ << prefix_ << connector(isLast_) << "FStringExpr\n";
     }
@@ -401,7 +411,8 @@ struct PrintVisitor : public ASTVisitorBase {
 
     void visit(const ast::ThrowStmt& p) override {
         os_ << prefix_ << connector(isLast_) << "Throw\n";
-        printChildExpr(*p.expr, childPfx(), true);
+        if (p.expr)
+            printChildExpr(*p.expr.value(), childPfx(), true);
     }
 
     void visit(const ast::TryStmt& p) override {
