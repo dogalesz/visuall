@@ -1,3 +1,0 @@
-fn main():
-	let s = f"item_{42}_value_{294}"
-	print(s)
