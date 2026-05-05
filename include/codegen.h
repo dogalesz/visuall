@@ -151,6 +151,10 @@ private:
     // with default values.
     std::unordered_map<std::string, const ast::FuncDef*> funcDefMap_;
 
+    // Maps class name → InitDef* so constructor call sites can fill missing
+    // args with default parameter values.
+    std::unordered_map<std::string, const ast::InitDef*> classInitParamsMap_;
+
     // ── Variadic (*args) functions ───────────────────────────────────────
     // Names of functions whose last parameter is variadic; call sites pack
     // extra args into a VisualList and pass it as the final argument.
@@ -273,6 +277,7 @@ private:
     void visit(const ast::DictComprehension& n) override;
     void visit(const ast::SpreadExpr& n) override;
     void visit(const ast::DictSpreadExpr& n) override;
+    void visit(const ast::WalrusExpr& n) override;
 
     // Result slot set by expression visit()s, read by codegenExpr().
     llvm::Value* valueResult_ = nullptr;

@@ -353,7 +353,7 @@ void Codegen::generate(const ast::Program& program) {
                 : getLLVMType(f->returnType);
             std::vector<llvm::Type*> paramTys;
             for (const auto& p : f->params) {
-                if (p.isVariadic)
+                if (p.isVariadic || p.isKwargs)
                     paramTys.push_back(llvm::PointerType::getUnqual(
                         llvm::Type::getInt8Ty(*context_)));
                 else
@@ -487,6 +487,7 @@ void Codegen::generate(const ast::Program& program) {
     std::string errStr;
     llvm::raw_string_ostream errStream(errStr);
     if (llvm::verifyModule(*module_, &errStream)) {
+        errStream.flush();
         throw std::runtime_error("LLVM module verification failed:\n" + errStr);
     }
 }
@@ -628,7 +629,7 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
             : getLLVMType(node.returnType);
         std::vector<llvm::Type*> paramTys;
         for (const auto& p : node.params) {
-            if (p.isVariadic)
+            if (p.isVariadic || p.isKwargs)
                 paramTys.push_back(llvm::PointerType::getUnqual(
                     llvm::Type::getInt8Ty(*context_)));
             else
@@ -753,7 +754,11 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
             for (const auto& dec : m->decorators) {
                 if (auto* id = dynamic_cast<const ast::Identifier*>(dec.get())) {
                     if (id->name == "static")   { isStatic   = true; }
-                    if (id->name == "property") { isProperty = true; }
+                    else if (id->name == "property") { isProperty = true; }
+                    else {
+                        fprintf(stderr, "Warning: unknown decorator '@%s' on method '%s' — not applied\n",
+                            id->name.c_str(), m->name.c_str());
+                    }
                 } else if (auto* mem = dynamic_cast<const ast::MemberExpr*>(dec.get())) {
                     if (mem->member == "setter") {
                         if (auto* id2 = dynamic_cast<const ast::Identifier*>(mem->object.get())) {
@@ -840,6 +845,7 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
                 cp.name = p.name;
                 cp.typeAnnotation = p.typeAnnotation;
                 cp.isVariadic = p.isVariadic;
+                cp.isKwargs = p.isKwargs;
                 // defaultValue is not copied (not needed for codegen)
                 params.push_back(std::move(cp));
             }
@@ -1007,6 +1013,10 @@ void Codegen::codegenInitDef(const ast::InitDef& node) {
     std::string name = currentClassName_.empty()
                            ? "__init"
                            : currentClassName_ + "_init";
+
+    // Record params for default-arg filling at constructor call sites.
+    if (!currentClassName_.empty())
+        classInitParamsMap_[currentClassName_] = &node;
 
     auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
     std::vector<llvm::Type*> paramTys = {i8Ptr}; // this
@@ -1539,6 +1549,12 @@ void Codegen::codegenWhileStmt(const ast::WhileStmt& node) {
 // ── ReturnStmt ─────────────────────────────────────────────────────────────
 void Codegen::codegenReturnStmt(const ast::ReturnStmt& node) {
     if (node.value) {
+        // If the current function returns void, ignore the return value.
+        if (currentFunction_->getReturnType()->isVoidTy()) {
+            builder_->CreateRetVoid();
+            return;
+        }
+
         llvm::Value* val = codegenExpr(*node.value);
 
         // Mark tail calls: if the return value is a CallInst, hint LLVM.
@@ -2827,6 +2843,35 @@ llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
         case ast::BinOp::BitXor: return builder_->CreateXor(L, R, "bitxor");
         case ast::BinOp::Shl:    return builder_->CreateShl(L, R, "shl");
         case ast::BinOp::Shr:    return builder_->CreateAShr(L, R, "ashr");
+        case ast::BinOp::NullCoalesce: {
+            // L ?? R: if L is non-null/non-zero return L, else return R.
+            auto* fn = builder_->GetInsertBlock()->getParent();
+            auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+            auto* lhsAlloca = createEntryBlockAlloca(fn, "nc.lhs", i64Ty);
+            llvm::Value* L64 = L;
+            if (L->getType()->isPointerTy())
+                L64 = builder_->CreatePtrToInt(L, i64Ty, "nc.ptoi");
+            else if (!L->getType()->isIntegerTy(64))
+                L64 = builder_->CreateZExt(L64, i64Ty, "nc.zext");
+            builder_->CreateStore(L64, lhsAlloca);
+            auto* isNull = builder_->CreateICmpEQ(L64,
+                llvm::ConstantInt::get(i64Ty, 0), "nc.isnull");
+            auto* thenBB = llvm::BasicBlock::Create(*context_, "nc.rhs", fn);
+            auto* mergeBB = llvm::BasicBlock::Create(*context_, "nc.merge", fn);
+            builder_->CreateCondBr(isNull, thenBB, mergeBB);
+            // RHS block
+            builder_->SetInsertPoint(thenBB);
+            llvm::Value* R64 = R;
+            if (R->getType()->isPointerTy())
+                R64 = builder_->CreatePtrToInt(R, i64Ty, "nc.r.ptoi");
+            else if (!R->getType()->isIntegerTy(64))
+                R64 = builder_->CreateZExt(R64, i64Ty, "nc.r.zext");
+            builder_->CreateStore(R64, lhsAlloca);
+            builder_->CreateBr(mergeBB);
+            // Merge
+            builder_->SetInsertPoint(mergeBB);
+            return builder_->CreateLoad(i64Ty, lhsAlloca, "nc.result");
+        }
         default: break;
     }
 
@@ -3075,11 +3120,33 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
             while (args.size() < callee->arg_size() && args.size() < fparams.size()) {
                 size_t i = args.size();
                 if (fparams[i].isVariadic) break;
+                if (fparams[i].isKwargs) {
+                    // No **kwargs dict passed — supply null pointer.
+                    args.push_back(llvm::ConstantPointerNull::get(
+                        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))));
+                    break;
+                }
                 if (!fparams[i].defaultValue)
                     throw CodegenError("Too few arguments to '" + funcName +
                         "': parameter '" + fparams[i].name + "' has no default",
                         node.line, node.column);
                 args.push_back(codegenExpr(*fparams[i].defaultValue));
+            }
+        } else if (classInitParamsMap_.count(funcName)) {
+            // Constructor call: fill missing args from init() default params.
+            const auto& iparams = classInitParamsMap_.at(funcName)->params;
+            while (args.size() < callee->arg_size() && args.size() < iparams.size()) {
+                size_t i = args.size();
+                if (iparams[i].isKwargs) {
+                    args.push_back(llvm::ConstantPointerNull::get(
+                        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))));
+                    break;
+                }
+                if (!iparams[i].defaultValue)
+                    throw CodegenError("Too few arguments to constructor '" + funcName +
+                        "': parameter '" + iparams[i].name + "' has no default",
+                        node.line, node.column);
+                args.push_back(codegenExpr(*iparams[i].defaultValue));
             }
         }
 
@@ -4724,6 +4791,19 @@ void Codegen::visit(const ast::ListComprehension& n)  { valueResult_ = codegenLi
 void Codegen::visit(const ast::DictComprehension& n)  { valueResult_ = codegenDictComprehension(n); }
 void Codegen::visit(const ast::SpreadExpr& n)         { valueResult_ = codegenSpreadExpr(n); }
 void Codegen::visit(const ast::DictSpreadExpr& n)     { valueResult_ = codegenDictSpreadExpr(n); }
+void Codegen::visit(const ast::WalrusExpr& n) {
+    // Evaluate value, store into (or create) a variable in the current scope, return the value.
+    llvm::Value* val = codegenExpr(*n.value);
+    auto* alloca = lookupVar(n.target);
+    if (!alloca) {
+        // Create new alloca in current function entry block.
+        auto* fn = builder_->GetInsertBlock()->getParent();
+        alloca = createEntryBlockAlloca(fn, n.target, val->getType());
+        declareVar(n.target, alloca);
+    }
+    builder_->CreateStore(val, alloca);
+    valueResult_ = val;
+}
 
 void Codegen::visit(const ast::ThisExpr&) {
     auto* thisAlloca = lookupVar("this");

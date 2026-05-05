@@ -48,6 +48,7 @@ public:
     virtual void visit(const ast::DictComprehension&)  = 0;
     virtual void visit(const ast::SpreadExpr&)         = 0;
     virtual void visit(const ast::DictSpreadExpr&)     = 0;
+    virtual void visit(const ast::WalrusExpr&)         = 0;
 
     // ── Statement nodes ───────────────────────────────────────────────────
     virtual void visit(const ast::ExprStmt&)           = 0;
@@ -103,6 +104,7 @@ public:
     void visit(const ast::DictComprehension&) override {}
     void visit(const ast::SpreadExpr&)        override {}
     void visit(const ast::DictSpreadExpr&)     override {}
+    void visit(const ast::WalrusExpr&)         override {}
 
     // Statements
     void visit(const ast::ExprStmt&)          override {}
@@ -164,6 +166,7 @@ inline void ListComprehension::accept(ASTVisitor& v)  const { v.visit(*this); }
 inline void DictComprehension::accept(ASTVisitor& v)  const { v.visit(*this); }
 inline void SpreadExpr::accept(ASTVisitor& v)         const { v.visit(*this); }
 inline void DictSpreadExpr::accept(ASTVisitor& v)     const { v.visit(*this); }
+inline void WalrusExpr::accept(ASTVisitor& v)         const { v.visit(*this); }
 
 // Statements
 inline void ExprStmt::accept(ASTVisitor& v)           const { v.visit(*this); }

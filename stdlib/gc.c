@@ -749,7 +749,7 @@ void __visuall_collect(void) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 void __visuall_gc_shutdown(void) {
-    /* Free all remaining objects. */
+    /* Frees all remaining objects. */
     GCHeader* h = heap_head;
     while (h) {
         GCHeader* next = h->next;
@@ -760,10 +760,8 @@ void __visuall_gc_shutdown(void) {
     heap_head = NULL;
     heap_bytes = 0;
 
-    /* Free the pointer hash table. */
     ptr_map_free();
 
-    /* Free the free-list pool. */
     fl_free_all();
 
     if (gc_stats_enabled) {

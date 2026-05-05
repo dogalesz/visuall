@@ -153,6 +153,11 @@ static ast::ExprPtr cloneExpr(const ast::Expr& expr) {
         n->line = p->line; n->column = p->column;
         return n;
     }
+    if (auto* p = dynamic_cast<const ast::WalrusExpr*>(&expr)) {
+        auto n = std::make_unique<ast::WalrusExpr>(p->target, cloneExpr(*p->value));
+        n->line = p->line; n->column = p->column;
+        return n;
+    }
     // Fallback — should not happen for well-formed trees.
     auto n = std::make_unique<ast::NullLiteral>();
     n->line = expr.line; n->column = expr.column;
@@ -327,8 +332,13 @@ std::vector<ast::Param> Parser::parseParamList() {
     if (!check(TokenType::RPAREN)) {
         do {
             ast::Param p;
+            // Dict-kwargs: **kwargs
+            if (match(TokenType::DOUBLE_STAR)) {
+                p.isKwargs = true;
+                p.name = expect(TokenType::IDENTIFIER, "Expected parameter name after '**'").lexeme;
+            }
             // Variadic: *args
-            if (match(TokenType::STAR)) {
+            else if (match(TokenType::STAR)) {
                 p.isVariadic = true;
                 p.name = expect(TokenType::IDENTIFIER, "Expected parameter name after '*'").lexeme;
             } else {
@@ -925,6 +935,15 @@ ast::ExprPtr Parser::parseExpression() {
             auto body = parseExpression();
             return std::make_unique<ast::LambdaExpr>(std::move(params), std::move(body));
         }
+        // Walrus detection: name := expr
+        if (match(TokenType::WALRUS)) {
+            std::string target = params[0];
+            auto val = parseExpression();
+            int ln = val->line, col = val->column;
+            auto node = std::make_unique<ast::WalrusExpr>(std::move(target), std::move(val));
+            node->line = ln; node->column = col;
+            return node;
+        }
         pos_ = saved; // backtrack
     }
     return parseTernary();
@@ -932,17 +951,31 @@ ast::ExprPtr Parser::parseExpression() {
 
 // value IF condition ELSE alternative
 ast::ExprPtr Parser::parseTernary() {
-    auto expr = parseOr();
+    auto expr = parseNullCoalesce();
     if (match(TokenType::KW_IF)) {
-        auto cond = parseOr();
+        auto cond = parseNullCoalesce();
         expect(TokenType::KW_ELSE, "Expected 'else' in ternary expression");
-        auto alt = parseOr();
+        auto alt = parseNullCoalesce();
         auto node = std::make_unique<ast::TernaryExpr>(
             std::move(cond), std::move(expr), std::move(alt));
         node->line = cond->line; node->column = cond->column;
         return node;
     }
     return expr;
+}
+
+// left ?? right  (null-coalescing)
+ast::ExprPtr Parser::parseNullCoalesce() {
+    auto left = parseOr();
+    while (match(TokenType::DOUBLE_QUESTION)) {
+        int ln = left->line, col = left->column;
+        auto right = parseOr();
+        auto node = std::make_unique<ast::BinaryExpr>(
+            ast::BinOp::NullCoalesce, std::move(left), std::move(right));
+        node->line = ln; node->column = col;
+        left = std::move(node);
+    }
+    return left;
 }
 
 ast::ExprPtr Parser::parseOr() {

@@ -77,6 +77,7 @@ private:
 
     // ── Expression parsing (precedence climbing) ───────────────────────
     ast::ExprPtr parseTernary();
+    ast::ExprPtr parseNullCoalesce();
     ast::ExprPtr parseOr();
     ast::ExprPtr parseAnd();
     ast::ExprPtr parseNot();

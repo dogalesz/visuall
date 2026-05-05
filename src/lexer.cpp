@@ -543,7 +543,10 @@ Token Lexer::lexOperator(char c, int tokLine, int tokCol) {
         case '{':  return makeToken(TokenType::LBRACE,   "{", tokLine, tokCol);
         case '}':  return makeToken(TokenType::RBRACE,   "}", tokLine, tokCol);
         case ',':  return makeToken(TokenType::COMMA,    ",", tokLine, tokCol);
-        case ':':  return makeToken(TokenType::COLON,    ":", tokLine, tokCol);
+        case ':':  
+            if (match('='))
+                return makeToken(TokenType::WALRUS, ":=", tokLine, tokCol);
+            return makeToken(TokenType::COLON, ":", tokLine, tokCol);
         case '~':  return makeToken(TokenType::TILDE,    "~", tokLine, tokCol);
 
         case '&':
@@ -572,6 +575,8 @@ Token Lexer::lexOperator(char c, int tokLine, int tokCol) {
             return makeToken(TokenType::AT, "@", tokLine, tokCol);
 
         case '?':
+            if (match('?'))
+                return makeToken(TokenType::DOUBLE_QUESTION, "??", tokLine, tokCol);
             return makeToken(TokenType::QUESTION, "?", tokLine, tokCol);
 
         default:

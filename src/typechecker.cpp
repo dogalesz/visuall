@@ -508,6 +508,11 @@ void TypeChecker::check(const ast::Program& program) {
                                                   : resolveTypeName(f->returnType);
             declare(f->name, makeFunc(f->name, retType, std::move(paramTypes)),
                     f->line, f->column);
+            // Track minimum required args (excluding default, variadic, kwargs).
+            size_t minArgs = 0;
+            for (const auto& p : f->params)
+                if (!p.defaultValue && !p.isVariadic && !p.isKwargs) minArgs++;
+            funcMinArgs_[f->name] = minArgs;
             if (!f->typeParams.empty()) {
                 funcTypeParams_[f->name] = f->typeParams;
             }
@@ -654,11 +659,11 @@ void TypeChecker::visit(const ast::ReturnStmt& s) {
 
 void TypeChecker::visit(const ast::FuncDef& s) {
     for (const auto& dec : s.decorators) {
-        // Known decorator names are not expressions — skip type-checking them.
-        if (auto* id = dynamic_cast<const ast::Identifier*>(dec.get())) {
-            if (id->name == "static") continue;
-        }
-        checkExpr(*dec);
+        // Skip type-checking decorator expressions — they are compile-time
+        // annotations, not runtime expressions.  Unknown ones produce a
+        // codegen-level warning instead of a type error.
+        (void)dec;
+        continue;
     }
 
     TypeRef savedRetType = currentReturnType_;
@@ -827,25 +832,37 @@ void TypeChecker::visit(const ast::IfStmt& s) {
     TypeRef condType = checkExpr(*s.condition);
     (void)condType;
 
-    // Nullable narrowing: analyze "x != null" conditions
+    // Nullable narrowing: analyze "x != null" or "x == null" conditions
     std::string narrowVar;
-    TypeRef narrowType;
+    TypeRef narrowType;      // for then-branch
+    TypeRef elseNarrowType;  // for else-branch
     bool hasNarrowing = false;
     if (auto* bin = dynamic_cast<const ast::BinaryExpr*>(s.condition.get())) {
-        if (bin->op == ast::BinOp::Neq) {
+        if (bin->op == ast::BinOp::Neq || bin->op == ast::BinOp::Eq) {
             auto* ident = dynamic_cast<const ast::Identifier*>(bin->left.get());
             auto* null_ = dynamic_cast<const ast::NullLiteral*>(bin->right.get());
             if (ident && null_) {
                 TypeRef varType = symbols_.lookup(ident->name);
                 if (varType->kind == TypeNode::Union) {
-                    std::vector<TypeRef> remaining;
+                    std::vector<TypeRef> nonNullMembers;
                     for (const auto& m : static_cast<const UnionType*>(varType.get())->members) {
-                        if (m->kind != TypeNode::Null) remaining.push_back(m);
+                        if (m->kind != TypeNode::Null) nonNullMembers.push_back(m);
                     }
-                    if (remaining.size() == 1) {
-                        narrowType = remaining[0];
-                    } else if (!remaining.empty()) {
-                        narrowType = makeUnion(std::move(remaining));
+                    TypeRef nonNullType;
+                    if (nonNullMembers.size() == 1) {
+                        nonNullType = nonNullMembers[0];
+                    } else if (!nonNullMembers.empty()) {
+                        nonNullType = makeUnion(nonNullMembers);
+                    }
+                    TypeRef nullType = makeNull();
+                    if (bin->op == ast::BinOp::Neq) {
+                        // x != null → then: non-null, else: null
+                        narrowType = nonNullType;
+                        elseNarrowType = nullType;
+                    } else {
+                        // x == null → then: null, else: non-null
+                        narrowType = nullType;
+                        elseNarrowType = nonNullType;
                     }
                     narrowVar = ident->name;
                     hasNarrowing = true;
@@ -855,7 +872,7 @@ void TypeChecker::visit(const ast::IfStmt& s) {
     }
 
     enterScope();
-    if (hasNarrowing) {
+    if (hasNarrowing && narrowType) {
         declare(narrowVar, narrowType, s.condition->line, s.condition->column);
     }
     checkStmtList(s.thenBranch);
@@ -870,6 +887,9 @@ void TypeChecker::visit(const ast::IfStmt& s) {
 
     if (!s.elseBranch.empty()) {
         enterScope();
+        if (hasNarrowing && elseNarrowType) {
+            declare(narrowVar, elseNarrowType, s.condition->line, s.condition->column);
+        }
         checkStmtList(s.elseBranch);
         exitScope();
     }
@@ -1126,6 +1146,10 @@ void TypeChecker::visit(const ast::BinaryExpr& e) {
                       lt->toString() + " and " + rt->toString(), e.line, e.column);
             }
             exprResult_ = makeUnknown(); return;
+
+        case ast::BinOp::NullCoalesce:
+            // LHS ?? RHS → result is LHS (non-null) or RHS type
+            exprResult_ = rt; return;
     }
     exprResult_ = makeUnknown();
 }
@@ -1219,7 +1243,8 @@ void TypeChecker::visit(const ast::CallExpr& e) {
             }
 
             size_t expectedArgs = (static_cast<const FuncType*>(calleeType.get())->paramTypes.size());
-            if (argTypes.size() != expectedArgs) {
+            size_t minArgs = funcMinArgs_.count(funcName) ? funcMinArgs_.at(funcName) : expectedArgs;
+            if (argTypes.size() < minArgs || argTypes.size() > expectedArgs) {
                 error("Function '" + funcName + "' expects " +
                       std::to_string(expectedArgs) + " argument(s), got " +
                       std::to_string(argTypes.size()), e.line, e.column);
@@ -1230,7 +1255,8 @@ void TypeChecker::visit(const ast::CallExpr& e) {
 
         // Non-generic function
         size_t expectedArgs = (static_cast<const FuncType*>(calleeType.get())->paramTypes.size());
-        if (argTypes.size() != expectedArgs) {
+        size_t minArgs = funcMinArgs_.count(funcName) ? funcMinArgs_.at(funcName) : expectedArgs;
+        if (argTypes.size() < minArgs || argTypes.size() > expectedArgs) {
             error("Function '" + static_cast<const ClassType*>(calleeType.get())->name + "' expects " +
                   std::to_string(expectedArgs) + " argument(s), got " +
                   std::to_string(argTypes.size()), e.line, e.column);
@@ -1386,6 +1412,13 @@ void TypeChecker::visit(const ast::SpreadExpr& e) {
 
 void TypeChecker::visit(const ast::DictSpreadExpr& e) {
     exprResult_ = checkExpr(*e.operand);
+}
+
+void TypeChecker::visit(const ast::WalrusExpr& e) {
+    TypeRef valType = checkExpr(*e.value);
+    // Declare/update the target variable in the current scope.
+    declare(e.target, valType, e.line, e.column);
+    exprResult_ = valType;
 }
 
 } // namespace visuall

@@ -237,6 +237,7 @@ public:
     void visit(const ast::DictComprehension& n)   override;
     void visit(const ast::SpreadExpr& n)          override;
     void visit(const ast::DictSpreadExpr& n)      override;
+    void visit(const ast::WalrusExpr& n)          override;
 
     // ── ASTVisitor overrides — statement nodes ───────────────────────────
     void visit(const ast::ExprStmt& n)            override;
@@ -298,6 +299,8 @@ private:
     std::unordered_map<std::string, ClassInfo> classTable_;
     std::unordered_map<std::string, InterfaceInfo> interfaceTable_;
     std::unordered_map<std::string, std::vector<std::string>> funcTypeParams_;
+    // Maps function name → minimum required arg count (for defaults/kwargs/variadic).
+    std::unordered_map<std::string, size_t> funcMinArgs_;
     std::vector<TypeError> errors_;
 
     // ── Scope helpers ──────────────────────────────────────────────────

@@ -112,6 +112,7 @@ enum class BinOp {
     Eq, Neq, Lt, Gt, Lte, Gte,
     And, Or, In, NotIn,
     BitAnd, BitOr, BitXor, Shl, Shr,
+    NullCoalesce, // ??
 };
 
 struct BinaryExpr : Expr {
@@ -309,6 +310,16 @@ struct Param {
     std::string typeAnnotation; // may be empty
     ExprPtr     defaultValue;   // may be nullptr
     bool        isVariadic = false; // *args
+    bool        isKwargs   = false; // **kwargs
+};
+
+// ── Walrus expression: name := expr ───────────────────────────────────────
+struct WalrusExpr : Expr {
+    std::string target;
+    ExprPtr     value;
+    WalrusExpr(std::string t, ExprPtr v)
+        : target(std::move(t)), value(std::move(v)) {}
+    void accept(ASTVisitor& v) const override;
 };
 
 // ── Function definition ────────────────────────────────────────────────────

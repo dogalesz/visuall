@@ -112,6 +112,8 @@ enum class TokenType {
     ELLIPSIS,           // ...
     AT,                 // @
     QUESTION,           // ?
+    DOUBLE_QUESTION,    // ??  (null-coalescing)
+    WALRUS,             // :=
 
     // ── Structural ─────────────────────────────────────────────────────────
     NEWLINE,            // logical end-of-line

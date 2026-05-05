@@ -272,6 +272,101 @@ static void testMonomorphIR() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// New gap-filling features (16–22)
+// ════════════════════════════════════════════════════════════════════════════
+
+// 16. Default args in init() constructors
+static void testInitDefaultArgs() {
+    std::string src =
+        "class Point:\n"
+        "\tinit(x: int, y: int = 0):\n"
+        "\t\tthis.x = x\n"
+        "\t\tthis.y = y\n"
+        "\n"
+        "p = Point(5)\n";
+    auto ir = codegen(src);
+    expect(ir.find("ERROR") == std::string::npos,
+           "16. Default args in init() constructors");
+}
+
+// 17. super.init() dispatch
+static void testSuperInitDispatch() {
+    std::string src =
+        "class Animal:\n"
+        "\tinit(name: str):\n"
+        "\t\tthis.name = name\n"
+        "\n"
+        "class Dog extends Animal:\n"
+        "\tinit(name: str, breed: str):\n"
+        "\t\tsuper.init(name)\n"
+        "\t\tthis.breed = breed\n"
+        "\n"
+        "d = Dog(\"Rex\", \"lab\")\n";
+    auto ir = codegen(src);
+    expect(ir.find("ERROR") == std::string::npos &&
+           ir.find("Animal_init") != std::string::npos,
+           "17. super.init() dispatches to base init");
+}
+
+// 18. **kwargs receiving side
+static void testKwargsReceiving() {
+    std::string src =
+        "define greet(**opts):\n"
+        "\treturn 0\n"
+        "\n"
+        "greet()\n";
+    auto ir = codegen(src);
+    bool ok = ir.find("ERROR") == std::string::npos;
+    if (!ok) std::cerr << "[18 debug] IR: " << ir.substr(0, 1000) << "\n";
+    expect(ok, "18. **kwargs receiving side — function accepts **opts");
+}
+
+// 19. Null coalescing ?? operator
+static void testNullCoalesce() {
+    std::string src =
+        "x = null\n"
+        "y = x ?? 42\n";
+    auto ir = codegen(src);
+    expect(ir.find("ERROR") == std::string::npos &&
+           ir.find("nc.isnull") != std::string::npos,
+           "19. Null coalescing ?? operator");
+}
+
+// 20. Else-branch null narrowing
+static void testElseBranchNullNarrow() {
+    std::string src =
+        "define maybe(x: int|null) -> int:\n"
+        "\tif x == null:\n"
+        "\t\treturn 0\n"
+        "\telse:\n"
+        "\t\treturn x\n";
+    auto result = typecheck(src);
+    expect(result.empty(), "20. Else-branch null narrowing via x == null");
+}
+
+// 21. Walrus operator :=
+static void testWalrus() {
+    std::string src =
+        "y = (x := 10)\n";
+    auto ir = codegen(src);
+    expect(ir.find("ERROR") == std::string::npos,
+           "21. Walrus operator := assigns and returns value");
+}
+
+// 22. Unknown decorator warning (no crash, just warning)
+static void testUnknownDecorator() {
+    std::string src =
+        "class Foo:\n"
+        "\t@unknown_dec\n"
+        "\tdefine bar() -> int:\n"
+        "\t\treturn 0\n";
+    auto ir = codegen(src);
+    bool ok = ir.find("ERROR") == std::string::npos;
+    if (!ok) std::cerr << "[22 debug] IR: " << ir.substr(0, 400) << "\n";
+    expect(ok, "22. Unknown decorator emits warning but doesn't crash");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Entry point
 // ════════════════════════════════════════════════════════════════════════════
 int runTypeSystemTests() {
@@ -292,6 +387,15 @@ int runTypeSystemTests() {
     testUnionNarrow();
     testOptionalSugar();
     testMonomorphIR();
+
+    // New gap-filling features
+    testInitDefaultArgs();
+    testSuperInitDispatch();
+    testKwargsReceiving();
+    testNullCoalesce();
+    testElseBranchNullNarrow();
+    testWalrus();
+    testUnknownDecorator();
 
     return failures;
 }

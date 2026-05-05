@@ -372,6 +372,12 @@ void CaptureAnalyzer::analyzeExpr(ast::Expr& expr,
         return;
     }
 
+    // ── WalrusExpr ─────────────────────────────────────────────────────
+    if (auto* e = dynamic_cast<ast::WalrusExpr*>(&expr)) {
+        analyzeExpr(*e->value, freeVars);
+        return;
+    }
+
     // ── ListComprehension ──────────────────────────────────────────────
     if (auto* e = dynamic_cast<ast::ListComprehension*>(&expr)) {
         analyzeExpr(*e->iterable, freeVars);
