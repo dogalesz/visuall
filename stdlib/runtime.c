@@ -1296,7 +1296,7 @@ typedef struct {
 
 VisualSet* __visuall_set_new(void) {
     VisualSet* s = (VisualSet*)__visuall_alloc(sizeof(VisualSet),
-                                                VSL_TAG_OBJECT);
+                                                VSL_TAG_SET);
     s->capacity = 8;
     s->length   = 0;
     s->data     = (int64_t*)malloc(sizeof(int64_t) * (size_t)s->capacity);

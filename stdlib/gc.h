@@ -29,6 +29,7 @@ extern "C" {
 #define VSL_TAG_OBJECT   5
 #define VSL_TAG_TUPLE    6
 #define VSL_TAG_BOXED    7   /* single-element heap box for byReference captures */
+#define VSL_TAG_SET      8   /* VisualSet — sorted int64_t array (collections module) */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * GCHeader — prefixed to every GC-managed allocation

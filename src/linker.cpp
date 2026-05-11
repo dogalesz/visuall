@@ -142,8 +142,8 @@ void Linker::emitObjectFile(llvm::Module& mod, const std::string& path) {
 
     auto cpu = llvm::sys::getHostCPUName();
     llvm::TargetOptions opt;
-    auto* TM = target->createTargetMachine(
-        triple, cpu, "", opt, llvm::Reloc::PIC_);
+    std::unique_ptr<llvm::TargetMachine> TM(
+        target->createTargetMachine(triple, cpu, "", opt, llvm::Reloc::PIC_));
     mod.setDataLayout(TM->createDataLayout());
 
     std::error_code ec;

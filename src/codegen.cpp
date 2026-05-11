@@ -549,11 +549,11 @@ void Codegen::emitObjectFile(const std::string& path) const {
     auto cpu = llvm::sys::getHostCPUName();
 
     // Prefer Static relocation for executables; fall back to PIC_ if needed.
-    auto* TM = target->createTargetMachine(
-        triple, cpu, "", opt, llvm::Reloc::Static);
+    std::unique_ptr<llvm::TargetMachine> TM(
+        target->createTargetMachine(triple, cpu, "", opt, llvm::Reloc::Static));
     if (!TM) {
-        TM = target->createTargetMachine(
-            triple, cpu, "", opt, llvm::Reloc::PIC_);
+        TM.reset(target->createTargetMachine(
+            triple, cpu, "", opt, llvm::Reloc::PIC_));
     }
     module_->setDataLayout(TM->createDataLayout());
 

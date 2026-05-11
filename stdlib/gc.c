@@ -606,6 +606,10 @@ void __visuall_mark(void* ptr) {
         /* Box: a single int64_t payload — no child GC pointers to trace. */
         break;
 
+    case VSL_TAG_SET:
+        /* VisualSet — no GC child pointers (data array is int64_t values). */
+        break;
+
     default:
         break;
     }
@@ -681,6 +685,15 @@ static void finalize(GCHeader* hdr) {
         if (dict->entries) {
             free(dict->entries);
             dict->entries = NULL;
+        }
+        break;
+    }
+    case VSL_TAG_SET: {
+        /* VisualSet: { int64_t* data, int64_t length, int64_t capacity } */
+        int64_t** pdata = (int64_t**)user;
+        if (*pdata) {
+            free(*pdata);
+            *pdata = NULL;
         }
         break;
     }

@@ -1,10 +1,10 @@
-Start testing: Apr 28 19:39 Central Europe Daylight Time
+Start testing: May 11 19:30 Central Europe Daylight Time
 ----------------------------------------------------------
 1/1 Testing: visuall_tests
 1/1 Test: visuall_tests
 Command: "C:/Users/vir01/Documents/GitHub/visuall/build/visuall_tests.exe"
 Directory: C:/Users/vir01/Documents/GitHub/visuall/build
-"visuall_tests" start time: Apr 28 19:39 Central Europe Daylight Time
+"visuall_tests" start time: May 11 19:30 Central Europe Daylight Time
 Output:
 ----------------------------------------------------------
 === Visuall Compiler Test Suite ===
@@ -238,7 +238,41 @@ Output:
   PASS: 14d. throw emits __cxa_throw
   PASS: 14e. catch path calls __cxa_begin_catch
   PASS: 14f. IR contains finally.norm block
-  14/14 codegen tests passed.
+  PASS: 15a. assert generates IR
+  PASS: 15b. assert emits conditional branch
+  PASS: 15c. assert fail path calls __visuall_print_str
+  PASS: 15d. assert fail path calls __visuall_sys_exit
+  PASS: 15e. assert has pass block
+  PASS: 15f. assert has fail block
+  PASS: 15g. assert without message uses default 'AssertionError'
+  PASS: 16a. del identifier generates IR
+  PASS: 16b. del identifier emits store
+  PASS: 16c. del list[i] generates IR
+  PASS: 16d. del list[i] calls __visuall_list_remove
+  PASS: 16e. del dict[key] generates IR
+  PASS: 16f. del dict[key] calls __visuall_dict_remove
+  PASS: 17a. with statement generates IR
+  PASS: 17b. IR contains __enter__ method
+  PASS: 17c. IR contains __exit__ method
+  PASS: 17d. IR contains landingpad for exception path
+  PASS: 17e. IR contains with.finally blocks
+  PASS: 17f. IR contains resume to re-raise exceptions
+  PASS: 17g. with statement without 'as' generates IR
+  PASS: 18a. Stack push with string value generates IR
+  PASS: 18b. IR contains __visuall_stack_push call
+  PASS: 18c. IR contains ptrtoint for pointer-to-i64 coercion
+  PASS: 18d. Queue enqueue with string value generates IR
+  PASS: 18e. IR contains __visuall_queue_enqueue call
+  PASS: 18f. Set add with string value generates IR
+  PASS: 18g. IR contains __visuall_set_add call
+  PASS: 19a. integer match generates IR
+  PASS: 19b. IR spills subject to alloca
+  PASS: 19c. IR uses icmp eq for integer comparison
+  PASS: 19d. IR has merge block match.end
+  PASS: 19e. string match generates IR
+  PASS: 19f. IR uses strcmp for string comparison
+  PASS: 19g. bool match generates IR
+  19/19 codegen tests passed.
 
 --- Operator Tests ---
   PASS: 1a. x += 1 parses
@@ -320,7 +354,8 @@ Output:
   PASS: List comprehension: AST contains ListComp
   PASS: List comprehension filter: AST contains ListComp
   PASS: Dict comprehension: AST contains DictComp
-  PASS: Tuple unpacking: AST contains TupleUnpack
+  PASS: Tuple unpacking: AST contains TupleUnpackWarning: unknown decorator '@unknown_dec' on method 'bar' — not applied
+
   PASS: Tuple unpacking: targets are a, b, c
   PASS: Variadic: parses function
   PASS: Variadic: variadic marker present
@@ -348,6 +383,13 @@ Output:
   PASS: 13. int|null after null check narrowed
   PASS: 14. ?str desugars to str|null
   PASS: 15. Monomorphized identity__int and identity__str in IR
+  PASS: 16. Default args in init() constructors
+  PASS: 17. super.init() dispatches to base init
+  PASS: 18. **kwargs receiving side — function accepts **opts
+  PASS: 19. Null coalescing ?? operator
+  PASS: 20. Else-branch null narrowing via x == null
+  PASS: 21. Walrus operator := assigns and returns value
+  PASS: 22. Unknown decorator emits warning but doesn't crash
 
 --- Closure Tests ---
   PASS: 1a. No-capture lambda generates IR
@@ -513,11 +555,11 @@ GC tests: 13/13 passed
 
 === Results: All tests passed! ===
 <end of output>
-Test time =   0.06 sec
+Test time =   0.11 sec
 ----------------------------------------------------------
 Test Passed.
-"visuall_tests" end time: Apr 28 19:39 Central Europe Daylight Time
+"visuall_tests" end time: May 11 19:30 Central Europe Daylight Time
 "visuall_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Apr 28 19:39 Central Europe Daylight Time
+End testing: May 11 19:30 Central Europe Daylight Time
