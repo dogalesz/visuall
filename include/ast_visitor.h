@@ -68,6 +68,8 @@ public:
     virtual void visit(const ast::ImportStmt&)         = 0;
     virtual void visit(const ast::FromImportStmt&)     = 0;
     virtual void visit(const ast::InterfaceDef&)       = 0;
+    virtual void visit(const ast::EnumDef&)            = 0;
+    virtual void visit(const ast::YieldStmt&)           = 0;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -129,6 +131,8 @@ public:
     void visit(const ast::ImportStmt&)        override {}
     void visit(const ast::FromImportStmt&)    override {}
     void visit(const ast::InterfaceDef&)      override {}
+    void visit(const ast::EnumDef&)           override {}
+    void visit(const ast::YieldStmt&)          override {}
 };
 
 } // namespace visuall
@@ -188,5 +192,7 @@ inline void DelStmt::accept(ASTVisitor& v)            const { v.visit(*this); }i
 inline void ImportStmt::accept(ASTVisitor& v)         const { v.visit(*this); }
 inline void FromImportStmt::accept(ASTVisitor& v)     const { v.visit(*this); }
 inline void InterfaceDef::accept(ASTVisitor& v)       const { v.visit(*this); }
+inline void EnumDef::accept(ASTVisitor& v)            const { v.visit(*this); }
+inline void YieldStmt::accept(ASTVisitor& v)          const { v.visit(*this); }
 
 }} // namespace visuall::ast

@@ -302,10 +302,6 @@ VisualList* __visuall_dict_keys(VisualDict* d) {
     return keys;
 }
 
-int64_t __visuall_dict_contains(VisualDict* d, const char* key) {
-    return __visuall_dict_has(d, key);
-}
-
 /* ═══════════════════════════════════════════════════════════════════════════
  * Tag introspection & membership tests
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -1370,3 +1366,76 @@ VisualSet* __visuall_set_intersect(VisualSet* a, VisualSet* b) {
     }
     return out;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Module: random
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#include <stdlib.h>
+
+void __visuall_random_seed(int64_t seed) {
+    srand((unsigned int)seed);
+}
+
+/* Returns a random float in [0.0, 1.0). */
+double __visuall_random_random(void) {
+    return (double)rand() / ((double)RAND_MAX + 1.0);
+}
+
+/* Returns a random integer in [lo, hi] inclusive. */
+int64_t __visuall_random_randint(int64_t lo, int64_t hi) {
+    if (hi < lo) return lo;
+    int64_t range = hi - lo + 1;
+    return lo + (int64_t)(rand() % (int)range);
+}
+
+/* Returns a random element from a VisualList (as raw i64). */
+int64_t __visuall_random_choice(VisualList* lst) {
+    if (!lst || lst->length == 0) {
+        fprintf(stderr, "RandomError: choice from empty list\n");
+        exit(1);
+    }
+    int64_t idx = (int64_t)(rand() % (int)lst->length);
+    return lst->data[idx];
+}
+
+/* Shuffle a VisualList in-place (Fisher-Yates). */
+void __visuall_random_shuffle(VisualList* lst) {
+    if (!lst) return;
+    for (int64_t i = lst->length - 1; i > 0; i--) {
+        int64_t j = (int64_t)(rand() % (int)(i + 1));
+        int64_t tmp = lst->data[i];
+        lst->data[i] = lst->data[j];
+        lst->data[j] = tmp;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Runtime stack-trace support
+ *
+ * Functions push/pop their name onto a simple ring-buffer call stack.
+ * On exception or assertion failure, __visuall_print_traceback() prints it.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#define VSL_TRACEBACK_DEPTH 128
+
+static const char* vsl_traceback_stack[VSL_TRACEBACK_DEPTH];
+static int         vsl_traceback_top = 0;
+
+void __visuall_traceback_push(const char* name) {
+    if (vsl_traceback_top < VSL_TRACEBACK_DEPTH)
+        vsl_traceback_stack[vsl_traceback_top++] = name;
+}
+
+void __visuall_traceback_pop(void) {
+    if (vsl_traceback_top > 0)
+        --vsl_traceback_top;
+}
+
+void __visuall_print_traceback(void) {
+    fprintf(stderr, "Traceback (most recent call last):\n");
+    for (int i = 0; i < vsl_traceback_top; i++)
+        fprintf(stderr, "  File \"<visuall>\", in %s\n", vsl_traceback_stack[i]);
+}
+
+

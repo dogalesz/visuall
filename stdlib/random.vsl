@@ -1,0 +1,30 @@
+## ════════════════════════════════════════════════════════════════════════════
+## Visuall Standard Library — random module
+##
+## Usage:  import random
+##         x = random.random()          # float in [0.0, 1.0)
+##         n = random.randint(1, 10)    # int in [1, 10]
+##         item = random.choice(mylist) # random element
+##         random.shuffle(mylist)       # in-place shuffle
+##         random.seed(42)              # set seed for reproducibility
+## ════════════════════════════════════════════════════════════════════════════
+
+## Set the random seed for reproducibility.
+define seed(s: int) -> void:
+    return __builtin_random_seed(s)
+
+## Return a random float in [0.0, 1.0).
+define random() -> float:
+    return __builtin_random_random()
+
+## Return a random integer in [lo, hi] inclusive.
+define randint(lo: int, hi: int) -> int:
+    return __builtin_random_randint(lo, hi)
+
+## Return a random element from a list.
+define choice(lst: list) -> int:
+    return __builtin_random_choice(lst)
+
+## Shuffle a list in-place.
+define shuffle(lst: list) -> void:
+    return __builtin_random_shuffle(lst)

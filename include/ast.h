@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 namespace visuall {
@@ -326,6 +327,7 @@ struct WalrusExpr : Expr {
 struct FuncDef : Stmt {
     std::string         name;
     std::vector<std::string> typeParams; // generic type params: <T, U>
+    std::unordered_map<std::string, std::string> typeParamBounds; // T -> BoundType
     std::vector<Param>  params;
     std::string         returnType; // may be empty
     StmtList            body;
@@ -343,6 +345,7 @@ struct ClassDef : Stmt {
     std::vector<std::string>   extraBases;      // additional bases (multiple inheritance)
     std::vector<std::string>   interfaces;      // implements I1, I2
     std::vector<std::string>   typeParams;      // <T, U>
+    std::unordered_map<std::string, std::string> typeParamBounds; // T -> BoundType
     StmtList    body; // methods, init, etc.
     ClassDef(std::string n, StmtList b)
         : name(std::move(n)), body(std::move(b)) {}
@@ -355,6 +358,16 @@ struct InitDef : Stmt {
     StmtList           body;
     InitDef(std::vector<Param> p, StmtList b)
         : params(std::move(p)), body(std::move(b)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
+// ── Enum definition ────────────────────────────────────────────────────────
+// enum Color: RED, GREEN, BLUE
+struct EnumDef : Stmt {
+    std::string              name;
+    std::vector<std::string> members;
+    EnumDef(std::string n, std::vector<std::string> m)
+        : name(std::move(n)), members(std::move(m)) {}
     void accept(ASTVisitor& v) const override;
 };
 
@@ -398,6 +411,13 @@ struct ThrowStmt : Stmt {
     std::optional<ExprPtr> expr; // nullopt = bare re-raise
     explicit ThrowStmt(ExprPtr e) : expr(std::move(e)) {}
     explicit ThrowStmt() : expr(std::nullopt) {} // bare re-raise
+    void accept(ASTVisitor& v) const override;
+};
+
+// ── Generator yield ────────────────────────────────────────────────────────
+struct YieldStmt : Stmt {
+    ExprPtr value;
+    explicit YieldStmt(ExprPtr v) : value(std::move(v)) {}
     void accept(ASTVisitor& v) const override;
 };
 

@@ -296,6 +296,8 @@ ast::StmtPtr Parser::parseStatement() {
         case TokenType::KW_INIT:     return parseInitDef();
         case TokenType::KW_CLASS:    return parseClassDef();
         case TokenType::KW_INTERFACE:return parseInterfaceDef();
+        case TokenType::KW_ENUM:     return parseEnumDef();
+        case TokenType::KW_YIELD:    return parseYieldStmt();
         case TokenType::KW_IF:       return parseIfStmt();
         case TokenType::KW_FOR:      return parseForStmt();
         case TokenType::KW_WHILE:    return parseWhileStmt();
@@ -367,11 +369,16 @@ ast::StmtPtr Parser::parseFuncDef(std::vector<ast::ExprPtr> decorators) {
     advance(); // consume 'define'
     std::string name = expect(TokenType::IDENTIFIER, "Expected function name").lexeme;
 
-    // Type params: define identity<T>(...)
+    // Type params: define identity<T>(...) or bounded define foo<T: Comparable>(...)
     std::vector<std::string> typeParams;
+    std::unordered_map<std::string, std::string> typeParamBounds;
     if (match(TokenType::LT)) {
         do {
-            typeParams.push_back(expect(TokenType::IDENTIFIER, "Expected type parameter").lexeme);
+            std::string tp = expect(TokenType::IDENTIFIER, "Expected type parameter").lexeme;
+            typeParams.push_back(tp);
+            if (match(TokenType::COLON)) {
+                typeParamBounds[tp] = expect(TokenType::IDENTIFIER, "Expected bound type").lexeme;
+            }
         } while (match(TokenType::COMMA));
         expect(TokenType::GT, "Expected '>' after type parameters");
     }
@@ -388,6 +395,7 @@ ast::StmtPtr Parser::parseFuncDef(std::vector<ast::ExprPtr> decorators) {
     auto node = std::make_unique<ast::FuncDef>(name, std::move(params), retType, std::move(body));
     node->decorators = std::move(decorators);
     node->typeParams = std::move(typeParams);
+    node->typeParamBounds = std::move(typeParamBounds);
     node->line = ln; node->column = col;
     return node;
 }
@@ -416,11 +424,16 @@ ast::StmtPtr Parser::parseClassDef() {
     advance(); // consume 'class'
     std::string name = expect(TokenType::IDENTIFIER, "Expected class name").lexeme;
 
-    // Type params: class Stack<T>
+    // Type params: class Stack<T> or bounded class Foo<T: Comparable>
     std::vector<std::string> typeParams;
+    std::unordered_map<std::string, std::string> typeParamBounds;
     if (match(TokenType::LT)) {
         do {
-            typeParams.push_back(expect(TokenType::IDENTIFIER, "Expected type parameter").lexeme);
+            std::string tp = expect(TokenType::IDENTIFIER, "Expected type parameter").lexeme;
+            typeParams.push_back(tp);
+            if (match(TokenType::COLON)) {
+                typeParamBounds[tp] = expect(TokenType::IDENTIFIER, "Expected bound type").lexeme;
+            }
         } while (match(TokenType::COMMA));
         expect(TokenType::GT, "Expected '>' after type parameters");
     }
@@ -462,6 +475,34 @@ ast::StmtPtr Parser::parseClassDef() {
     node->extraBases = std::move(extraBases);
     node->interfaces = std::move(interfaces);
     node->typeParams = std::move(typeParams);
+    node->typeParamBounds = std::move(typeParamBounds);
+    node->line = ln; node->column = col;
+    return node;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// enum Color:
+//     RED
+//     GREEN
+//     BLUE
+// ════════════════════════════════════════════════════════════════════════════
+ast::StmtPtr Parser::parseEnumDef() {
+    int ln = current().line, col = current().column;
+    advance(); // consume 'enum'
+    std::string name = expect(TokenType::IDENTIFIER, "Expected enum name").lexeme;
+    expect(TokenType::COLON, "Expected ':' after enum name");
+    // Expect NEWLINE + INDENT, then a list of member names, then DEDENT
+    expect(TokenType::NEWLINE, "Expected newline after ':'");
+    expect(TokenType::INDENT, "Expected indented block for enum body");
+    std::vector<std::string> members;
+    while (!check(TokenType::DEDENT) && !check(TokenType::END_OF_FILE)) {
+        skipNewlines();
+        if (check(TokenType::DEDENT) || check(TokenType::END_OF_FILE)) break;
+        members.push_back(expect(TokenType::IDENTIFIER, "Expected enum member name").lexeme);
+        skipNewlines();
+    }
+    expect(TokenType::DEDENT, "Expected dedent after enum body");
+    auto node = std::make_unique<ast::EnumDef>(name, std::move(members));
     node->line = ln; node->column = col;
     return node;
 }
@@ -1290,9 +1331,7 @@ ast::ExprPtr Parser::parsePrimary() {
         // Parse f-string into FStringExpr with alternating literal/expression parts.
         std::string raw = previous().lexeme;
         // raw is: f"content" or f'content' — strip f + quote + closing quote
-        char quote = raw[1];
-        std::string content = raw.substr(2, raw.size() - 3); // strip f, quote, closing quote
-        (void)quote;
+        std::string content = raw.substr(2, raw.size() - 3); // strip f + quote + closing quote
 
         std::vector<ast::FStringPart> parts;
         std::string currentLiteral;
@@ -1555,6 +1594,18 @@ ast::StmtPtr Parser::parseInterfaceDef() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// yield expr
+// ════════════════════════════════════════════════════════════════════════════
+ast::StmtPtr Parser::parseYieldStmt() {
+    int ln = current().line, col = current().column;
+    advance(); // consume 'yield'
+    auto value = parseExpression();
+    auto node = std::make_unique<ast::YieldStmt>(std::move(value));
+    node->line = ln; node->column = col;
+    return node;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Type annotation: int, int | null, ?str, list[int], dict[str, int]
 // ════════════════════════════════════════════════════════════════════════════
 std::string Parser::parseTypeAnnotation() {
@@ -1618,6 +1669,11 @@ std::string Parser::parseTypeAnnotation() {
     if (match(TokenType::PIPE)) {
         result += "|";
         result += parseTypeAnnotation();
+    }
+
+    // Handle postfix nullable: T?
+    if (match(TokenType::QUESTION)) {
+        result += "|null";
     }
 
     return result;

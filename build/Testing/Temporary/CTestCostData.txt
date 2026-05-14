@@ -1,2 +1,3 @@
-visuall_tests 6 0.0184511
+visuall_tests 6 0
 ---
+visuall_tests

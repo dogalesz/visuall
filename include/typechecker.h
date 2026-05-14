@@ -262,6 +262,8 @@ public:
     void visit(const ast::ImportStmt& n)          override;
     void visit(const ast::FromImportStmt& n)      override;
     void visit(const ast::InterfaceDef& n)        override;
+    void visit(const ast::EnumDef& n)             override;
+    void visit(const ast::YieldStmt& n)           override;
 
 private:
     std::string filename_;
@@ -299,6 +301,8 @@ private:
     std::unordered_map<std::string, ClassInfo> classTable_;
     std::unordered_map<std::string, InterfaceInfo> interfaceTable_;
     std::unordered_map<std::string, std::vector<std::string>> funcTypeParams_;
+    // Maps function name + type param → bound type name (e.g., "foo.T" → "Comparable")
+    std::unordered_map<std::string, std::string> funcBounds_;
     // Maps function name → minimum required arg count (for defaults/kwargs/variadic).
     std::unordered_map<std::string, size_t> funcMinArgs_;
     std::vector<TypeError> errors_;

@@ -59,6 +59,8 @@ enum class TokenType {
     KW_AS,              // as
     KW_MATCH,           // match
     KW_CASE,            // case
+    KW_ENUM,            // enum
+    KW_YIELD,           // yield
 
     // ── Operators ──────────────────────────────────────────────────────────
     PLUS,               // +
@@ -186,6 +188,8 @@ inline const char* tokenTypeToString(TokenType t) {
         case TokenType::KW_AS:          return "KW_AS";
         case TokenType::KW_MATCH:       return "KW_MATCH";
         case TokenType::KW_CASE:        return "KW_CASE";
+        case TokenType::KW_ENUM:        return "KW_ENUM";
+        case TokenType::KW_YIELD:       return "KW_YIELD";
         case TokenType::PLUS:           return "PLUS";
         case TokenType::MINUS:          return "MINUS";
         case TokenType::STAR:           return "STAR";

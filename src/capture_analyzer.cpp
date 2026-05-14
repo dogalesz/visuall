@@ -414,13 +414,11 @@ void CaptureAnalyzer::analyzeExpr(ast::Expr& expr,
     // Literals, ThisExpr, SuperExpr, NullLiteral etc. — no free variables.
 }
 
-void CaptureAnalyzer::collectAssignedNames(const ast::Expr& expr,
-                                            std::unordered_set<std::string>& assigned) {
+void CaptureAnalyzer::collectAssignedNames(const ast::Expr& /*expr*/,
+                                            std::unordered_set<std::string>& /*assigned*/) {
     // Walk expression tree and collect names that appear as assignment targets.
     // For current single-expression lambda bodies, assignments are not possible,
     // so this is a no-op in practice.  Kept for future multi-statement lambdas.
-    (void)expr;
-    (void)assigned;
 }
 
 } // namespace visuall

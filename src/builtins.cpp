@@ -45,7 +45,6 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     auto* i8p  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(ctx));
     auto* voidTy = llvm::Type::getVoidTy(ctx);
     auto* i32  = llvm::Type::getInt32Ty(ctx);
-    (void)i32;
 
     /* ── Print functions ─────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_print_str",   voidTy, {i8p});
@@ -97,7 +96,6 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_dict_get",  i64, {i8p, i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_has",  i64, {i8p, i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_len",  i64, {i8p});
-    getOrDeclareExtern(mod, ctx, "__visuall_dict_contains", i64, {i8p, i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_remove", voidTy, {i8p, i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_dict_keys",   i8p, {i8p});
 
@@ -172,6 +170,18 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_math_clamp", f64, {f64, f64, f64});
     getOrDeclareExtern(mod, ctx, "__visuall_math_lerp",  f64, {f64, f64, f64});
 
+    /* ── random module ───────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_random_seed",    voidTy, {i64});
+    getOrDeclareExtern(mod, ctx, "__visuall_random_random",  f64,    {});
+    getOrDeclareExtern(mod, ctx, "__visuall_random_randint", i64,    {i64, i64});
+    getOrDeclareExtern(mod, ctx, "__visuall_random_choice",  i64,    {i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_random_shuffle", voidTy, {i8p});
+
+    /* ── traceback support ───────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_traceback_push",   voidTy, {i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_traceback_pop",    voidTy, {});
+    getOrDeclareExtern(mod, ctx, "__visuall_print_traceback",  voidTy, {});
+
     /* ── io module ───────────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_io_read_file",   i8p,    {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_io_write_file",  voidTy, {i8p, i8p});
@@ -225,8 +235,12 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     /* ── Exception support ────────────────────────────────────────────── */
     // __visuall_exception_new: allocate a VisualException via __cxa_allocate_exception
     getOrDeclareExtern(mod, ctx, "__visuall_exception_new",          i8p,    {i8p});
+    // __visuall_exception_new_typed: allocate a typed exception (with class name)
+    getOrDeclareExtern(mod, ctx, "__visuall_exception_new_typed",    i8p,    {i8p, i8p});
     // __visuall_exception_msg: extract the message char* from an exception object
     getOrDeclareExtern(mod, ctx, "__visuall_exception_msg",          i8p,    {i8p});
+    // __visuall_exception_class: extract the class name char* from an exception object
+    getOrDeclareExtern(mod, ctx, "__visuall_exception_class",        i8p,    {i8p});
     // __visuall_get_exception_typeinfo: returns &typeid(VisualException)
     getOrDeclareExtern(mod, ctx, "__visuall_get_exception_typeinfo", i8p,    {});
 

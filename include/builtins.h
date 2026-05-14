@@ -50,7 +50,7 @@ inline bool isBuiltinFunction(const std::string& name) {
 
 inline bool isStdlibModule(const std::string& name) {
     static const std::unordered_set<std::string> modules = {
-        "string", "math", "io", "sys", "collections"
+        "string", "math", "io", "sys", "collections", "random"
     };
     return modules.count(name) > 0;
 }

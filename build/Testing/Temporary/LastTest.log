@@ -1,10 +1,10 @@
-Start testing: May 11 19:30 Central Europe Daylight Time
+Start testing: May 11 21:46 Central Europe Daylight Time
 ----------------------------------------------------------
 1/1 Testing: visuall_tests
 1/1 Test: visuall_tests
 Command: "C:/Users/vir01/Documents/GitHub/visuall/build/visuall_tests.exe"
 Directory: C:/Users/vir01/Documents/GitHub/visuall/build
-"visuall_tests" start time: May 11 19:30 Central Europe Daylight Time
+"visuall_tests" start time: May 11 21:46 Central Europe Daylight Time
 Output:
 ----------------------------------------------------------
 === Visuall Compiler Test Suite ===
@@ -272,7 +272,15 @@ Output:
   PASS: 19e. string match generates IR
   PASS: 19f. IR uses strcmp for string comparison
   PASS: 19g. bool match generates IR
-  19/19 codegen tests passed.
+  [generateIR error] test.vsl:2:22: error: Expected ')' after arguments
+  FAIL: 20a. magic methods generate IR
+  FAIL: 20b. str(obj) dispatches to __str__
+  FAIL: 20c. len(obj) dispatches to __len__
+  FAIL: 20d. x in obj dispatches to __contains__
+  FAIL: 20e. for-in dispatches to __iter__
+  FAIL: 20f. for-in calls __next__
+  FAIL: 20g. for-in checks INT64_MIN sentinel
+  13/20 codegen tests passed.
 
 --- Operator Tests ---
   PASS: 1a. x += 1 parses
@@ -354,8 +362,7 @@ Output:
   PASS: List comprehension: AST contains ListComp
   PASS: List comprehension filter: AST contains ListComp
   PASS: Dict comprehension: AST contains DictComp
-  PASS: Tuple unpacking: AST contains TupleUnpackWarning: unknown decorator '@unknown_dec' on method 'bar' — not applied
-
+  PASS: Tuple unpacking: AST contains TupleUnpack
   PASS: Tuple unpacking: targets are a, b, c
   PASS: Variadic: parses function
   PASS: Variadic: variadic marker present
@@ -384,7 +391,8 @@ Output:
   PASS: 14. ?str desugars to str|null
   PASS: 15. Monomorphized identity__int and identity__str in IR
   PASS: 16. Default args in init() constructors
-  PASS: 17. super.init() dispatches to base init
+  PWarning: unknown decorator '@unknown_dec' on method 'bar' — not applied
+ASS: 17. super.init() dispatches to base init
   PASS: 18. **kwargs receiving side — function accepts **opts
   PASS: 19. Null coalescing ?? operator
   PASS: 20. Else-branch null narrowing via x == null
@@ -553,13 +561,13 @@ GC tests: 13/13 passed
   PASS: 5d. Diagnostic format: caret at correct column
   PASS: 5e. Diagnostic format: hint line included
 
-=== Results: All tests passed! ===
+=== Results: 7 test(s) FAILED ===
 <end of output>
-Test time =   0.11 sec
+Test time =   0.12 sec
 ----------------------------------------------------------
-Test Passed.
-"visuall_tests" end time: May 11 19:30 Central Europe Daylight Time
+Test Failed.
+"visuall_tests" end time: May 11 21:46 Central Europe Daylight Time
 "visuall_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: May 11 19:30 Central Europe Daylight Time
+End testing: May 11 21:46 Central Europe Daylight Time

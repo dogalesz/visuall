@@ -628,13 +628,46 @@ static void mark_global_roots(void) {
     }
 }
 
+/* ── Read the hardware stack pointer reliably via inline asm.
+ *    The C idiom `volatile void* sp; sp = &sp;` is UB under optimisation
+ *    because the compiler may keep `sp` in a register, making &sp useless.
+ *    Reading RSP/ESP directly is the only correct approach. */
+static void* get_sp(void) {
+#if defined(__GNUC__) || defined(__clang__)
+#  if defined(__x86_64__)
+    void* sp;
+    __asm__ volatile ("movq %%rsp, %0" : "=r"(sp));
+    return sp;
+#  elif defined(__i386__)
+    void* sp;
+    __asm__ volatile ("movl %%esp, %0" : "=r"(sp));
+    return sp;
+#  elif defined(__aarch64__)
+    void* sp;
+    __asm__ volatile ("mov %0, sp" : "=r"(sp));
+    return sp;
+#  else
+    /* Fallback for other GCC/Clang targets — less reliable but safe. */
+    volatile uintptr_t sp_val = (uintptr_t)__builtin_frame_address(0);
+    return (void*)sp_val;
+#  endif
+#elif defined(_MSC_VER)
+    /* MSVC x64: _AddressOfReturnAddress() points just above the return
+       address slot, giving a conservative (high-side) SP approximation. */
+    return (void*)((uintptr_t)_AddressOfReturnAddress() - sizeof(void*));
+#else
+    /* Last-resort C fallback — may be imprecise under heavy optimisation. */
+    volatile void* sp = NULL;
+    sp = (void*)&sp;
+    return (void*)sp;
+#endif
+}
+
 /* ── Conservative stack scan ───────────────────────────────────────────── */
 static void mark_stack(void) {
     if (!stack_bottom) return;
 
-    /* Get an approximation of the current stack pointer. */
-    volatile void* sp;
-    sp = (void*)&sp;
+    void* sp = get_sp();
 
     void* lo;
     void* hi;

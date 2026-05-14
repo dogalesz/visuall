@@ -54,6 +54,8 @@ private:
     ast::StmtPtr  parseFuncDef(std::vector<ast::ExprPtr> decorators = {});
     ast::StmtPtr  parseInitDef();
     ast::StmtPtr  parseClassDef();
+    ast::StmtPtr  parseEnumDef();
+    ast::StmtPtr  parseYieldStmt();
     ast::StmtPtr  parseIfStmt();
     ast::StmtPtr  parseForStmt();
     ast::StmtPtr  parseWhileStmt();

@@ -503,6 +503,15 @@ struct PrintVisitor : public ASTVisitorBase {
                 << "MethodSig: " << m.name << " -> " << m.returnType << "\n";
         }
     }
+
+    void visit(const ast::EnumDef& p) override {
+        os_ << prefix_ << connector(isLast_) << "EnumDef: " << p.name << "\n";
+        std::string cp = childPfx();
+        for (size_t i = 0; i < p.members.size(); i++) {
+            os_ << cp << connector(i + 1 == p.members.size())
+                << "Member: " << p.members[i] << "\n";
+        }
+    }
 };
 
 } // anonymous namespace

@@ -237,8 +237,7 @@ TypeChecker::TypeChecker(const std::string& filename)
 void TypeChecker::enterScope() { symbols_.enterScope(); }
 void TypeChecker::exitScope()  { symbols_.exitScope(); }
 
-void TypeChecker::declare(const std::string& name, const TypeRef& type, int line, int col) {
-    (void)line; (void)col;
+void TypeChecker::declare(const std::string& name, const TypeRef& type, int /*line*/, int /*col*/) {
     symbols_.declare(name, type);
 }
 
@@ -515,6 +514,10 @@ void TypeChecker::check(const ast::Program& program) {
             funcMinArgs_[f->name] = minArgs;
             if (!f->typeParams.empty()) {
                 funcTypeParams_[f->name] = f->typeParams;
+                // Store bounds: key = "funcName.T" → BoundType
+                for (const auto& [tp, bound] : f->typeParamBounds) {
+                    funcBounds_[f->name + "." + tp] = bound;
+                }
             }
             currentTypeParams_ = savedTP;
         } else if (auto* c = dynamic_cast<const ast::ClassDef*>(stmt.get())) {
@@ -561,6 +564,13 @@ void TypeChecker::check(const ast::Program& program) {
                 info.methods.push_back(method);
             }
             interfaceTable_[i->name] = info;
+        } else if (auto* e = dynamic_cast<const ast::EnumDef*>(stmt.get())) {
+            // Register the enum type itself
+            declare(e->name, makeClass(e->name), e->line, e->column);
+            // Register each member as an Int constant in scope
+            for (const auto& member : e->members) {
+                declare(e->name + "_" + member, makeInt(), e->line, e->column);
+            }
         }
     }
     // Second pass: check all statements.
@@ -658,12 +668,10 @@ void TypeChecker::visit(const ast::ReturnStmt& s) {
 }
 
 void TypeChecker::visit(const ast::FuncDef& s) {
-    for (const auto& dec : s.decorators) {
+    for ([[maybe_unused]] const auto& dec : s.decorators) {
         // Skip type-checking decorator expressions — they are compile-time
         // annotations, not runtime expressions.  Unknown ones produce a
         // codegen-level warning instead of a type error.
-        (void)dec;
-        continue;
     }
 
     TypeRef savedRetType = currentReturnType_;
@@ -829,8 +837,7 @@ void TypeChecker::visit(const ast::ClassDef& s) {
 }
 
 void TypeChecker::visit(const ast::IfStmt& s) {
-    TypeRef condType = checkExpr(*s.condition);
-    (void)condType;
+    checkExpr(*s.condition);
 
     // Nullable narrowing: analyze "x != null" or "x == null" conditions
     std::string narrowVar;
@@ -1023,13 +1030,18 @@ void TypeChecker::visit(const ast::BreakStmt&)    { /* nothing to check */ }
 void TypeChecker::visit(const ast::ContinueStmt&) { /* nothing to check */ }
 void TypeChecker::visit(const ast::PassStmt&)     { /* nothing to check */ }
 void TypeChecker::visit(const ast::InterfaceDef&) { /* registered in first pass */ }
+void TypeChecker::visit(const ast::EnumDef&)      { /* registered in first pass */ }
+
+void TypeChecker::visit(const ast::YieldStmt& s) {
+    // A yield inside a function marks it as a generator.
+    // Type-check the yielded value (any type is allowed).
+    checkExpr(*s.value);
+}
 
 void TypeChecker::visit(const ast::TupleUnpackStmt& s) {
-    TypeRef rhsType = checkExpr(*s.value);
+    checkExpr(*s.value);
     for (const auto& target : s.targets) {
-        TypeRef elemType = makeUnknown();
-        (void)rhsType;
-        declare(target, elemType, s.line, s.column);
+        declare(target, makeUnknown(), s.line, s.column);
     }
 }
 
@@ -1191,6 +1203,15 @@ void TypeChecker::visit(const ast::CallExpr& e) {
             exprResult_ = makeList(makeUnknown());
             return;
         }
+        // isinstance(expr, TypeName) -> bool
+        if (id->name == "isinstance") {
+            if (e.args.size() != 2) {
+                error("isinstance() requires exactly 2 arguments", e.line, e.column);
+            }
+            if (!e.args.empty()) checkExpr(*e.args[0]);
+            exprResult_ = makeBool();
+            return;
+        }
         if (id->name == "input") {
             if (e.args.size() > 1) {
                 error("input() accepts 0 or 1 str argument, got " +
@@ -1240,6 +1261,24 @@ void TypeChecker::visit(const ast::CallExpr& e) {
             if (retType->kind == TypeNode::TypeVar) {
                 auto it = typeArgMap.find(static_cast<const TypeVarNode*>(retType.get())->name);
                 if (it != typeArgMap.end()) retType = it->second;
+            }
+
+            // Verify generic bounds: if T is bound to a class, ensure concrete arg is that class or unknown
+            for (const auto& [tp, concrete] : typeArgMap) {
+                auto boundIt = funcBounds_.find(funcName + "." + tp);
+                if (boundIt != funcBounds_.end()) {
+                    const std::string& bound = boundIt->second;
+                    // Accept Unknown (inferred), same primitive, or class matching the bound
+                    bool ok = concrete->isUnknown()
+                           || (concrete->kind == TypeNode::Class &&
+                               static_cast<const ClassType*>(concrete.get())->name == bound)
+                           || concrete->toString() == bound;
+                    if (!ok) {
+                        error("Type argument '" + concrete->toString() +
+                              "' does not satisfy bound '" + bound + "' for type parameter '" + tp + "'",
+                              e.line, e.column);
+                    }
+                }
             }
 
             size_t expectedArgs = (static_cast<const FuncType*>(calleeType.get())->paramTypes.size());
@@ -1298,8 +1337,7 @@ void TypeChecker::visit(const ast::MemberExpr& e) {
 
 void TypeChecker::visit(const ast::IndexExpr& e) {
     TypeRef objType = checkExpr(*e.object);
-    TypeRef idxType = checkExpr(*e.index);
-    (void)idxType;
+    checkExpr(*e.index);
 
     if (objType->kind == TypeNode::List) {
         exprResult_ = static_cast<const ListType*>(objType.get())->elem; return;

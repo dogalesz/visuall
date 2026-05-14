@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
+#include <limits>
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -266,8 +267,24 @@ llvm::Value* Codegen::emitPrintCall(const ast::CallExpr& node) {
             auto* fn = module_->getFunction("__visuall_print_bool");
             if (fn) builder_->CreateCall(fn, {ext});
         } else if (val->getType()->isPointerTy()) {
-            auto* fn = module_->getFunction("__visuall_print_str");
-            if (fn) builder_->CreateCall(fn, {val});
+            // Check for __str__ on class instances before raw pointer print
+            bool usedCustomStr = false;
+            if (auto* argIdent = dynamic_cast<const ast::Identifier*>(node.args[i].get())) {
+                auto clsIt = varClass_.find(argIdent->name);
+                if (clsIt != varClass_.end()) {
+                    auto* strMethod = module_->getFunction(clsIt->second + "___str__");
+                    if (strMethod) {
+                        auto* strVal = emitCallOrInvoke(strMethod, {val}, "str.custom");
+                        auto* printFn = module_->getFunction("__visuall_print_str");
+                        if (printFn) builder_->CreateCall(printFn, {strVal});
+                        usedCustomStr = true;
+                    }
+                }
+            }
+            if (!usedCustomStr) {
+                auto* fn = module_->getFunction("__visuall_print_str");
+                if (fn) builder_->CreateCall(fn, {val});
+            }
         } else {
             // Fallback: printf
             auto* printfFn = module_->getFunction("printf");
@@ -335,6 +352,38 @@ llvm::Value* Codegen::emitIntPow(llvm::Value* base, llvm::Value* exp) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Generator helpers
+// ════════════════════════════════════════════════════════════════════════════
+static bool stmtListContainsYield(const ast::StmtList& stmts);
+
+static bool stmtContainsYield(const ast::Stmt& s) {
+    if (dynamic_cast<const ast::YieldStmt*>(&s)) return true;
+    if (auto* p = dynamic_cast<const ast::IfStmt*>(&s)) {
+        if (stmtListContainsYield(p->thenBranch)) return true;
+        for (const auto& [cond, body] : p->elsifBranches)
+            if (stmtListContainsYield(body)) return true;
+        if (stmtListContainsYield(p->elseBranch)) return true;
+    }
+    if (auto* p = dynamic_cast<const ast::ForStmt*>(&s))
+        return stmtListContainsYield(p->body);
+    if (auto* p = dynamic_cast<const ast::WhileStmt*>(&s))
+        return stmtListContainsYield(p->body);
+    if (auto* p = dynamic_cast<const ast::TryStmt*>(&s)) {
+        if (stmtListContainsYield(p->tryBody)) return true;
+        for (const auto& c : p->catchClauses)
+            if (stmtListContainsYield(c.body)) return true;
+        if (stmtListContainsYield(p->finallyBody)) return true;
+    }
+    return false;
+}
+
+static bool stmtListContainsYield(const ast::StmtList& stmts) {
+    for (const auto& s : stmts)
+        if (stmtContainsYield(*s)) return true;
+    return false;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Top-level: generate()
 // ════════════════════════════════════════════════════════════════════════════
 void Codegen::generate(const ast::Program& program) {
@@ -348,9 +397,13 @@ void Codegen::generate(const ast::Program& program) {
                 genericFuncDefs_[f->name] = f;
                 continue;
             }
-            llvm::Type* retTy = f->returnType.empty()
-                ? llvm::Type::getVoidTy(*context_)
-                : getLLVMType(f->returnType);
+            // Generator functions always return i8* (VisualList*)
+            bool isGenerator = stmtListContainsYield(f->body);
+            llvm::Type* retTy = isGenerator
+                ? llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))
+                : (f->returnType.empty()
+                    ? llvm::Type::getVoidTy(*context_)
+                    : getLLVMType(f->returnType));
             std::vector<llvm::Type*> paramTys;
             for (const auto& p : f->params) {
                 if (p.isVariadic || p.isKwargs)
@@ -391,7 +444,8 @@ void Codegen::generate(const ast::Program& program) {
         bool hasNonFuncStmts = false;
         for (const auto& stmt : program.statements) {
             if (dynamic_cast<const ast::FuncDef*>(stmt.get()) ||
-                dynamic_cast<const ast::ClassDef*>(stmt.get())) {
+                dynamic_cast<const ast::ClassDef*>(stmt.get()) ||
+                dynamic_cast<const ast::EnumDef*>(stmt.get())) {
                 auto* savedBB = builder_->GetInsertBlock();
                 auto* savedFn = currentFunction_;
                 codegenStmt(*stmt);
@@ -453,7 +507,8 @@ void Codegen::generate(const ast::Program& program) {
         collectBoxedVarsFromStmts(program.statements);
         for (const auto& stmt : program.statements) {
             if (dynamic_cast<const ast::FuncDef*>(stmt.get()) ||
-                dynamic_cast<const ast::ClassDef*>(stmt.get())) {
+                dynamic_cast<const ast::ClassDef*>(stmt.get()) ||
+                dynamic_cast<const ast::EnumDef*>(stmt.get())) {
                 // Save main context, emit function, restore.
                 auto* savedBB = builder_->GetInsertBlock();
                 auto* savedFn = currentFunction_;
@@ -622,11 +677,14 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
 
     // Look up the pre-declared function.
     llvm::Function* fn = module_->getFunction(node.name);
+    bool isGenerator = stmtListContainsYield(node.body);
     if (!fn) {
         // Not forward-declared — happens for nested/class functions.
-        llvm::Type* retTy = node.returnType.empty()
-            ? llvm::Type::getVoidTy(*context_)
-            : getLLVMType(node.returnType);
+        llvm::Type* retTy = isGenerator
+            ? llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))
+            : (node.returnType.empty()
+                ? llvm::Type::getVoidTy(*context_)
+                : getLLVMType(node.returnType));
         std::vector<llvm::Type*> paramTys;
         for (const auto& p : node.params) {
             if (p.isVariadic || p.isKwargs)
@@ -687,20 +745,46 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
         }
     }
 
+    // Emit traceback_push for stack-trace support.
+    if (auto* tbPushFn = module_->getFunction("__visuall_traceback_push")) {
+        auto* nameStr = builder_->CreateGlobalString(node.name, "fn.name");
+        auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        auto* namePtr = builder_->CreateBitCast(nameStr, i8Ptr, "fn.name.ptr");
+        builder_->CreateCall(tbPushFn, {namePtr});
+    }
+
     // Default parameter values are handled at call sites for now.
     // Decorators are applied conceptually but emit no extra IR (stubs).
+
+    // Generator setup: create a list to collect yielded values.
+    auto* savedGeneratorList = generatorList_;
+    generatorList_ = nullptr;
+    if (isGenerator) {
+        auto* listNewFn = module_->getFunction("__visuall_list_new");
+        if (listNewFn)
+            generatorList_ = builder_->CreateCall(listNewFn, {}, "gen.list");
+        else
+            generatorList_ = llvm::ConstantPointerNull::get(
+                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+    }
 
     codegenStmtList(node.body);
 
     // Implicit return if not terminated
     if (!builder_->GetInsertBlock()->getTerminator()) {
-        if (fn->getReturnType()->isVoidTy()) {
+        // Emit traceback_pop before returning.
+        if (auto* tbPopFn = module_->getFunction("__visuall_traceback_pop"))
+            builder_->CreateCall(tbPopFn, {});
+        if (isGenerator && generatorList_) {
+            builder_->CreateRet(generatorList_);
+        } else if (fn->getReturnType()->isVoidTy()) {
             builder_->CreateRetVoid();
         } else {
             builder_->CreateRet(llvm::Constant::getNullValue(fn->getReturnType()));
         }
     }
 
+    generatorList_ = savedGeneratorList;
     popScope();
     boxedVars_ = savedBoxedVars;
     currentFunction_ = savedFn;
@@ -902,7 +986,6 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
             if (savedBB) builder_->SetInsertPoint(savedBB);
         } else if (auto* init = dynamic_cast<const ast::InitDef*>(s.get())) {
             // Emit as ClassName_init
-            (void)init;
             codegenInitDef(*init);
         } else {
             codegenStmt(*s);
@@ -1191,6 +1274,53 @@ void Codegen::codegenForStmt(const ast::ForStmt& node) {
 
     // Evaluate the iterable.
     llvm::Value* iterVal = codegenExpr(*node.iterable);
+
+    // ── Class __iter__ / __next__ iteration ──────────────────────────────
+    if (auto* iterIdent = dynamic_cast<const ast::Identifier*>(node.iterable.get())) {
+        auto clsIt = varClass_.find(iterIdent->name);
+        if (clsIt != varClass_.end()) {
+            auto* iterFn = module_->getFunction(clsIt->second + "___iter__");
+            auto* nextFn = module_->getFunction(clsIt->second + "___next__");
+            if (iterFn && nextFn) {
+                // Call __iter__(self) to get the iterator object
+                auto* iterObj = emitCallOrInvoke(iterFn, {iterVal}, "iter.obj");
+
+                auto* condBB = llvm::BasicBlock::Create(*context_, "for.cond", fn);
+                auto* bodyBB = llvm::BasicBlock::Create(*context_, "for.body", fn);
+                auto* exitBB = llvm::BasicBlock::Create(*context_, "for.end",  fn);
+
+                builder_->CreateBr(condBB);
+
+                builder_->SetInsertPoint(condBB);
+                // Call __next__(iter) — returns INT64_MIN as end-of-iteration sentinel
+                auto* nextVal  = emitCallOrInvoke(nextFn, {iterObj}, "iter.next");
+                auto* sentinel = llvm::ConstantInt::get(
+                    i64Ty, static_cast<uint64_t>(std::numeric_limits<int64_t>::min()));
+                auto* isDone = builder_->CreateICmpEQ(nextVal, sentinel, "iter.done");
+                builder_->CreateCondBr(isDone, exitBB, bodyBB);
+
+                builder_->SetInsertPoint(bodyBB);
+                pushScope();
+                auto* varAlloca = createEntryBlockAlloca(currentFunction_, node.variable, i64Ty);
+                builder_->CreateStore(nextVal, varAlloca);
+                declareVar(node.variable, varAlloca);
+                emitUnpackRest(nextVal);
+                loopStack_.push_back({condBB, exitBB});
+                loopElseAllocas_.push_back(didBreakAlloca);
+                codegenStmtList(node.body);
+                loopElseAllocas_.pop_back();
+                loopStack_.pop_back();
+                popScope();
+
+                if (!builder_->GetInsertBlock()->getTerminator())
+                    builder_->CreateBr(condBB);
+
+                builder_->SetInsertPoint(exitBB);
+                emitForElse();
+                return;
+            }
+        }
+    }
 
     // ── String iteration: for ch in "hello" ────────────────────────────
     if (isStringExpr(*node.iterable) && iterVal->getType()->isPointerTy()) {
@@ -1547,7 +1677,36 @@ void Codegen::codegenWhileStmt(const ast::WhileStmt& node) {
 }
 
 // ── ReturnStmt ─────────────────────────────────────────────────────────────
+// ── YieldStmt ─────────────────────────────────────────────────────────────
+void Codegen::codegenYieldStmt(const ast::YieldStmt& node) {
+    if (!generatorList_) return; // not inside a generator, ignore
+    llvm::Value* val = codegenExpr(*node.value);
+    auto* pushFn = module_->getFunction("__visuall_list_push");
+    if (!pushFn) return;
+    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    // Coerce val to i64 for list storage.
+    llvm::Value* asInt = val;
+    if (val->getType()->isPointerTy())
+        asInt = builder_->CreatePtrToInt(val, i64Ty, "yield.val.int");
+    else if (val->getType()->isDoubleTy())
+        asInt = builder_->CreateBitCast(val, i64Ty, "yield.val.int");
+    else if (!val->getType()->isIntegerTy(64))
+        asInt = builder_->CreateZExt(val, i64Ty, "yield.val.int");
+    auto* listPtr = builder_->CreateBitCast(generatorList_, i8Ptr, "gen.list.ptr");
+    builder_->CreateCall(pushFn, {listPtr, asInt});
+}
+
 void Codegen::codegenReturnStmt(const ast::ReturnStmt& node) {
+    // Emit traceback_pop before returning from any function.
+    if (auto* tbPopFn = module_->getFunction("__visuall_traceback_pop"))
+        builder_->CreateCall(tbPopFn, {});
+
+    // Inside a generator: any explicit return exits early, returning the list.
+    if (generatorList_) {
+        builder_->CreateRet(generatorList_);
+        return;
+    }
     if (node.value) {
         // If the current function returns void, ignore the return value.
         if (currentFunction_->getReturnType()->isVoidTy()) {
@@ -1635,16 +1794,15 @@ void Codegen::codegenTryStmt(const ast::TryStmt& node) {
     }
 
     auto* excPtr = builder_->CreateExtractValue(lp, 0, "exc.ptr");
-    auto* excSel = builder_->CreateExtractValue(lp, 1, "exc.sel");
-    (void)excSel; // used only on the cleanup resume path
 
     if (hasCatch) {
         // ── Extract exception message via C++ ABI helpers ────────────────
         llvm::Value* excMsg = llvm::ConstantPointerNull::get(i8Ptr);
+        llvm::Value* excObj = llvm::ConstantPointerNull::get(i8Ptr);
         auto* beginCatchFn = module_->getFunction("__cxa_begin_catch");
         auto* excMsgFn     = module_->getFunction("__visuall_exception_msg");
         if (beginCatchFn) {
-            auto* excObj = builder_->CreateCall(beginCatchFn, {excPtr}, "exc.obj");
+            excObj = builder_->CreateCall(beginCatchFn, {excPtr}, "exc.obj");
             if (excMsgFn) {
                 excMsg = builder_->CreateCall(excMsgFn, {excObj}, "exc.msg");
             }
@@ -1654,16 +1812,101 @@ void Codegen::codegenTryStmt(const ast::TryStmt& node) {
         lastExceptionVal_ = excMsg;
 
         // ── Emit catch clause bodies ─────────────────────────────────────
-        for (const auto& clause : node.catchClauses) {
-            pushScope();
-            if (!clause.varName.empty()) {
-                auto* catchAlloca = createEntryBlockAlloca(fn, clause.varName, i8Ptr);
-                builder_->CreateStore(excMsg, catchAlloca);
-                declareVar(clause.varName, catchAlloca);
+        auto* excClassFn = module_->getFunction("__visuall_exception_class");
+        auto* fn2 = builder_->GetInsertBlock()->getParent();
+        llvm::BasicBlock* catchExitBB = llvm::BasicBlock::Create(*context_, "catch.exit", fn2);
+
+        for (size_t ci = 0; ci < node.catchClauses.size(); ci++) {
+            const auto& clause = node.catchClauses[ci];
+            bool isLast = (ci + 1 == node.catchClauses.size());
+
+            if (!clause.exceptionType.empty() && excClassFn) {
+                // Typed catch: emit isinstance check
+                auto* excCls = builder_->CreateCall(excClassFn, {excObj}, "exc.cls");
+                // Build a chain to check this type and all its bases (BFS)
+                std::vector<std::string> typeChain;
+                std::string checkType = clause.exceptionType;
+                while (!checkType.empty()) {
+                    typeChain.push_back(checkType);
+                    auto it = classBaseMap_.find(checkType);
+                    if (it != classBaseMap_.end() && !it->second.empty())
+                        checkType = it->second;
+                    else
+                        break;
+                }
+
+                // Create a block chain: for each type in the chain, strcmp
+                auto* matchBB   = llvm::BasicBlock::Create(*context_, "catch.match",   fn2);
+                auto* nomatchBB = llvm::BasicBlock::Create(*context_, "catch.nomatch", fn2);
+
+                // Chain compares: if any match, branch to matchBB
+                llvm::BasicBlock* prevNomatch = nullptr;
+                for (size_t ti = 0; ti < typeChain.size(); ti++) {
+                    if (ti > 0) {
+                        builder_->SetInsertPoint(prevNomatch);
+                    }
+                    auto* typeNameGlobal = builder_->CreateGlobalString(
+                        typeChain[ti], "catch.typename");
+                    auto* strcmpFn = module_->getFunction("strcmp");
+                    if (!strcmpFn) {
+                        auto* strcmpTy = llvm::FunctionType::get(
+                            llvm::Type::getInt32Ty(*context_),
+                            {llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)),
+                             llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))},
+                            false);
+                        strcmpFn = llvm::Function::Create(
+                            strcmpTy, llvm::Function::ExternalLinkage, "strcmp", module_.get());
+                    }
+                    auto* cmpResult = builder_->CreateCall(strcmpFn, {excCls, typeNameGlobal}, "strcmp.result");
+                    auto* isMatch   = builder_->CreateICmpEQ(
+                        cmpResult, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 0), "type.match");
+                    prevNomatch = llvm::BasicBlock::Create(*context_, "catch.no" + typeChain[ti], fn2);
+                    builder_->CreateCondBr(isMatch, matchBB, prevNomatch);
+                }
+                // After all type checks fail
+                builder_->SetInsertPoint(prevNomatch ? prevNomatch : nomatchBB);
+                builder_->CreateBr(nomatchBB);
+
+                builder_->SetInsertPoint(matchBB);
+                pushScope();
+                if (!clause.varName.empty()) {
+                    auto* catchAlloca = createEntryBlockAlloca(fn2, clause.varName, i8Ptr);
+                    builder_->CreateStore(excMsg, catchAlloca);
+                    declareVar(clause.varName, catchAlloca);
+                }
+                codegenStmtList(clause.body);
+                popScope();
+                if (!builder_->GetInsertBlock()->getTerminator())
+                    builder_->CreateBr(catchExitBB);
+
+                builder_->SetInsertPoint(nomatchBB);
+                if (isLast) {
+                    // No matching catch: end catch and proceed to exit
+                    auto* endCatchFn2 = module_->getFunction("__cxa_end_catch");
+                    if (endCatchFn2) builder_->CreateCall(endCatchFn2, {});
+                    builder_->CreateBr(catchExitBB);
+                }
+            } else {
+                // Catch-all (no type filter)
+                pushScope();
+                if (!clause.varName.empty()) {
+                    auto* catchAlloca = createEntryBlockAlloca(fn2, clause.varName, i8Ptr);
+                    builder_->CreateStore(excMsg, catchAlloca);
+                    declareVar(clause.varName, catchAlloca);
+                }
+                codegenStmtList(clause.body);
+                popScope();
+                if (!builder_->GetInsertBlock()->getTerminator())
+                    builder_->CreateBr(catchExitBB);
+                if (!isLast) {
+                    // Skip remaining clauses
+                    auto* skipBB = llvm::BasicBlock::Create(*context_, "catch.skip", fn2);
+                    builder_->SetInsertPoint(skipBB);
+                }
             }
-            codegenStmtList(clause.body);
-            popScope();
         }
+
+        builder_->SetInsertPoint(catchExitBB);
 
         // End the active C++ catch region.
         auto* endCatchFn = module_->getFunction("__cxa_end_catch");
@@ -1865,17 +2108,32 @@ void Codegen::codegenWithStmt(const ast::WithStmt& node) {
 
 // ── ThrowStmt ──────────────────────────────────────────────────────────────
 void Codegen::codegenThrowStmt(const ast::ThrowStmt& node) {
+    // Print traceback before throwing.
+    if (auto* tbFn = module_->getFunction("__visuall_print_traceback"))
+        builder_->CreateCall(tbFn, {});
+
     auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
 
     // ── 1. Evaluate the exception message expression ────────────────────
-    // Bare 'throw' (no expression): re-raise the last caught exception.
     llvm::Value* msgVal;
+    std::string  thrownClassName; // non-empty if throwing a class instance
     if (!node.expr) {
         msgVal = lastExceptionVal_
                      ? lastExceptionVal_
                      : llvm::ConstantPointerNull::get(i8Ptr);
     } else {
         msgVal = codegenExpr(*node.expr.value());
+        // If throwing a known class instance, record its class name.
+        if (auto* callExpr = dynamic_cast<const ast::CallExpr*>(node.expr.value().get())) {
+            if (auto* callee = dynamic_cast<const ast::Identifier*>(callExpr->callee.get())) {
+                if (classFields_.count(callee->name))
+                    thrownClassName = callee->name;
+            }
+        } else if (auto* identExpr = dynamic_cast<const ast::Identifier*>(node.expr.value().get())) {
+            auto it = varClass_.find(identExpr->name);
+            if (it != varClass_.end())
+                thrownClassName = it->second;
+        }
         // Ensure we have an i8* (string pointer).
         if (!msgVal->getType()->isPointerTy()) {
             auto* toStrFn = module_->getFunction("__visuall_int_to_str");
@@ -1888,10 +2146,24 @@ void Codegen::codegenThrowStmt(const ast::ThrowStmt& node) {
     }
 
     // ── 2. Allocate the VisualException object ──────────────────────────
-    auto* excNewFn = module_->getFunction("__visuall_exception_new");
     llvm::Value* excPtr = llvm::ConstantPointerNull::get(i8Ptr);
-    if (excNewFn) {
-        excPtr = builder_->CreateCall(excNewFn, {msgVal}, "exc.alloc");
+    if (!thrownClassName.empty()) {
+        // Typed exception: pass class name so catch can filter by type.
+        auto* excNewTypedFn = module_->getFunction("__visuall_exception_new_typed");
+        if (excNewTypedFn) {
+            auto* clsNameGlobal = builder_->CreateGlobalString(
+                thrownClassName, "exc.cls.name");
+            excPtr = builder_->CreateCall(
+                excNewTypedFn, {msgVal, clsNameGlobal}, "exc.alloc");
+        } else {
+            auto* excNewFn = module_->getFunction("__visuall_exception_new");
+            if (excNewFn)
+                excPtr = builder_->CreateCall(excNewFn, {msgVal}, "exc.alloc");
+        }
+    } else {
+        auto* excNewFn = module_->getFunction("__visuall_exception_new");
+        if (excNewFn)
+            excPtr = builder_->CreateCall(excNewFn, {msgVal}, "exc.alloc");
     }
 
     // ── 3. Get the type_info pointer ─────────────────────────────────────
@@ -1907,7 +2179,6 @@ void Codegen::codegenThrowStmt(const ast::ThrowStmt& node) {
         auto* nullDtor = llvm::ConstantPointerNull::get(i8Ptr);
         llvm::SmallVector<llvm::Value*, 3> throwArgs = {excPtr, typeInfoPtr, nullDtor};
         if (!landingpadStack_.empty()) {
-            // Inside a try block: use invoke so the exception reaches the lpad.
             auto* fn = builder_->GetInsertBlock()->getParent();
             setPersonalityFn(fn);
             auto* unreachBB = llvm::BasicBlock::Create(*context_, "throw.cont", fn);
@@ -1940,6 +2211,9 @@ void Codegen::codegenAssertStmt(const ast::AssertStmt& node) {
 
     // ── Failure path ──────────────────────────────────────────────────────
     builder_->SetInsertPoint(failBB);
+    // Print traceback before assertion error.
+    if (auto* tbFn = module_->getFunction("__visuall_print_traceback"))
+        builder_->CreateCall(tbFn, {});
     auto* printStrFn = module_->getFunction("__visuall_print_str");
     auto* printNlFn  = module_->getFunction("__visuall_print_newline");
     auto* exitFn     = module_->getFunction("__visuall_sys_exit");
@@ -2122,16 +2396,7 @@ void Codegen::codegenDelStmt(const ast::DelStmt& node) {
     if (auto* mem = dynamic_cast<const ast::MemberExpr*>(node.target.get())) {
         llvm::Value* obj = codegenExpr(*mem->object);
 
-        int fieldIdx = -1;
-        for (const auto& [clsName, fields] : classFields_) {
-            for (size_t i = 0; i < fields.size(); i++) {
-                if (fields[i] == mem->member) {
-                    fieldIdx = static_cast<int>(i);
-                    break;
-                }
-            }
-            if (fieldIdx >= 0) break;
-        }
+        int fieldIdx = findFieldIndex(mem->member);
 
         if (fieldIdx >= 0 && obj->getType()->isPointerTy()) {
             auto* i64PtrTy = llvm::PointerType::getUnqual(i64Ty);
@@ -2375,16 +2640,7 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
         (void)i8Ptr;
 
         // Find the field index by searching known classes
-        int fieldIdx = -1;
-        for (const auto& [clsName, fields] : classFields_) {
-            for (size_t i = 0; i < fields.size(); i++) {
-                if (fields[i] == mem->member) {
-                    fieldIdx = static_cast<int>(i);
-                    break;
-                }
-            }
-            if (fieldIdx >= 0) break;
-        }
+        int fieldIdx = findFieldIndex(mem->member);
 
         if (fieldIdx >= 0 && obj->getType()->isPointerTy()) {
             // Cast i8* to i64*, GEP to field offset, store
@@ -2396,13 +2652,7 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
                 mem->member + ".ptr");
 
             // Box value to i64
-            if (val->getType()->isPointerTy()) {
-                val = builder_->CreatePtrToInt(val, i64Ty, "val.p2i");
-            } else if (val->getType()->isDoubleTy()) {
-                val = builder_->CreateBitCast(val, i64Ty, "val.f2i");
-            } else if (val->getType() != i64Ty) {
-                val = builder_->CreateIntCast(val, i64Ty, true, "val.widen");
-            }
+            val = coerceToI64(val);
             builder_->CreateStore(val, gep);
         }
     }
@@ -2718,12 +2968,26 @@ llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
 
     // ── In / NotIn membership tests ────────────────────────────────────
     if (node.op == ast::BinOp::In || node.op == ast::BinOp::NotIn) {
+        // Dispatch to __contains__ for class instances (right operand)
+        if (auto* rightIdent = dynamic_cast<const ast::Identifier*>(node.right.get())) {
+            auto clsIt = varClass_.find(rightIdent->name);
+            if (clsIt != varClass_.end()) {
+                auto* containsFn = module_->getFunction(clsIt->second + "___contains__");
+                if (containsFn) {
+                    auto* result = emitCallOrInvoke(containsFn, {R, L}, "contains.result");
+                    auto* boolResult = toBool(result);
+                    if (node.op == ast::BinOp::NotIn)
+                        return builder_->CreateNot(boolResult, "notin.result");
+                    return boolResult;
+                }
+            }
+        }
         if (R->getType()->isPointerTy()) {
             auto* i64Ty = llvm::Type::getInt64Ty(*context_);
             auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
             auto* getTagFn = module_->getFunction("__visuall_get_tag");
             auto* listContainsFn = module_->getFunction("__visuall_list_contains");
-            auto* dictContainsFn = module_->getFunction("__visuall_dict_contains");
+            auto* dictContainsFn = module_->getFunction("__visuall_dict_has");
 
             if (getTagFn && listContainsFn && dictContainsFn) {
                 auto* tag = builder_->CreateCall(getTagFn, {R}, "tag");
@@ -3232,8 +3496,7 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
             std::string className;
             llvm::Value* selfVal = nullptr;
 
-            if (auto* superExpr = dynamic_cast<const ast::SuperExpr*>(member->object.get())) {
-                (void)superExpr;
+            if (dynamic_cast<const ast::SuperExpr*>(member->object.get())) {
                 // super.method() → dispatch to base class method with current this
                 if (currentClassBase_.empty())
                     throw CodegenError("super used outside a class with a base class",
@@ -3325,6 +3588,19 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
 
 // ── MemberExpr ─────────────────────────────────────────────────────────────
 llvm::Value* Codegen::codegenMemberExpr(const ast::MemberExpr& node) {
+    // ── Enum member access: Color.RED → load global i64 constant ───────
+    if (auto* ident = dynamic_cast<const ast::Identifier*>(node.object.get())) {
+        if (enumNames_.count(ident->name)) {
+            std::string globalName = ident->name + "_" + node.member;
+            auto* gv = module_->getNamedGlobal(globalName);
+            if (gv) {
+                auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+                return builder_->CreateLoad(i64Ty, gv, globalName);
+            }
+            // Member not found in enum
+            return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), -1);
+        }
+    }
     // Check if the object is a module identifier (e.g., math.PI, string.upper)
     if (auto* ident = dynamic_cast<const ast::Identifier*>(node.object.get())) {
         if (importedModules_.count(ident->name) || isStdlibModule(ident->name)) {
@@ -3377,16 +3653,7 @@ llvm::Value* Codegen::codegenMemberExpr(const ast::MemberExpr& node) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
 
     // Find the field index by searching known classes
-    int fieldIdx = -1;
-    for (const auto& [clsName, fields] : classFields_) {
-        for (size_t i = 0; i < fields.size(); i++) {
-            if (fields[i] == node.member) {
-                fieldIdx = static_cast<int>(i);
-                break;
-            }
-        }
-        if (fieldIdx >= 0) break;
-    }
+    int fieldIdx = findFieldIndex(node.member);
 
     if (fieldIdx >= 0 && obj->getType()->isPointerTy()) {
         auto* i64PtrTy = llvm::PointerType::getUnqual(i64Ty);
@@ -3473,6 +3740,27 @@ llvm::Function* Codegen::getOrDeclareVisualAlloc() {
          llvm::Type::getInt8Ty(*context_)}, false);
     return llvm::Function::Create(allocTy, llvm::Function::ExternalLinkage,
                                   "__visuall_alloc", module_.get());
+}
+
+int Codegen::findFieldIndex(const std::string& member) const {
+    for (const auto& [clsName, fields] : classFields_) {
+        for (size_t i = 0; i < fields.size(); i++) {
+            if (fields[i] == member)
+                return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+llvm::Value* Codegen::coerceToI64(llvm::Value* val) {
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    if (val->getType()->isPointerTy())
+        return builder_->CreatePtrToInt(val, i64Ty, "to.i64");
+    if (val->getType()->isDoubleTy())
+        return builder_->CreateBitCast(val, i64Ty, "to.i64");
+    if (val->getType() != i64Ty)
+        return builder_->CreateIntCast(val, i64Ty, true, "to.i64");
+    return val;
 }
 
 // ── LambdaExpr ─────────────────────────────────────────────────────────────
@@ -3714,7 +4002,6 @@ llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& node) {
         return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
 
     auto* dict = builder_->CreateCall(dictNewFn, {}, "dict.new");
-    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
 
     for (const auto& [keyExpr, valExpr] : node.entries) {
         llvm::Value* key = codegenExpr(*keyExpr);
@@ -3729,13 +4016,7 @@ llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& node) {
         }
 
         // Value must be i64
-        if (val->getType()->isPointerTy()) {
-            val = builder_->CreatePtrToInt(val, i64Ty, "val.p2i");
-        } else if (val->getType()->isDoubleTy()) {
-            val = builder_->CreateBitCast(val, i64Ty, "val.f2i");
-        } else if (val->getType() != i64Ty) {
-            val = builder_->CreateIntCast(val, i64Ty, true, "val.widen");
-        }
+        val = coerceToI64(val);
 
         builder_->CreateCall(dictSetFn, {dict, key, val});
     }
@@ -3755,13 +4036,7 @@ llvm::Value* Codegen::codegenTupleExpr(const ast::TupleExpr& node) {
 
     for (const auto& elem : node.elements) {
         llvm::Value* val = codegenExpr(*elem);
-        if (val->getType()->isPointerTy()) {
-            val = builder_->CreatePtrToInt(val, i64Ty, "tup.p2i");
-        } else if (val->getType()->isDoubleTy()) {
-            val = builder_->CreateBitCast(val, i64Ty, "tup.f2i");
-        } else if (val->getType() != i64Ty) {
-            val = builder_->CreateIntCast(val, i64Ty, true, "tup.widen");
-        }
+        val = coerceToI64(val);
         builder_->CreateCall(listPushFn, {tup, val});
     }
 
@@ -4133,6 +4408,23 @@ void Codegen::codegenInterfaceDef(const ast::InterfaceDef& /*node*/) {
     // Interfaces are type-level only; no IR emitted.
 }
 
+// ── EnumDef ────────────────────────────────────────────────────────────────
+void Codegen::codegenEnumDef(const ast::EnumDef& node) {
+    // Emit each member as a global i64 constant: EnumName_MEMBER = index
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    for (size_t i = 0; i < node.members.size(); i++) {
+        std::string globalName = node.name + "_" + node.members[i];
+        new llvm::GlobalVariable(
+            *module_, i64Ty, /*isConstant=*/true,
+            llvm::GlobalValue::InternalLinkage,
+            llvm::ConstantInt::get(i64Ty, static_cast<int64_t>(i)),
+            globalName);
+    }
+    // Register enum in runtime maps for MemberExpr dispatch
+    enumMembers_[node.name] = node.members;
+    enumNames_.insert(node.name);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Builtin function call emission
 // ════════════════════════════════════════════════════════════════════════════
@@ -4160,6 +4452,15 @@ llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallEx
         if (node.args.empty())
             throw CodegenError("len() requires 1 argument", node.line, node.column);
         llvm::Value* arg = codegenExpr(*node.args[0]);
+        // Dispatch to __len__ for class instances
+        if (auto* argIdent = dynamic_cast<const ast::Identifier*>(node.args[0].get())) {
+            auto clsIt = varClass_.find(argIdent->name);
+            if (clsIt != varClass_.end()) {
+                auto* lenMethod = module_->getFunction(clsIt->second + "___len__");
+                if (lenMethod)
+                    return emitCallOrInvoke(lenMethod, {arg}, "len.custom");
+            }
+        }
         if (arg->getType()->isPointerTy()) {
             auto* getTagFn  = module_->getFunction("__visuall_get_tag");
             auto* listLenFn = module_->getFunction("__visuall_list_len");
@@ -4342,6 +4643,15 @@ llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallEx
     if (name == "str") {
         if (node.args.empty()) return builder_->CreateGlobalString("", "empty");
         llvm::Value* arg = codegenExpr(*node.args[0]);
+        // Dispatch to __str__ for class instances
+        if (auto* argIdent = dynamic_cast<const ast::Identifier*>(node.args[0].get())) {
+            auto clsIt = varClass_.find(argIdent->name);
+            if (clsIt != varClass_.end()) {
+                auto* strMethod = module_->getFunction(clsIt->second + "___str__");
+                if (strMethod)
+                    return emitCallOrInvoke(strMethod, {arg}, "str.custom");
+            }
+        }
         if (arg->getType()->isPointerTy()) return arg;
         if (arg->getType()->isIntegerTy(64)) {
             auto* fn = module_->getFunction("__visuall_int_to_str");
@@ -4743,6 +5053,8 @@ void Codegen::visit(const ast::MatchStmt& n)          { codegenMatchStmt(n); }
 void Codegen::visit(const ast::ImportStmt& n)         { codegenImportStmt(n); }
 void Codegen::visit(const ast::FromImportStmt& n)     { codegenFromImportStmt(n); }
 void Codegen::visit(const ast::InterfaceDef& n)       { codegenInterfaceDef(n); }
+void Codegen::visit(const ast::EnumDef& n)            { codegenEnumDef(n); }
+void Codegen::visit(const ast::YieldStmt& n)          { codegenYieldStmt(n); }
 
 void Codegen::visit(const ast::BreakStmt&) {
     if (!loopStack_.empty()) {

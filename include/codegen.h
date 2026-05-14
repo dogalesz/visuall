@@ -135,6 +135,11 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> classExtraBases_;
     // Maps className → ordered list of field names (populated by ClassAnalyzer)
     std::unordered_map<std::string, std::vector<std::string>> classFields_;
+    // Maps enumName → ordered list of member names (with assigned int values)
+    // enumName.MEMBER → value = index
+    std::unordered_map<std::string, std::vector<std::string>> enumMembers_;
+    // Set of enum names (for MemberExpr dispatch)
+    std::unordered_set<std::string> enumNames_;
     // Set of "ClassName_methodName" keys for static methods (no implicit this)
     std::unordered_set<std::string> classStaticMethods_;
     // @property: keys = "ClassName_propName" that have a getter method.
@@ -227,6 +232,12 @@ private:
     // Declare __visuall_alloc_object if not already declared.
     llvm::Function* getOrDeclareAllocObject();
 
+    // Search classFields_ for a field name; returns index >= 0 if found, -1 otherwise.
+    int findFieldIndex(const std::string& member) const;
+
+    // Coerce val to i64: ptr→ptrtoint, double→bitcast, other int→intcast, i64→identity.
+    llvm::Value* coerceToI64(llvm::Value* val);
+
     // ── ASTVisitor overrides (statement nodes) ────────────────────────────
     void visit(const ast::ExprStmt& n) override;
     void visit(const ast::AssignStmt& n) override;
@@ -250,6 +261,8 @@ private:
     void visit(const ast::ImportStmt& n) override;
     void visit(const ast::FromImportStmt& n) override;
     void visit(const ast::InterfaceDef& n) override;
+    void visit(const ast::EnumDef& n) override;
+    void visit(const ast::YieldStmt& n) override;
 
     // ── ASTVisitor overrides (expression nodes) ──────────────────────────
     void visit(const ast::IntLiteral& n) override;
@@ -304,6 +317,10 @@ private:
     void codegenExprStmt(const ast::ExprStmt& node);
     void codegenTupleUnpackStmt(const ast::TupleUnpackStmt& node);
     void codegenInterfaceDef(const ast::InterfaceDef& node);
+    void codegenEnumDef(const ast::EnumDef& node);
+    void codegenYieldStmt(const ast::YieldStmt& node);
+    // Generator support: push yielded value into generator list.
+    llvm::Value* generatorList_ = nullptr; // non-null inside a generator function
 
     // ── Codegen methods for expressions ─────────────────────────────────
     llvm::Value* codegenExpr(const ast::Expr& expr);

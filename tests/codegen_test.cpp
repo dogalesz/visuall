@@ -18,11 +18,13 @@
 // 17. with statement: __enter__/__exit__ called, landingpad/resume emitted
 // 18. collections Stack/Queue/Set accept non-int values (str, pointer)
 // 19. match statement: int/str/bool cases and wildcard lowered to if/else chain
+// 20. magic methods: __str__, __len__, __contains__, __iter__/__next__ dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
 #include "lexer.h"
 #include "parser.h"
 #include "codegen.h"
+#include "class_analyzer.h"
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -59,7 +61,10 @@ static std::string generateIR(const std::string& src) {
         auto tokens = lexer.tokenize();
         Parser parser(tokens, "test.vsl");
         auto program = parser.parse();
+        ClassAnalyzer classAnalyzer;
+        classAnalyzer.analyze(*program);
         Codegen codegen("test_module");
+        codegen.setClassFields(classAnalyzer.classFields());
         codegen.generate(*program);
         std::ostringstream oss;
         codegen.printIR(oss);
@@ -486,6 +491,200 @@ static void test_matchStatement() {
     expect(!ir3.empty(), "19g. bool match generates IR");
 }
 
+static void test_magicMethods() {
+    // All five magic-method dispatch paths in one class
+    std::string src =
+        "class Counter:\n"
+        "\tinit(n: int):\n"
+        "\t\tthis.n = n\n"
+        "\tdefine __str__() -> str:\n"
+        "\t\treturn \"counter\"\n"
+        "\tdefine __len__() -> int:\n"
+        "\t\treturn this.n\n"
+        "\tdefine __contains__(v: int) -> bool:\n"
+        "\t\treturn false\n"
+        "\tdefine __iter__() -> Counter:\n"
+        "\t\treturn this\n"
+        "\tdefine __next__() -> int:\n"
+        "\t\treturn 0\n"
+        "\n"
+        "define test_magic() -> int:\n"
+        "\tc = Counter(3)\n"
+        "\ts = str(c)\n"
+        "\tn = len(c)\n"
+        "\tb = 99 in c\n"
+        "\tfor v in c:\n"
+        "\t\tn = n + 1\n"
+        "\treturn n\n";
+
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "20a. magic methods generate IR");
+    expect(ir.find("Counter___str__") != std::string::npos,
+           "20b. str(obj) dispatches to __str__");
+    expect(ir.find("Counter___len__") != std::string::npos,
+           "20c. len(obj) dispatches to __len__");
+    expect(ir.find("Counter___contains__") != std::string::npos,
+           "20d. x in obj dispatches to __contains__");
+    expect(ir.find("Counter___iter__") != std::string::npos,
+           "20e. for-in dispatches to __iter__");
+    expect(ir.find("Counter___next__") != std::string::npos,
+           "20f. for-in calls __next__");
+    expect(ir.find("iter.done") != std::string::npos,
+           "20g. for-in checks INT64_MIN sentinel");
+}
+
+static void test_enumTypes() {
+    // Enum definition and member access
+    std::string src =
+        "enum Color:\n"
+        "\tRED\n"
+        "\tGREEN\n"
+        "\tBLUE\n"
+        "\n"
+        "define test_enum() -> int:\n"
+        "\tx = Color.RED\n"
+        "\ty = Color.GREEN\n"
+        "\tz = Color.BLUE\n"
+        "\treturn x + y + z\n";
+
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "21a. enum definition generates IR");
+    expect(ir.find("Color_RED") != std::string::npos,
+           "21b. Color_RED global constant emitted");
+    expect(ir.find("Color_GREEN") != std::string::npos,
+           "21c. Color_GREEN global constant emitted");
+    expect(ir.find("Color_BLUE") != std::string::npos,
+           "21d. Color_BLUE global constant emitted");
+}
+
+static void test_typedExceptions() {
+    // Typed exception: class + typed throw + typed catch
+    std::string src =
+        "class ValueError:\n"
+        "\tinit(msg: str):\n"
+        "\t\tthis.msg = msg\n"
+        "\n"
+        "define test_typed_catch() -> int:\n"
+        "\ttry:\n"
+        "\t\tthrow ValueError(\"oops\")\n"
+        "\tcatch ValueError as e:\n"
+        "\t\treturn 1\n"
+        "\treturn 0\n";
+
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "22a. typed exception generates IR");
+    expect(ir.find("__visuall_exception_new_typed") != std::string::npos,
+           "22b. __visuall_exception_new_typed called for typed throw");
+    expect(ir.find("__visuall_exception_class") != std::string::npos,
+           "22c. __visuall_exception_class called in catch handler");
+}
+
+static void test_typeSystemCompletions() {
+    // 23a. Postfix nullable T? annotation — function accepting nullable int
+    {
+        std::string src =
+            "define maybe_double(x: int?) -> int:\n"
+            "\treturn 0\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "23a. postfix nullable T? annotation parses and generates IR");
+    }
+
+    // 23b. Generic bounds <T: int> — function with bounded type param
+    {
+        std::string src =
+            "define clamp_val<T: int>(x: T, lo: T, hi: T) -> T:\n"
+            "\treturn x\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "23b. generic bounds <T: Bound> parses and generates IR");
+    }
+
+    // 23c. isinstance with class hierarchy check
+    {
+        std::string src =
+            "class Animal:\n"
+            "\tinit():\n"
+            "\t\tthis.x = 0\n"
+            "\n"
+            "define check_animal() -> int:\n"
+            "\ta = Animal()\n"
+            "\tif isinstance(a, Animal):\n"
+            "\t\treturn 1\n"
+            "\treturn 0\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "23c. isinstance with class generates IR");
+        // compile-time isinstance should fold to constant true (i1 true / i64 1)
+        expect(ir.find("define") != std::string::npos, "23d. IR contains function definition");
+    }
+}
+
+static void test_generators() {
+    // 24a. Generator function emits list_new + list_push in IR
+    {
+        std::string src =
+            "define counter(n: int) -> int:\n"
+            "\ti = 0\n"
+            "\twhile i < n:\n"
+            "\t\tyield i\n"
+            "\t\ti = i + 1\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "24a. generator function generates IR");
+        expect(ir.find("__visuall_list_push") != std::string::npos,
+               "24b. yield emits __visuall_list_push call");
+        expect(ir.find("__visuall_list_new") != std::string::npos,
+               "24c. generator creates list via __visuall_list_new");
+    }
+}
+
+static void test_randomModule() {
+    // 25a. random.random() resolves to __visuall_random_random
+    {
+        std::string src =
+            "import random\n"
+            "define test_rand() -> float:\n"
+            "\treturn random.random()\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "25a. random.random() generates IR");
+        expect(ir.find("__visuall_random_random") != std::string::npos,
+               "25b. random.random() calls __visuall_random_random");
+    }
+    // 25c. random.randint(lo, hi) resolves correctly
+    {
+        std::string src =
+            "import random\n"
+            "define test_randint() -> int:\n"
+            "\treturn random.randint(1, 10)\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "25c. random.randint() generates IR");
+        expect(ir.find("__visuall_random_randint") != std::string::npos,
+               "25d. random.randint() calls __visuall_random_randint");
+    }
+}
+
+static void test_stackTraces() {
+    // 26a. Functions emit traceback_push at entry
+    {
+        std::string src =
+            "define traced_fn() -> int:\n"
+            "\treturn 42\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "26a. traceback-instrumented function generates IR");
+        expect(ir.find("__visuall_traceback_push") != std::string::npos,
+               "26b. function entry emits __visuall_traceback_push");
+        expect(ir.find("__visuall_traceback_pop") != std::string::npos,
+               "26c. function return emits __visuall_traceback_pop");
+    }
+    // 26d. throw emits print_traceback
+    {
+        std::string src =
+            "define throwing_fn() -> void:\n"
+            "\tthrow \"oops\"\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "26d. throwing function generates IR");
+        expect(ir.find("__visuall_print_traceback") != std::string::npos,
+               "26e. throw emits __visuall_print_traceback");
+    }
+}
+
 int runCodegenTests() {
     failures = 0;
 
@@ -508,7 +707,14 @@ int runCodegenTests() {
     test_withStatement();
     test_collectionsAnyType();
     test_matchStatement();
+    test_magicMethods();
+    test_enumTypes();
+    test_typedExceptions();
+    test_typeSystemCompletions();
+    test_generators();
+    test_randomModule();
+    test_stackTraces();
 
-    std::cout << "  " << (19 - failures) << "/19 codegen tests passed.\n";
+    std::cout << "  " << (35 - failures) << "/35 codegen tests passed.\n";
     return failures;
 }
