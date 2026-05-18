@@ -87,4 +87,19 @@ protected:
     std::string buildWhat() const { return format(); }
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// PackageError — thrown by vslpkg and the compiler driver on package-manager
+// failures (missing lockfile, corrupt package store, version conflicts, etc.).
+// Inherits Diagnostic for uniform clang-style formatting.
+// ════════════════════════════════════════════════════════════════════════════
+struct PackageError : Diagnostic {
+    explicit PackageError(const std::string& msg)
+        : Diagnostic(Diagnostic::Severity::Error, msg, "", "<package>", 0, 0)
+    {}
+
+    explicit PackageError(const std::string& msg, const std::string& hint)
+        : Diagnostic(Diagnostic::Severity::Error, msg, hint, "<package>", 0, 0)
+    {}
+};
+
 } // namespace visuall

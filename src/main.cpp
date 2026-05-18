@@ -8,6 +8,7 @@
 #include "codegen.h"
 #include "module_loader.h"
 #include "linker.h"
+#include "vsl_manifest.h"
 
 #include <fstream>
 #include <iostream>
@@ -182,6 +183,24 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> modulePaths = extraModulePaths;
 
     visuall::ModuleLoader moduleLoader(stdlibDir, modulePaths, dumpModules);
+
+    // ── Load package lockfile (if present) ────────────────────────────
+    // Look for vsl.lock in the input file's directory, then current directory.
+    {
+        std::vector<std::string> lockSearchDirs = { inputDir, "." };
+        for (const auto& dir : lockSearchDirs) {
+            std::string lockPath = dir + "/vsl.lock";
+            std::ifstream chk(lockPath);
+            if (chk.good()) {
+                chk.close();
+                visuall::VslLock lock = visuall::parseLock(lockPath);
+                for (const auto& entry : lock.packages) {
+                    moduleLoader.registerAlias(entry.alias, entry.dir);
+                }
+                break;
+            }
+        }
+    }
 
     // ── Code generation ────────────────────────────────────────────────
     visuall::Codegen codegen(inputFile);

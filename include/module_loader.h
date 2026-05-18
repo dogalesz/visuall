@@ -97,11 +97,24 @@ public:
     /// Get the search paths for testing.
     const std::vector<std::string>& searchPaths() const { return searchPaths_; }
 
+    /// Register a package alias → directory mapping (from vsl.lock).
+    /// The alias becomes the import name: `import <alias>` will resolve to
+    /// `<dir>/<alias>.vsl` (or the primary .vsl file found in <dir>).
+    /// Throws ImportError if dir does not exist.
+    void registerAlias(const std::string& alias, const std::string& dir);
+
+    /// Return the current alias→dir registry (for diagnostics / testing).
+    const std::unordered_map<std::string, std::string>& aliases() const { return aliasToDir_; }
+
 private:
     std::string                               stdlibDir_;
     std::vector<std::string>                  searchPaths_;
     bool                                      verbose_;
     llvm::LLVMContext*                        context_ = nullptr;
+
+    // Package alias registry: import-alias → package directory (from vsl.lock).
+    // Checked before searchPaths_ and stdlib in resolve().
+    std::unordered_map<std::string, std::string> aliasToDir_;
 
     // Module cache: module name → Module
     std::unordered_map<std::string, std::unique_ptr<Module>> cache_;

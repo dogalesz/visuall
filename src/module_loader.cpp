@@ -83,6 +83,30 @@ ModuleLoader::ModuleLoader(const std::string& stdlibDir,
     }
 }
 
+// ── registerAlias ─────────────────────────────────────────────────────────
+
+void ModuleLoader::registerAlias(const std::string& alias,
+                                  const std::string& dir) {
+    std::string normalDir = normalizePath(dir);
+
+    // Verify the path is an existing directory.
+#ifdef _WIN32
+    DWORD attr = GetFileAttributesA(normalDir.c_str());
+    bool isDir = (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY));
+#else
+    struct stat st;
+    bool isDir = (stat(normalDir.c_str(), &st) == 0 && S_ISDIR(st.st_mode));
+#endif
+    if (!isDir) {
+        throw ImportError("Package alias '" + alias + "': directory not found: " + normalDir);
+    }
+
+    aliasToDir_[alias] = normalDir;
+    if (verbose_) {
+        fprintf(stderr, "[module] alias '%s' -> %s\n", alias.c_str(), normalDir.c_str());
+    }
+}
+
 // ── Resolve ────────────────────────────────────────────────────────────────
 
 std::string ModuleLoader::resolve(const std::string& moduleName,
@@ -93,6 +117,21 @@ std::string ModuleLoader::resolve(const std::string& moduleName,
     relativePath += ".vsl";
 
     std::vector<std::string> tried;
+
+    // 0. Package alias registry (from vsl.lock via registerAlias).
+    //    Exact alias match only — O(1) lookup, collision-free by construction.
+    {
+        auto it = aliasToDir_.find(moduleName);
+        if (it != aliasToDir_.end()) {
+            // Primary file: <dir>/<alias>.vsl
+            std::string primary = normalizePath(it->second + "/" + relativePath);
+            tried.push_back(primary);
+            if (fileExists(primary)) return primary;
+            // Fallback: any .vsl file in the package dir with a different name
+            // is not attempted here — package authors must name their entry file
+            // <alias>.vsl to match the import alias.
+        }
+    }
 
     // 1. Current directory (directory of the importing file)
     {

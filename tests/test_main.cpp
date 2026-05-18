@@ -14,6 +14,7 @@ int runModuleLoaderTests();
 int runGCTests();
 int runClassAnalyzerTests();
 int runDiagnosticTests();
+int runManifestTests();
 
 int main() {
     int failures = 0;
@@ -54,6 +55,9 @@ int main() {
 
     std::cout << "\n--- Diagnostic Tests ---\n";
     failures += runDiagnosticTests();
+
+    std::cout << "\n--- Manifest Tests ---\n";
+    failures += runManifestTests();
 
     std::cout << "\n=== Results: ";
     if (failures == 0) {

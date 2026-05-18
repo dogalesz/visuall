@@ -1,6 +1,6 @@
 # Visuall Compiler (`visuallc`)
 
-A compiled programming language with Python-like syntax, built with C++17 and LLVM. Visuall compiles directly to native machine code through LLVM IR, with a mark-and-sweep garbage collector and a growing standard library.
+A compiled programming language with Python-like syntax, built with C++17 and LLVM. Visuall compiles directly to native machine code through LLVM IR, with a mark-and-sweep garbage collector, a growing standard library, and a built-in package manager (`vslpkg`).
 
 ```
 Source (.vsl) → Lexer → Parser → Type Checker → LLVM IR → O2 Optimization → Native Binary
@@ -10,10 +10,11 @@ Source (.vsl) → Lexer → Parser → Type Checker → LLVM IR → O2 Optimizat
 
 - **Native compilation** via LLVM (O2 optimization, targets host CPU)
 - **Garbage collection** — mark-and-sweep GC with conservative stack scanning, free-list pooling, and O(1) pointer lookup
-- **Rich syntax** — classes, closures/lambdas, f-strings, list/dict/tuple literals, list comprehensions, slicing, tuple unpacking, chained comparisons
+- **Rich syntax** — classes, closures/lambdas, f-strings, list/dict/tuple literals, list comprehensions, slicing, tuple unpacking, chained comparisons, match statements, generators, enums, decorators
 - **Module system** — `import` / `from ... import` with multi-file compilation
-- **Standard library** — math, string, collections, I/O, and system modules
-- **Error handling** — `try` / `catch` / `finally` / `throw`
+- **Standard library** — math, string, collections, I/O, random, and system modules
+- **Error handling** — `try` / `catch` / `finally` / `throw` with typed exceptions
+- **Package manager** — `vslpkg` for declaring, installing, and sharing packages via Git or local paths
 
 ## Performance
 Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best of 3 runs):
@@ -198,48 +199,62 @@ visuall/
 │   ├── diagnostic.h         # Unified compiler error/warning (clang-style)
 │   ├── lexer.h              # Tokenizer
 │   ├── linker.h             # Native linker interface
-│   ├── module_loader.h      # Multi-file module resolution
+│   ├── module_loader.h      # Multi-file module resolution (with package alias registry)
 │   ├── parser.h             # Recursive descent parser
 │   ├── token.h              # Token types
-│   └── typechecker.h        # Static type checker
+│   ├── typechecker.h        # Static type checker
+│   ├── vsl_manifest.h       # vsl.toml / vsl.lock schema structs and parsing
+│   ├── vsl_paths.h          # Platform-specific package store paths
+│   └── vsl_resolver.h       # MVS dependency resolver
 ├── src/
-│   ├── main.cpp             # CLI entry point
-│   ├── lexer.cpp            # Lexer implementation
-│   ├── parser.cpp           # Parser implementation
-│   ├── typechecker.cpp      # Type checker implementation
-│   ├── codegen.cpp          # LLVM IR generation
-│   ├── builtins.cpp         # Runtime function prototypes
-│   ├── capture_analyzer.cpp # Closure capture analysis
-│   ├── class_analyzer.cpp   # Class field analysis
-│   ├── module_loader.cpp    # Module loader
-│   ├── linker.cpp           # Object file linking
-│   └── ast_printer.cpp      # AST printer
+│   ├── main.cpp             # CLI entry point (loads vsl.lock and registers aliases)
+│   ├── lexer.cpp
+│   ├── parser.cpp
+│   ├── typechecker.cpp
+│   ├── codegen.cpp
+│   ├── builtins.cpp
+│   ├── capture_analyzer.cpp
+│   ├── class_analyzer.cpp
+│   ├── module_loader.cpp
+│   ├── linker.cpp
+│   ├── ast_printer.cpp
+│   ├── vsl_manifest.cpp     # TOML parsing for manifests and lockfiles
+│   ├── vsl_paths.cpp        # Package store path helpers
+│   └── vsl_resolver.cpp     # Minimal Version Selection resolver
+├── tools/
+│   └── vslpkg/
+│       ├── main.cpp         # vslpkg CLI (init, install)
+│       ├── fetcher.h
+│       └── fetcher.cpp      # Git subprocess wrapper (clone, fetch, checkout)
 ├── stdlib/
-│   ├── runtime.c            # C runtime (print, string ops, list/dict/tuple ops)
+│   ├── runtime.c            # C runtime (print, string ops, list/dict/tuple/set ops)
 │   ├── gc.c / gc.h          # Mark-and-sweep garbage collector
 │   ├── exception_support.cpp # C++ ABI layer for throw/catch support
 │   ├── math.vsl             # Math functions (sqrt, sin, cos, log, etc.)
 │   ├── string.vsl           # String manipulation (split, join, replace, etc.)
 │   ├── collections.vsl      # Stack, Queue, Set
+│   ├── random.vsl           # Random number generation
 │   ├── io.vsl               # File I/O (read, write, append, list_dir)
 │   └── sys.vsl              # System utils (args, exit, env, time)
 ├── tests/
-│   ├── test_main.cpp        # Test runner (Google Test)
-│   ├── test_lexer.cpp       # Lexer tests
-│   ├── test_parser.cpp      # Parser tests
-│   ├── syntax_test.cpp      # Syntax integration tests
-│   ├── codegen_test.cpp     # Code generation tests
-│   ├── typechecker_test.cpp # Type checker tests
-│   ├── typesystem_test.cpp  # Type system tests
-│   ├── closure_test.cpp     # Closure/lambda tests
-│   ├── operator_test.cpp    # Operator tests
-│   ├── class_analyzer_test.cpp # Class analyzer tests
-│   ├── diagnostic_test.cpp  # Diagnostic formatting tests
-│   ├── gc_test.cpp          # GC tests
-│   ├── gc_stress.vsl        # GC stress test fixture
-│   ├── stdlib_test.vsl      # Standard library test fixture
-│   ├── module_loader_test.cpp # Module tests
-│   └── module_test/         # Multi-file module test fixtures
+│   ├── test_main.cpp        # Test runner
+│   ├── test_lexer.cpp
+│   ├── test_parser.cpp
+│   ├── syntax_test.cpp
+│   ├── codegen_test.cpp
+│   ├── typechecker_test.cpp
+│   ├── typesystem_test.cpp
+│   ├── closure_test.cpp
+│   ├── operator_test.cpp
+│   ├── class_analyzer_test.cpp
+│   ├── diagnostic_test.cpp
+│   ├── gc_test.cpp
+│   ├── manifest_test.cpp    # vsl.toml / vsl.lock parsing tests
+│   ├── module_loader_test.cpp
+│   ├── pkg_test/            # Integration fixture for package path-dep resolution
+│   │   ├── app/             # Depends on mathlib via vsl.toml path dep
+│   │   └── mathlib/
+│   └── module_test/
 └── examples/
     └── hello.vsl
 ```
@@ -382,3 +397,270 @@ result = a or b
 if 0 <= x <= 100:
     print("in range")
 ```
+
+### Match statement
+
+```python
+match status:
+    case 200:
+        print("OK")
+    case 404:
+        print("Not Found")
+    case _:
+        print("other")
+
+## String and bool patterns work too
+match name:
+    case "alice":
+        role = "admin"
+    case _:
+        role = "user"
+```
+
+### Generators (`yield`)
+
+```python
+define evens(n: int) -> int:
+    i = 0
+    while i < n:
+        yield i
+        i = i + 2
+
+for v in evens(10):
+    print(v)
+```
+
+A `yield` inside a function turns it into a generator: the function collects all yielded values into a list that is returned.
+
+### Enums
+
+```python
+enum Color:
+    RED
+    GREEN
+    BLUE
+
+x = Color.RED
+```
+
+### Walrus operator (`:=`)
+
+```python
+## Assign and test in one expression
+if (n := len(data)) > 10:
+    print(f"too large: {n}")
+```
+
+### Decorators
+
+```python
+@cache
+@log
+define compute(x: int) -> int:
+    return x * 2
+```
+
+### Context managers (`with`)
+
+```python
+with open("file.txt") as f:
+    data = f.read()
+```
+
+Any object that defines `__enter__` and `__exit__` can be used as a context manager.
+
+### Nullable types and generics
+
+```python
+define find(items: list, key: str) -> str?:
+    ## returns str or null
+    ...
+
+define clamp<T: int>(x: T, lo: T, hi: T) -> T:
+    ...
+```
+
+### `isinstance`
+
+```python
+if isinstance(obj, Animal):
+    obj.speak()
+```
+
+---
+
+## Package Manager (`vslpkg`)
+
+`vslpkg` is the Visuall package manager. It reads `vsl.toml` to resolve and install dependencies, then writes a `vsl.lock` that the compiler consumes to wire import aliases.
+
+### Package store layout
+
+| Platform | Location |
+|----------|----------|
+| Windows  | `%APPDATA%\visuall\packages\<alias>@<version>\` |
+| Linux / macOS | `~/.visuall/packages/<alias>@<version>/` |
+
+A Git-based clone cache lives alongside it under `cache/`.
+
+---
+
+### Creating a package (`vslpkg init`)
+
+```bash
+cd my-project
+vslpkg init my-project
+```
+
+This creates a `vsl.toml` scaffold:
+
+```toml
+[package]
+name        = "my-project"   # lowercase letters, digits, hyphens
+version     = "0.1.0"        # semver: MAJOR.MINOR.PATCH
+description = ""
+license     = ""             # SPDX identifier, e.g. "MIT"
+
+[dependencies]
+# alias = { git = "https://github.com/user/repo", version = "1.0.0" }
+# alias = { path = "../local-lib" }
+```
+
+**Name rules:** must match `^[a-z][a-z0-9-]*$` — lowercase letters, digits, hyphens, starting with a letter.  
+**Version rules:** semver `MAJOR.MINOR.PATCH` (e.g. `1.2.3`).
+
+---
+
+### Declaring dependencies
+
+There are two dependency types:
+
+**Git dependency** — fetched from a remote Git repository at a specific tag (`v<version>`):
+
+```toml
+[dependencies]
+mathlib = { git = "https://github.com/alice/mathlib", version = "1.0.0" }
+utils   = { git = "https://github.com/bob/vsl-utils",  version = "2.3.1" }
+```
+
+**Path dependency** — points to a local directory that contains its own `vsl.toml`:
+
+```toml
+[dependencies]
+mathlib = { path = "../mathlib" }
+shared  = { path = "./vendor/shared" }
+```
+
+The key on the left (`mathlib`, `utils`, etc.) is the **import alias** used in `.vsl` source files:
+
+```python
+import mathlib
+result = mathlib.add(3, 4)
+```
+
+---
+
+### Installing dependencies (`vslpkg install`)
+
+```bash
+vslpkg install
+```
+
+This will:
+
+1. Parse `vsl.toml`
+2. Resolve all transitive Git dependencies using **Minimal Version Selection (MVS)** — the highest minimum version required across all dependency chains is selected
+3. Clone each Git dependency (treeless clone) into the local cache, then check out the exact tagged commit into the package store
+4. Append path dependencies (validated locally — directory must exist and contain a `vsl.toml`)
+5. Write `vsl.lock`
+
+```
+Fetching mathlib (https://github.com/alice/mathlib @ 1.0.0)...
+Locked 1 dependency
+```
+
+To re-download and overwrite existing packages:
+
+```bash
+vslpkg install --force
+```
+
+**Requirements:** `git` must be on your `PATH`.
+
+---
+
+### The lockfile (`vsl.lock`)
+
+After `vslpkg install`, a `vsl.lock` is written alongside `vsl.toml`. Commit this file to version control — it pins every dependency to an exact directory, ensuring reproducible builds.
+
+Example `vsl.lock`:
+
+```toml
+# vsl.lock - generated by vslpkg - do not edit manually
+
+[[package]]
+alias   = "mathlib"
+url     = "https://github.com/alice/mathlib"
+version = "1.0.0"
+dir     = "C:/Users/alice/AppData/Roaming/visuall/packages/mathlib@1.0.0"
+
+[[package]]
+alias   = "utils"
+dir     = "C:/projects/myapp/vendor/utils"
+```
+
+> Git packages include `url`, `version`, and `dir`. Path packages only include `alias` and `dir`.
+
+---
+
+### Compiling with packages
+
+Once `vsl.lock` exists in the same directory as your source file (or its parent), `visuallc` loads it automatically:
+
+```bash
+visuallc main.vsl -o main
+```
+
+No extra flags needed. The compiler reads `vsl.lock`, registers each alias in the module resolver, and resolves `import mathlib` to the correct directory.
+
+---
+
+### Publishing a package
+
+`vslpkg` fetches packages directly from Git repositories — there is no central registry. To publish a package:
+
+1. **Create a Git repository** (GitHub, GitLab, Gitea, or any host) containing your `.vsl` source files and a `vsl.toml` at the root.
+
+2. **Tag a release** using the semver convention `v<MAJOR>.<MINOR>.<PATCH>`:
+
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+3. **Tell users to add it** as a dependency:
+
+   ```toml
+   [dependencies]
+   mylib = { git = "https://github.com/you/mylib", version = "1.0.0" }
+   ```
+
+**Required repository layout:**
+
+```
+mylib/
+├── vsl.toml          # required — must be at the repository root
+├── mylib.vsl         # your module source
+└── ...
+```
+
+The `vsl.toml` at the repository root must declare a valid `[package]` with `name` and `version`.
+
+**Versioning guidance:**
+
+| Change | Version bump |
+|--------|-------------|
+| Bug fix, no API change | PATCH (`1.0.0` → `1.0.1`) |
+| New backwards-compatible API | MINOR (`1.0.0` → `1.1.0`) |
+| Breaking API change | MAJOR (`1.0.0` → `2.0.0`) |
+
+MVS selects the **highest minimum** version across all consumers, so breaking changes (major bumps) are not automatically adopted by dependents.
