@@ -1,0 +1,26 @@
+total = 0
+iter = 0
+while iter < 1000000:
+	x = iter % 10
+	if x == 0:
+		total = total + 1
+	elsif x == 1:
+		total = total + 2
+	elsif x == 2:
+		total = total + 3
+	elsif x == 3:
+		total = total + 4
+	elsif x == 4:
+		total = total + 5
+	elsif x == 5:
+		total = total + 6
+	elsif x == 6:
+		total = total + 7
+	elsif x == 7:
+		total = total + 8
+	elsif x == 8:
+		total = total + 9
+	else:
+		total = total + 10
+	iter = iter + 1
+print(total)

@@ -1,0 +1,26 @@
+total = 0
+iter = 0
+while iter < 1000000:
+	match iter % 10:
+		case 0:
+			total = total + 1
+		case 1:
+			total = total + 2
+		case 2:
+			total = total + 3
+		case 3:
+			total = total + 4
+		case 4:
+			total = total + 5
+		case 5:
+			total = total + 6
+		case 6:
+			total = total + 7
+		case 7:
+			total = total + 8
+		case 8:
+			total = total + 9
+		case _:
+			total = total + 10
+	iter = iter + 1
+print(total)

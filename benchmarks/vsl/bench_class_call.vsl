@@ -1,0 +1,15 @@
+class Calc:
+	init():
+		x = 0
+	define compute(x: int) -> int:
+		return x * 3 + 1
+	define process(x: int) -> int:
+		return this.compute(x)
+
+calc = Calc()
+total = 0
+i = 0
+while i < 1000000:
+	total = total + calc.process(i)
+	i = i + 1
+print(total)

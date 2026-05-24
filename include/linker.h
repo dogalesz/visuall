@@ -46,13 +46,16 @@ public:
     static void emitObjectFile(llvm::Module& mod, const std::string& path);
 
     /// Link object file(s) to a final binary using the system linker.
+    /// @param exeDir  directory containing the visuallc binary (for locating runtime libs)
     static int linkToBinary(const std::string& objPath,
-                            const std::string& outPath);
+                            const std::string& outPath,
+                            const std::string& exeDir = ".");
 
     /// Full pipeline: merge → optimize → IR → object → binary.
     static int compileAndLink(std::unique_ptr<llvm::Module> mainModule,
                                std::vector<std::unique_ptr<llvm::Module>> others,
                                const std::string& outputPath,
+                               const std::string& exeDir = ".",
                                bool emitIR = false,
                                std::ostream* irStream = nullptr);
 };

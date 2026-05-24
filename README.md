@@ -18,22 +18,31 @@ Source (.vsl) → Lexer → Parser → Type Checker → LLVM IR → O2 Optimizat
 - **LSP server** — `visuall-lsp` with diagnostics, completion, hover, go-to-definition, references, document symbols, formatting, inlay hints, semantic tokens, signature help, code actions, and rename
 
 ## Performance
+
 Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best of 3 runs):
 
 | Test | C++ (ms) | Visuall (ms) | Python (ms) | Visuall/C++ | Py/C++ |
 |------|----------|--------------|-------------|-------------|--------|
-| Primes (sieve to 100K ×3) | 7.6 | 7.9 | 196.8 | 1.0x | 25.9x |
-| Collatz (sequence ×5) | 16.7 | 17.5 | 630.6 | 1.0x | 37.8x |
-| Strings (200K f-string builds) | 28.0 | 30.3 | 29.6 | 1.1x | 1.1x |
-| GCD (Euclidean ×10M) | 46.5 | 55.1 | 434.0 | 1.2x | 9.3x |
-| Pi (Leibniz 50M terms) | 11.1 | 16.0 | 581.1 | 1.4x | 52.4x |
-| Nested loops (triple ×300) | 3.9 | 8.6 | 149.1 | 2.2x | 38.2x |
-| Distance (sqrt ×1M) | 2.1 | 7.0 | 81.1 | 3.3x | 38.6x |
-| Fibonacci (recursive fib(35)) | 1.4 | 5.1 | 374.7 | 3.6x | 267.6x |
-| TreeSum (recursive depth 22) | 2.7 | 13.4 | 552.6 | 5.0x | 204.7x |
-| Ackermann (3,12) | 175.7 | 888.8 | 17,990.7 | 5.1x | 102.4x |
+| Primes (trial div, 100K ×3) | 23.2 | 31.7 | 415 | 1.4x | 18x |
+| TreeSum (recursive, depth 22) | 15.2 | 63.8 | 1,298 | 4.2x | 85x |
+| Collatz (1..100K) | 30.6 | 23.1 | 1,758 | 0.8x | 57x |
+| Strings (200K f-strings) | 27.9 | 47.9 | 162 | 1.7x | 6x |
+| Pi (Leibniz, 10M terms) | 23.1 | 23.7 | 2,884 | 1.0x | 125x |
+| Nested loops (2000×2000) | 11.0 | 10.7 | 705 | 1.0x | 64x |
+| Ackermann (3,11) | 178.8 | 1,589.3 | 28,098 | 8.9x | 157x |
+| GCD sum (1..2000) | 56.2 | 61.9 | 724 | 1.1x | 13x |
+| Fibonacci (fib(35) ×500K) | 9.2 | 9.7 | 684 | 1.0x | 74x |
+| Float distance (1M) | 10.4 | 10.1 | 403 | 1.0x | 39x |
 
-Compute-bound integer work is within **1.1–1.2x** of C++. Recursion-heavy workloads are 4–5x due to GC stack scanning overhead.
+Compute-bound integer and loop work is within **1.0–1.4x** of C++. Visuall matches or beats C++ on 6 of 10 tests. Recursion-heavy workloads (Ackermann, TreeSum) are 4–9x due to GC stack scanning overhead.
+
+### Micro-benchmarks
+
+| Test | Iterations | C++ | Visuall | vs C++ | Python |
+|------|-----------|-----|---------|--------|--------|
+| Match dispatch | 1M | 11.9 ms | 9.2 ms | 0.8x | 222 ms |
+| Function call | 1M | 8.5 ms | 12.6 ms | 1.5x | 251 ms |
+| Tight loop sum | 100K | 7.1 ms | 7.7 ms | 1.1x | 47 ms |
 
 ## Download (Prebuilt Binary)
 
