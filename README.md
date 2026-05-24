@@ -15,6 +15,7 @@ Source (.vsl) → Lexer → Parser → Type Checker → LLVM IR → O2 Optimizat
 - **Standard library** — math, string, collections, I/O, random, datetime, json, network, and system modules
 - **Error handling** — `try` / `catch` / `finally` / `throw` with typed exceptions
 - **Package manager** — `vslpkg` for declaring, installing, and sharing packages via Git or local paths
+- **LSP server** — `visuall-lsp` with diagnostics, completion, hover, go-to-definition, references, document symbols, formatting, inlay hints, semantic tokens, signature help, code actions, and rename
 
 ## Performance
 Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best of 3 runs):
@@ -222,10 +223,15 @@ visuall/
 │   ├── vsl_paths.cpp        # Package store path helpers
 │   └── vsl_resolver.cpp     # Minimal Version Selection resolver
 ├── tools/
-│   └── vslpkg/
-│       ├── main.cpp         # vslpkg CLI (init, install)
-│       ├── fetcher.h
-│       └── fetcher.cpp      # Git subprocess wrapper (clone, fetch, checkout)
+│   ├── vslpkg/
+│   │   ├── main.cpp         # vslpkg CLI (init, install)
+│   │   ├── fetcher.h
+│   │   └── fetcher.cpp      # Git subprocess wrapper (clone, fetch, checkout)
+│   └── visuall-lsp/
+│       ├── CMakeLists.txt
+│       ├── include/         # Server capabilities, document store, formatter, JSON-RPC
+│       ├── src/             # LSP server, handlers, workspace index
+│       └── tests/           # LSP integration tests
 ├── stdlib/
 │   ├── runtime.c            # C runtime (print, string ops, list/dict/tuple/set ops)
 │   ├── gc.c / gc.h          # Mark-and-sweep garbage collector
@@ -714,3 +720,61 @@ The `vsl.toml` at the repository root must declare a valid `[package]` with `nam
 | Breaking API change | MAJOR (`1.0.0` → `2.0.0`) |
 
 MVS selects the **highest minimum** version across all consumers, so breaking changes (major bumps) are not automatically adopted by dependents.
+
+---
+
+## Editor Support (LSP)
+
+`visuall-lsp` is a [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) server that brings Visuall language support to any LSP-compatible editor (VS Code, Neovim, Helix, Emacs, etc.).
+
+### Capabilities
+
+| Feature | Description |
+|---------|-------------|
+| Diagnostics | Real-time error and warning underlines with range highlighting |
+| Completion | Scope-aware autocomplete (trigger: `.`, `(`, `"`, `'`) |
+| Hover | Type information and documentation on hover |
+| Go to Definition | Jump to symbol definitions (cross-file via workspace index) |
+| Find References | List all usages of a symbol across the workspace |
+| Document Symbols | Breadcrumb outline of functions, classes, and scopes |
+| Workspace Symbols | Fuzzy search for symbols across all project files |
+| Formatting | Full-document formatting |
+| Inlay Hints | Inline type annotations and parameter names |
+| Semantic Tokens | Syntax highlighting (keywords, functions, classes, etc.) |
+| Signature Help | Function parameter hints on `(` and `,` trigger |
+| Code Actions | Quick fixes (missing return, typo suggestions) |
+| Rename | Cross-file symbol renaming |
+| Incremental Sync | Efficient range-based document sync for large files |
+
+### Building
+
+The LSP builds alongside the compiler when `BUILD_LSP=ON` (default):
+
+```bash
+cd build
+cmake .. -DBUILD_LSP=ON
+cmake --build . --target visuall-lsp
+```
+
+The binary `visuall-lsp` will be in the `build/tools/visuall-lsp/` directory.
+
+### Editor Setup
+
+**VS Code** — add to `settings.json`:
+
+```json
+"visuall.lsp.path": "/path/to/build/tools/visuall-lsp/visuall-lsp"
+```
+
+**Neovim** (with `nvim-lspconfig`):
+
+```lua
+local lspconfig = require('lspconfig')
+lspconfig.visuall_lsp = {
+  cmd = { '/path/to/visuall-lsp' },
+  filetypes = { 'visuall' },
+  root_dir = lspconfig.util.root_pattern('vsl.toml', '.git'),
+}
+```
+
+The server discovers project structure by looking for a `vsl.toml` or `.git` directory at the workspace root, and indexes all `.vsl` files under it.
