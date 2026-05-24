@@ -15,8 +15,8 @@ namespace visuall {
 class ParseError : public Diagnostic {
 public:
     ParseError(const std::string& msg, const std::string& file, int ln, int col,
-               const std::string& src_line = "")
-        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, col, src_line) {}
+               const std::string& src_line = "", int eln = 0, int ec = 0)
+        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, col, src_line, eln, ec) {}
 };
 
 class Parser {

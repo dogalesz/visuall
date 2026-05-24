@@ -5,6 +5,7 @@ set(LSP_SOURCES
     src/json_rpc.cpp
     src/document_store.cpp
     src/lsp_server.cpp
+    src/workspace_index.cpp
     src/formatter.cpp
     src/handlers/initialize.cpp
     src/handlers/text_document/did_open.cpp
@@ -18,6 +19,10 @@ set(LSP_SOURCES
     src/handlers/text_document/document_symbols.cpp
     src/handlers/text_document/formatting.cpp
     src/handlers/text_document/inlay_hints.cpp
+    src/handlers/text_document/semantic_tokens.cpp
+    src/handlers/text_document/signature_help.cpp
+    src/handlers/text_document/code_action.cpp
+    src/handlers/text_document/rename.cpp
     src/handlers/workspace/symbol.cpp
 )
 

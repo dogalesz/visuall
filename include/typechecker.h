@@ -174,8 +174,8 @@ TypeRef makeNullable(TypeRef inner);
 class TypeError : public Diagnostic {
 public:
     TypeError(const std::string& msg, const std::string& file, int ln, int col,
-              const std::string& hnt = "")
-        : Diagnostic(Diagnostic::Severity::Error, msg, hnt, file, ln, col) {}
+              const std::string& hnt = "", int eln = 0, int ec = 0)
+        : Diagnostic(Diagnostic::Severity::Error, msg, hnt, file, ln, col, "", eln, ec) {}
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -354,7 +354,8 @@ private:
     TypeRef checkExpr(const ast::Expr& expr);
 
     void error(const std::string& msg, int line, int col,
-               const std::string& hint = "");
+               const std::string& hint = "",
+               int endLine = 0, int endCol = 0);
 };
 
 } // namespace visuall

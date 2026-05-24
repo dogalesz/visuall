@@ -62,6 +62,7 @@ void DocumentStore::reanalyze(const std::string& uri) {
     doc.tokens.clear();
     doc.ast.reset();
     doc.symbols.clear();
+    doc.scopes.clear();
 
     std::string filename = uriToFilename(uri);
 
@@ -74,8 +75,13 @@ void DocumentStore::reanalyze(const std::string& uri) {
             Diagnostic d;
             d.startLine = e.line > 0 ? e.line - 1 : 0;  // LSP lines are 0-based
             d.startCol  = e.col > 0 ? e.col - 1 : 0;
-            d.endLine   = d.startLine;
-            d.endCol    = d.startCol + 1;
+            if (e.endLine > 0) {
+                d.endLine = e.endLine - 1;
+                d.endCol  = e.endCol - 1;
+            } else {
+                d.endLine = d.startLine;
+                d.endCol  = d.startCol + 1;
+            }
             d.severity  = 1;
             d.message   = stripErrorPrefix(e.what());
             doc.diagnostics.push_back(std::move(d));
@@ -96,8 +102,13 @@ void DocumentStore::reanalyze(const std::string& uri) {
             Diagnostic d;
             d.startLine = e.line > 0 ? e.line - 1 : 0;
             d.startCol  = e.col > 0 ? e.col - 1 : 0;
-            d.endLine   = d.startLine;
-            d.endCol    = d.startCol + 1;
+            if (e.endLine > 0) {
+                d.endLine = e.endLine - 1;
+                d.endCol  = e.endCol - 1;
+            } else {
+                d.endLine = d.startLine;
+                d.endCol  = d.startCol + 1;
+            }
             d.severity  = 1;
             d.message   = stripErrorPrefix(e.what());
             doc.diagnostics.push_back(std::move(d));
@@ -121,10 +132,12 @@ void DocumentStore::reanalyze(const std::string& uri) {
             checker.check(*doc.ast);
 
             // Enrich symbols with actual resolved types from the TypeChecker.
-            const auto& scopes = checker.getScopes();
+            // Also save scopes for scope-aware completion cursor walks.
+            const auto& checkerScopes = checker.getScopes();
+            doc.scopes.assign(checkerScopes.begin(), checkerScopes.end());
             for (auto& sym : doc.symbols) {
                 // Walk scopes from innermost to outermost to find this symbol's resolved type.
-                for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+                for (auto it = checkerScopes.rbegin(); it != checkerScopes.rend(); ++it) {
                     auto found = it->symbols.find(sym.name);
                     if (found != it->symbols.end()) {
                         sym.typeName = found->second->toUserString();
@@ -137,8 +150,13 @@ void DocumentStore::reanalyze(const std::string& uri) {
                 Diagnostic d;
                 d.startLine = e.line > 0 ? e.line - 1 : 0;
                 d.startCol  = e.col > 0 ? e.col - 1 : 0;
-                d.endLine   = d.startLine;
-                d.endCol    = d.startCol + 1;
+                if (e.endLine > 0) {
+                    d.endLine = e.endLine - 1;
+                    d.endCol  = e.endCol - 1;
+                } else {
+                    d.endLine = d.startLine;
+                    d.endCol  = d.startCol + 1;
+                }
                 d.severity  = 1;
                 d.message   = stripErrorPrefix(e.what());
                 doc.diagnostics.push_back(std::move(d));

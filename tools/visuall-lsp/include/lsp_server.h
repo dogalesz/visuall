@@ -2,6 +2,7 @@
 
 #include "json_rpc.h"
 #include "document_store.h"
+#include "workspace_index.h"
 #include <nlohmann/json.hpp>
 
 namespace lsp {
@@ -20,10 +21,11 @@ public:
     void run();
 
 private:
-    JsonRpc       rpc_;
-    DocumentStore store_;
-    bool          initialized_ = false;
-    bool          shutdown_    = false;
+    JsonRpc         rpc_;
+    DocumentStore   store_;
+    WorkspaceIndex  workspaceIndex_;
+    bool            initialized_ = false;
+    bool            shutdown_    = false;
 
     // Register all LSP request and notification handlers.
     void registerHandlers();
@@ -55,6 +57,18 @@ private:
 
     // Workspace requests
     json handleWorkspaceSymbol(const json& params);
+
+    // Semantic tokens
+    json handleSemanticTokens(const json& params);
+
+    // Signature help
+    json handleSignatureHelp(const json& params);
+
+    // Code actions
+    json handleCodeAction(const json& params);
+
+    // Rename
+    json handleRename(const json& params);
 
     // ── Utility ────────────────────────────────────────────────────────
 

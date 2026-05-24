@@ -14,7 +14,7 @@ inline json buildServerCapabilities() {
     return {
         {"textDocumentSync", {
             {"openClose", true},
-            {"change", 1}   // 1 = Full — send entire document on every change
+            {"change", 2}   // 2 = Incremental — client sends per-change range diffs
         }},
         {"completionProvider", {
             {"triggerCharacters", {".", "(", "\"", "'"}},
@@ -26,7 +26,22 @@ inline json buildServerCapabilities() {
         {"documentSymbolProvider", true},
         {"documentFormattingProvider", true},
         {"inlayHintProvider", true},
-        {"workspaceSymbolProvider", true}
+        {"signatureHelpProvider", {
+            {"triggerCharacters", {"(", ","}},
+            {"retriggerCharacters", {}}
+        }},
+        {"codeActionProvider", true},
+        {"renameProvider", true},
+        {"workspaceSymbolProvider", true},
+        {"semanticTokensProvider", {
+            {"legend", {
+                {"tokenTypes", {"keyword", "function", "class", "parameter",
+                    "variable", "string", "number", "comment", "type"}},
+                {"tokenModifiers", {"declaration", "defaultLibrary", "readonly"}}
+            }},
+            {"full", true},
+            {"range", false}
+        }}
     };
 }
 

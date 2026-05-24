@@ -71,6 +71,10 @@ struct Document {
     // Collected symbols from the AST.
     std::vector<SymbolInfo> symbols;
 
+    // Scope registry from the TypeChecker (Historical Registry Pattern).
+    // Preserved for scope-aware completion cursor walks.
+    std::vector<visuall::SymbolTable::Scope> scopes;
+
     // All diagnostics from the last pipeline run.
     std::vector<Diagnostic> diagnostics;
 };
@@ -97,16 +101,16 @@ public:
     // Stores partial results even if later stages fail.
     void reanalyze(const std::string& uri);
 
-private:
-    std::unordered_map<std::string, Document> docs_;
-
     // Extract filename from URI for compiler error messages.
     static std::string uriToFilename(const std::string& uri);
 
-    // Collect symbols from a parsed AST.
+    // Collect symbols from a parsed AST (public for WorkspaceIndex).
     static std::vector<SymbolInfo> collectSymbols(
         const visuall::ast::Program& program,
         const std::string& source);
+
+private:
+    std::unordered_map<std::string, Document> docs_;
 
     // Extract ## doc comment above a given line from source text.
     static std::string extractDocComment(const std::string& source, int defLine);

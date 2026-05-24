@@ -7,6 +7,7 @@ void LspServer::handleDidClose(const json& params) {
     std::string uri = params["textDocument"]["uri"];
 
     store_.close(uri);
+    workspaceIndex_.removeFile(uri);
 
     // Send empty diagnostics to clear squiggles.
     rpc_.sendNotification("textDocument/publishDiagnostics", {

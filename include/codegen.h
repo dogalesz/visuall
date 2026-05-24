@@ -34,8 +34,8 @@ struct Module;
 class CodegenError : public Diagnostic {
 public:
     CodegenError(const std::string& msg, int ln, int c,
-                 const std::string& file = "")
-        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, c) {}
+                 const std::string& file = "", int eln = 0, int ec = 0)
+        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, c, "", eln, ec) {}
 };
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -36,8 +36,9 @@ class ImportError : public Diagnostic {
 public:
     explicit ImportError(const std::string& msg,
                          const std::string& file = "",
-                         int ln = 0, int c = 0)
-        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, c) {}
+                         int ln = 0, int c = 0,
+                         int eln = 0, int ec = 0)
+        : Diagnostic(Diagnostic::Severity::Error, msg, "", file, ln, c, "", eln, ec) {}
 };
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -11,6 +11,7 @@ void LspServer::handleDidOpen(const json& params) {
 
     store_.open(uri, content, version);
     store_.reanalyze(uri);
+    workspaceIndex_.indexFile(uri, content);
     publishDiagnostics(uri);
 
     std::cerr << "[visuall-lsp] Opened: " << uri << std::endl;

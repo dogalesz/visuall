@@ -1,6 +1,7 @@
 #include "lsp_server.h"
 #include "capabilities.h"
 #include <iostream>
+#include <unordered_set>
 
 namespace lsp {
 
@@ -63,6 +64,26 @@ void LspServer::registerHandlers() {
     // ── Workspace requests ─────────────────────────────────────────────
     rpc_.onRequest("workspace/symbol", [this](const json& params) {
         return handleWorkspaceSymbol(params);
+    });
+
+    // ── Semantic tokens ────────────────────────────────────────────────
+    rpc_.onRequest("textDocument/semanticTokens/full", [this](const json& params) {
+        return handleSemanticTokens(params);
+    });
+
+    // ── Signature help ──────────────────────────────────────────────────
+    rpc_.onRequest("textDocument/signatureHelp", [this](const json& params) {
+        return handleSignatureHelp(params);
+    });
+
+    // ── Code actions ────────────────────────────────────────────────────
+    rpc_.onRequest("textDocument/codeAction", [this](const json& params) {
+        return handleCodeAction(params);
+    });
+
+    // ── Rename ──────────────────────────────────────────────────────────
+    rpc_.onRequest("textDocument/rename", [this](const json& params) {
+        return handleRename(params);
     });
 }
 
@@ -136,16 +157,87 @@ std::vector<const visuall::Token*> LspServer::findAllReferences(
     return refs;
 }
 
-std::vector<SymbolInfo> LspServer::getVisibleSymbols(const Document& doc, int /*line*/) const {
-    // Return all top-level symbols and their children.
-    // TODO: scope-aware filtering based on cursor position (v2).
-    std::vector<SymbolInfo> visible;
-    for (const auto& sym : doc.symbols) {
-        visible.push_back(sym);
-        for (const auto& child : sym.children) {
-            visible.push_back(child);
+std::vector<SymbolInfo> LspServer::getVisibleSymbols(const Document& doc, int line) const {
+    // Geometric cursor walk: use the TypeChecker's scope registry to find
+    // symbols visible at the cursor position, respecting lexical scoping
+    // and variable shadowing.
+
+    // If no scope data (e.g., parse failure), fall back to flat list.
+    if (doc.scopes.empty()) {
+        std::vector<SymbolInfo> flat;
+        for (const auto& sym : doc.symbols) {
+            flat.push_back(sym);
+            for (const auto& child : sym.children)
+                flat.push_back(child);
+        }
+        return flat;
+    }
+
+    int cursorLine = line + 1; // LSP 0-based to AST 1-based
+
+    // Find the innermost scope that contains the cursor.
+    int scopeIdx = -1;
+    for (int i = static_cast<int>(doc.scopes.size()) - 1; i >= 0; --i) {
+        const auto& s = doc.scopes[i];
+        if (s.startLine == 0 && s.endLine == 0) continue;
+        if (cursorLine >= s.startLine && (s.endLine == 0 || cursorLine <= s.endLine)) {
+            scopeIdx = i;
+            break;
         }
     }
+
+    // If no scope contains the cursor, default to the global scope (index 0).
+    if (scopeIdx < 0) scopeIdx = 0;
+
+    // Walk from the found scope up to the root via parentIndex,
+    // collecting symbols while respecting shadowing.
+    std::vector<SymbolInfo> visible;
+    std::unordered_set<std::string> seen;
+
+    int current = scopeIdx;
+    while (current >= 0 && current < static_cast<int>(doc.scopes.size())) {
+        const auto& scope = doc.scopes[current];
+
+        for (const auto& [name, typeRef] : scope.symbols) {
+            if (seen.count(name)) continue;
+            seen.insert(name);
+
+            bool found = false;
+            for (const auto& sym : doc.symbols) {
+                if (sym.name == name) {
+                    SymbolInfo enriched = sym;
+                    if (enriched.typeName.empty() && typeRef)
+                        enriched.typeName = typeRef->toUserString();
+                    visible.push_back(std::move(enriched));
+                    found = true;
+                    break;
+                }
+                for (const auto& child : sym.children) {
+                    if (child.name == name) {
+                        SymbolInfo enriched = child;
+                        if (enriched.typeName.empty() && typeRef)
+                            enriched.typeName = typeRef->toUserString();
+                        visible.push_back(std::move(enriched));
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) break;
+            }
+            if (!found && typeRef) {
+                SymbolInfo sym;
+                sym.name = name;
+                sym.typeName = typeRef->toUserString();
+                sym.symbolKind = 13;
+                sym.defLine = scope.startLine > 0 ? scope.startLine - 1 : 0;
+                sym.detail = typeRef->toUserString();
+                visible.push_back(std::move(sym));
+            }
+        }
+
+        current = scope.parentIndex;
+    }
+
     return visible;
 }
 

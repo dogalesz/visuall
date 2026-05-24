@@ -72,6 +72,40 @@ json LspServer::handleWorkspaceSymbol(const json& params) {
         }
     }
 
+    // Also search the workspace index for files not currently open.
+    auto indexed = workspaceIndex_.searchByPrefix(query);
+    for (const auto* sym : indexed) {
+        // Find which file this symbol belongs to.
+        std::string fileUri;
+        for (const auto& [fUri, entry] : workspaceIndex_.files()) {
+            for (const auto& s : entry.symbols) {
+                if (&s == sym) { fileUri = fUri; break; }
+                for (const auto& child : s.children) {
+                    if (&child == sym) { fileUri = fUri; break; }
+                }
+                if (!fileUri.empty()) break;
+            }
+            if (!fileUri.empty()) break;
+        }
+        if (fileUri.empty()) continue;
+
+        json symInfo = {
+            {"name", sym->name},
+            {"kind", sym->symbolKind},
+            {"location", {
+                {"uri", fileUri},
+                {"range", {
+                    {"start", {{"line", sym->defLine}, {"character", sym->defCol}}},
+                    {"end",   {{"line", sym->defLine}, {"character", sym->defCol + static_cast<int>(sym->name.size())}}}
+                }}
+            }}
+        };
+        if (!sym->detail.empty()) {
+            symInfo["containerName"] = sym->detail;
+        }
+        symbols.push_back(symInfo);
+    }
+
     return symbols;
 }
 

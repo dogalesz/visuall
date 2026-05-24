@@ -493,8 +493,8 @@ bool TypeChecker::classImplementsInterface(const std::string& className, const s
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 void TypeChecker::error(const std::string& msg, int line, int col,
-                        const std::string& hint) {
-    errors_.emplace_back(msg, filename_, line, col, hint);
+                        const std::string& hint, int eln, int ec) {
+    errors_.emplace_back(msg, filename_, line, col, hint, eln, ec);
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1353,7 +1353,36 @@ void TypeChecker::visit(const ast::CallExpr& e) {
 }
 
 void TypeChecker::visit(const ast::MemberExpr& e) {
-    checkExpr(*e.object);
+    TypeRef objType = checkExpr(*e.object);
+
+    // Resolve member access: obj.member
+    // Try to find the member in the receiver's class/method table.
+    if (auto* classType = dynamic_cast<ClassType*>(objType.get())) {
+        auto it = classTable_.find(classType->name);
+        if (it != classTable_.end()) {
+            // Search methods.
+            for (const auto& m : it->second.methods) {
+                if (m.name == e.member) {
+                    exprResult_ = makeFunc(m.name, m.returnType, m.paramTypes);
+                    return;
+                }
+            }
+            // Search base class methods.
+            if (!it->second.baseClass.empty()) {
+                auto baseIt = classTable_.find(it->second.baseClass);
+                if (baseIt != classTable_.end()) {
+                    for (const auto& m : baseIt->second.methods) {
+                        if (m.name == e.member) {
+                            exprResult_ = makeFunc(m.name, m.returnType, m.paramTypes);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // If the object type couldn't be resolved to a known class, leave as unknown.
     exprResult_ = makeUnknown();
 }
 

@@ -28,18 +28,23 @@ struct Diagnostic : std::exception {
     std::string filename;
     int         line        = 0;
     int         col         = 0;
+    int         endLine     = 0;
+    int         endCol      = 0;
     std::string source_line;
 
     Diagnostic() = default;
 
     Diagnostic(Severity sev, std::string msg, std::string hnt,
-               std::string file, int ln, int c, std::string src = "")
+               std::string file, int ln, int c, std::string src = "",
+               int eln = 0, int ec = 0)
         : severity(sev)
         , message(std::move(msg))
         , hint(std::move(hnt))
         , filename(std::move(file))
         , line(ln)
         , col(c)
+        , endLine(eln)
+        , endCol(ec)
         , source_line(std::move(src))
     {
         what_ = buildWhat();
