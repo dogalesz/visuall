@@ -27,6 +27,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(yyjson)
 
+# ── nlohmann/json (header-only JSON library, needed by LSP) ──────────────────
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # ── LLVM ────────────────────────────────────────────────────────────────────
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
@@ -53,20 +62,37 @@ else()
 endif()
 
 # ── Source files ────────────────────────────────────────────────────────────
-set(VISUALL_SOURCES
-    src/main.cpp
+
+# Frontend library (no LLVM dependency) — reusable by LSP, tests, and CLI
+set(VISUALL_FRONTEND_SOURCES
     src/lexer.cpp
     src/parser.cpp
     src/ast_printer.cpp
     src/typechecker.cpp
     src/capture_analyzer.cpp
     src/class_analyzer.cpp
+    src/vsl_manifest.cpp
+    src/vsl_paths.cpp
+    src/vsl_resolver.cpp
+)
+add_library(visuall_frontend STATIC ${VISUALL_FRONTEND_SOURCES})
+target_include_directories(visuall_frontend PUBLIC include)
+target_compile_features(visuall_frontend PUBLIC cxx_std_17)
+target_link_libraries(visuall_frontend PUBLIC toml11::toml11)
+
+# LLVM-dependent sources (not in visuall_frontend)
+set(VISUALL_LLVM_SOURCES
+    src/main.cpp
     src/codegen.cpp
     src/builtins.cpp
     src/module_loader.cpp
     src/linker.cpp
-    src/vsl_manifest.cpp
-    src/vsl_paths.cpp
+)
+
+# Full source list (kept for reference)
+set(VISUALL_SOURCES
+    ${VISUALL_FRONTEND_SOURCES}
+    ${VISUALL_LLVM_SOURCES}
 )
 
 # ── Personality function detection ────────────────────────────────────────
@@ -100,9 +126,9 @@ target_compile_options(visuall_runtime PRIVATE
 )
 
 # ── visuallc binary ────────────────────────────────────────────────────────
-add_executable(visuallc ${VISUALL_SOURCES})
+add_executable(visuallc ${VISUALL_LLVM_SOURCES})
 target_include_directories(visuallc PRIVATE include)
-target_link_libraries(visuallc PRIVATE ${LLVM_LIBS} toml11::toml11)
+target_link_libraries(visuallc PRIVATE visuall_frontend ${LLVM_LIBS})
 if(VISUALL_PERSONALITY_DEF)
     target_compile_definitions(visuallc PRIVATE ${VISUALL_PERSONALITY_DEF})
 endif()
@@ -111,12 +137,9 @@ endif()
 add_executable(vslpkg
     tools/vslpkg/main.cpp
     tools/vslpkg/fetcher.cpp
-    src/vsl_manifest.cpp
-    src/vsl_paths.cpp
-    src/vsl_resolver.cpp
 )
 target_include_directories(vslpkg PRIVATE include tools/vslpkg)
-target_link_libraries(vslpkg PRIVATE toml11::toml11)
+target_link_libraries(vslpkg PRIVATE visuall_frontend)
 if(UNIX)
     target_link_libraries(vslpkg PRIVATE pthread)
 endif()
@@ -139,24 +162,16 @@ add_executable(visuall_tests
     tests/gc_test.cpp
     tests/class_analyzer_test.cpp
     tests/diagnostic_test.cpp
-    src/lexer.cpp
-    src/parser.cpp
-    src/ast_printer.cpp
-    src/typechecker.cpp
-    src/capture_analyzer.cpp
-    src/class_analyzer.cpp
     src/codegen.cpp
     src/builtins.cpp
     src/module_loader.cpp
     src/linker.cpp
-    src/vsl_manifest.cpp
-    src/vsl_paths.cpp
     stdlib/gc.c
     stdlib/runtime.c
     stdlib/exception_support.cpp
 )
 target_include_directories(visuall_tests PRIVATE include stdlib)
-target_link_libraries(visuall_tests PRIVATE ${LLVM_LIBS} toml11::toml11 yyjson)
+target_link_libraries(visuall_tests PRIVATE visuall_frontend ${LLVM_LIBS} yyjson)
 if(WIN32)
     target_link_libraries(visuall_tests PRIVATE ws2_32)
 endif()
@@ -229,4 +244,10 @@ if(PKG_TEST_ENV)
     set_tests_properties(pkg_path_dep_compile PROPERTIES
         ENVIRONMENT "${PKG_TEST_ENV}"
     )
+endif()
+
+# ── visuall-lsp (optional) ──────────────────────────────────────────────────
+option(BUILD_LSP "Build the Visuall Language Server" ON)
+if(BUILD_LSP)
+    add_subdirectory(tools/visuall-lsp)
 endif()

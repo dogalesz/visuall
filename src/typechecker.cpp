@@ -174,39 +174,50 @@ TypeRef makeNullable(TypeRef i) { return std::make_shared<NullableType>(std::mov
 // SymbolTable
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-void SymbolTable::enterScope() {
-    scopes_.emplace_back();
+void SymbolTable::enterScope(int startLine) {
+    Scope new_scope;
+    new_scope.startLine = startLine;
+    if (!active_stack_.empty()) {
+        new_scope.parentIndex = static_cast<int>(active_stack_.back());
+    }
+    all_scopes_.push_back(std::move(new_scope));
+    active_stack_.push_back(all_scopes_.size() - 1);
 }
 
-void SymbolTable::exitScope() {
-    if (!scopes_.empty()) scopes_.pop_back();
+void SymbolTable::exitScope(int endLine) {
+    if (!active_stack_.empty()) {
+        size_t idx = active_stack_.back();
+        all_scopes_[idx].endLine = endLine;
+        active_stack_.pop_back();
+    }
 }
 
 void SymbolTable::declare(const std::string& name, const TypeRef& type) {
-    if (!scopes_.empty()) {
-        scopes_.back()[name] = type;
+    if (!active_stack_.empty()) {
+        all_scopes_[active_stack_.back()].symbols[name] = type;
     }
 }
 
 bool SymbolTable::isDeclared(const std::string& name) const {
-    for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
-        if (it->count(name)) return true;
+    for (auto it = active_stack_.rbegin(); it != active_stack_.rend(); ++it) {
+        if (all_scopes_[*it].symbols.count(name)) return true;
     }
     return false;
 }
 
 TypeRef SymbolTable::lookup(const std::string& name) const {
-    for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
-        auto found = it->find(name);
-        if (found != it->end()) return found->second;
+    for (auto it = active_stack_.rbegin(); it != active_stack_.rend(); ++it) {
+        auto found = all_scopes_[*it].symbols.find(name);
+        if (found != all_scopes_[*it].symbols.end()) return found->second;
     }
     return makeUnknown();
 }
 
 bool SymbolTable::lookupInCurrentScope(const std::string& name, TypeRef& out) const {
-    if (scopes_.empty()) return false;
-    auto it = scopes_.back().find(name);
-    if (it != scopes_.back().end()) {
+    if (active_stack_.empty()) return false;
+    size_t idx = active_stack_.back();
+    auto it = all_scopes_[idx].symbols.find(name);
+    if (it != all_scopes_[idx].symbols.end()) {
         out = it->second;
         return true;
     }
@@ -215,8 +226,8 @@ bool SymbolTable::lookupInCurrentScope(const std::string& name, TypeRef& out) co
 
 std::vector<std::string> SymbolTable::allNames() const {
     std::vector<std::string> names;
-    for (const auto& scope : scopes_) {
-        for (const auto& kv : scope) {
+    for (size_t idx : active_stack_) {
+        for (const auto& kv : all_scopes_[idx].symbols) {
             names.push_back(kv.first);
         }
     }
@@ -227,17 +238,18 @@ std::vector<std::string> SymbolTable::allNames() const {
 // TypeChecker â€” construction
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-TypeChecker::TypeChecker(const std::string& filename)
-    : filename_(filename), currentReturnType_(makeVoid()) {}
+TypeChecker::TypeChecker(const std::string& filename, bool throwOnFirstError)
+    : filename_(filename), throwOnFirstError_(throwOnFirstError), currentReturnType_(makeVoid()) {}
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Scope helpers
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-void TypeChecker::enterScope() { symbols_.enterScope(); }
-void TypeChecker::exitScope()  { symbols_.exitScope(); }
+void TypeChecker::enterScope(int startLine) { symbols_.enterScope(startLine); }
+void TypeChecker::exitScope(int endLine)    { symbols_.exitScope(endLine); }
 
-void TypeChecker::declare(const std::string& name, const TypeRef& type, int /*line*/, int /*col*/) {
+void TypeChecker::declare(const std::string& name, const TypeRef& type, int line, int col) {
+    (void)line; (void)col;  // reserved for source-location tracking
     symbols_.declare(name, type);
 }
 
@@ -491,7 +503,7 @@ void TypeChecker::error(const std::string& msg, int line, int col,
 
 void TypeChecker::check(const ast::Program& program) {
     errors_.clear();
-    enterScope();  // file scope
+    enterScope(program.line);  // file scope
     // First pass: register all top-level function, class, and interface declarations.
     for (const auto& stmt : program.statements) {
         if (auto* f = dynamic_cast<const ast::FuncDef*>(stmt.get())) {
@@ -575,10 +587,10 @@ void TypeChecker::check(const ast::Program& program) {
     }
     // Second pass: check all statements.
     checkStmtList(program.statements);
-    exitScope();
+    exitScope(program.endLine);
 
     // After checking, re-throw the first error so callers see it.
-    if (!errors_.empty()) throw errors_.front();
+    if (throwOnFirstError_ && !errors_.empty()) throw errors_.front();
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -688,7 +700,7 @@ void TypeChecker::visit(const ast::FuncDef& s) {
         hasExplicitReturnType_ = false;
     }
 
-    enterScope();
+    enterScope(s.line);
     for (const auto& tp : s.typeParams) {
         declare(tp, makeTypeVar(tp), s.line, s.column);
     }
@@ -713,7 +725,7 @@ void TypeChecker::visit(const ast::FuncDef& s) {
               "add 'return <value>' at the end of the function");
     }
 
-    exitScope();
+    exitScope(s.endLine);
 
     currentReturnType_ = savedRetType;
     hasExplicitReturnType_ = savedHasExplicit;
@@ -726,7 +738,7 @@ void TypeChecker::visit(const ast::InitDef& s) {
     currentReturnType_ = makeVoid();
     hasExplicitReturnType_ = false;
 
-    enterScope();
+    enterScope(s.line);
     for (const auto& p : s.params) {
         TypeRef pType = p.typeAnnotation.empty() ? makeUnknown()
                                                : resolveTypeName(p.typeAnnotation);
@@ -736,7 +748,7 @@ void TypeChecker::visit(const ast::InitDef& s) {
         declare(p.name, pType, s.line, s.column);
     }
     checkStmtList(s.body);
-    exitScope();
+    exitScope(s.endLine);
 
     currentReturnType_ = savedRetType;
     hasExplicitReturnType_ = savedHasExplicit;
@@ -751,7 +763,7 @@ void TypeChecker::visit(const ast::ClassDef& s) {
     currentClassName_ = s.name;
     currentTypeParams_ = s.typeParams;
 
-    enterScope();
+    enterScope(s.line);
     declare("this", makeClass(s.name), s.line, s.column);
 
     for (const auto& tp : s.typeParams) {
@@ -830,7 +842,7 @@ void TypeChecker::visit(const ast::ClassDef& s) {
         }
     }
 
-    exitScope();
+    exitScope(s.endLine);
     insideClass_ = savedInsideClass;
     currentClassName_ = savedClassName;
     currentTypeParams_ = savedTP;
@@ -1362,14 +1374,14 @@ void TypeChecker::visit(const ast::IndexExpr& e) {
 }
 
 void TypeChecker::visit(const ast::LambdaExpr& e) {
-    enterScope();
+    enterScope(e.line);
     std::vector<TypeRef> paramTypes;
     for (const auto& p : e.params) {
         declare(p, makeUnknown(), e.line, e.column);
         paramTypes.push_back(makeUnknown());
     }
     TypeRef bodyType = checkExpr(*e.body);
-    exitScope();
+    exitScope(e.endLine);
     exprResult_ = makeFunc("<lambda>", bodyType, std::move(paramTypes));
 }
 

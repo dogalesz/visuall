@@ -29,6 +29,8 @@ using StmtList = std::vector<StmtPtr>;
 struct Node {
     int line = 0;
     int column = 0;
+    int endLine = 0;
+    int endCol = 0;
     virtual ~Node() = default;
 };
 

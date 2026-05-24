@@ -237,7 +237,14 @@ std::unique_ptr<ast::Program> Parser::parse() {
     skipNewlines();
     while (!isAtEnd()) {
         try {
-            stmts.push_back(parseStatement());
+            auto stmt = parseStatement();
+            // Fallback: pin end position to last consumed token if unset,
+            // preventing zero-width ranges in the LSP on dirty/incomplete input.
+            if (stmt && stmt->endLine == 0) {
+                stmt->endLine = previous().line;
+                stmt->endCol = previous().column + std::max(1, static_cast<int>(previous().lexeme.size()));
+            }
+            stmts.push_back(std::move(stmt));
         } catch (const ParseError& e) {
             errors_.push_back(e);
             synchronize();
@@ -248,7 +255,12 @@ std::unique_ptr<ast::Program> Parser::parse() {
     // After recovery, re-throw the first error so callers see it.
     if (!errors_.empty()) throw errors_.front();
 
-    return std::make_unique<ast::Program>(std::move(stmts));
+    auto program = std::make_unique<ast::Program>(std::move(stmts));
+    if (previous().line > 0) {
+        program->endLine = previous().line;
+        program->endCol = previous().column + std::max(1, static_cast<int>(previous().lexeme.size()));
+    }
+    return program;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -317,7 +329,7 @@ ast::StmtPtr Parser::parseStatement() {
             int ln = current().line, col = current().column;
             advance();
             auto s = std::make_unique<ast::PassStmt>();
-            s->line = ln; s->column = col;
+            s->line = ln; s->column = col; s->endLine = previous().line; s->endCol = previous().column;
             return s;
         }
         default:
@@ -396,7 +408,7 @@ ast::StmtPtr Parser::parseFuncDef(std::vector<ast::ExprPtr> decorators) {
     node->decorators = std::move(decorators);
     node->typeParams = std::move(typeParams);
     node->typeParamBounds = std::move(typeParamBounds);
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -411,7 +423,7 @@ ast::StmtPtr Parser::parseInitDef() {
     expect(TokenType::COLON, "Expected ':' after init signature");
     auto body = parseBlock();
     auto node = std::make_unique<ast::InitDef>(std::move(params), std::move(body));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -476,7 +488,7 @@ ast::StmtPtr Parser::parseClassDef() {
     node->interfaces = std::move(interfaces);
     node->typeParams = std::move(typeParams);
     node->typeParamBounds = std::move(typeParamBounds);
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -503,7 +515,7 @@ ast::StmtPtr Parser::parseEnumDef() {
     }
     expect(TokenType::DEDENT, "Expected dedent after enum body");
     auto node = std::make_unique<ast::EnumDef>(name, std::move(members));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -542,7 +554,7 @@ ast::StmtPtr Parser::parseIfStmt() {
 
     auto node = std::make_unique<ast::IfStmt>(
         std::move(cond), std::move(thenBody), std::move(elsifs), std::move(elseBody));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -576,7 +588,7 @@ ast::StmtPtr Parser::parseForStmt() {
         for (auto& v : extraVars) node->variables.push_back(v);
     }
     node->elseBranch = std::move(elseBranch);
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -598,7 +610,7 @@ ast::StmtPtr Parser::parseWhileStmt() {
     }
     auto node = std::make_unique<ast::WhileStmt>(std::move(cond), std::move(body));
     node->elseBranch = std::move(elseBranch);
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -614,7 +626,7 @@ ast::StmtPtr Parser::parseReturnStmt() {
         val = parseExpression();
     }
     auto node = std::make_unique<ast::ReturnStmt>(std::move(val));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -662,7 +674,7 @@ ast::StmtPtr Parser::parseTryStmt() {
 
     auto node = std::make_unique<ast::TryStmt>(
         std::move(tryBody), std::move(catches), std::move(finallyBody));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -677,12 +689,12 @@ ast::StmtPtr Parser::parseThrowStmt() {
         current().type == TokenType::DEDENT  ||
         current().type == TokenType::END_OF_FILE) {
         auto node = std::make_unique<ast::ThrowStmt>();
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
     auto expr = parseExpression();
     auto node = std::make_unique<ast::ThrowStmt>(std::move(expr));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -698,7 +710,7 @@ ast::StmtPtr Parser::parseAssertStmt() {
         msg = parseExpression();
     }
     auto node = std::make_unique<ast::AssertStmt>(std::move(cond), std::move(msg));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -710,7 +722,7 @@ ast::StmtPtr Parser::parseDelStmt() {
     advance(); // consume 'del'
     auto target = parseExpression();
     auto node = std::make_unique<ast::DelStmt>(std::move(target));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -734,7 +746,7 @@ ast::StmtPtr Parser::parseWithStmt() {
 
     auto node = std::make_unique<ast::WithStmt>(
         std::move(expr), std::move(asName), std::move(body));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -788,7 +800,7 @@ ast::StmtPtr Parser::parseMatchStmt() {
     expect(TokenType::DEDENT, "Expected end of match block");
 
     auto node = std::make_unique<ast::MatchStmt>(std::move(subject), std::move(cases));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -804,7 +816,7 @@ ast::StmtPtr Parser::parseImportStmt() {
         mod += expect(TokenType::IDENTIFIER, "Expected module name after '.'").lexeme;
     }
     auto node = std::make_unique<ast::ImportStmt>(mod);
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -821,7 +833,7 @@ ast::StmtPtr Parser::parseFromImportStmt() {
         names.push_back(expect(TokenType::IDENTIFIER, "Expected import name").lexeme);
     } while (match(TokenType::COMMA));
     auto node = std::make_unique<ast::FromImportStmt>(mod, std::move(names));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -887,7 +899,7 @@ ast::StmtPtr Parser::parseExpressionStatement() {
         expect(TokenType::ASSIGN, "Expected '=' after unpacking targets");
         auto value = parseExpression();
         auto node = std::make_unique<ast::TupleUnpackStmt>(std::move(targets), std::move(value));
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
@@ -917,7 +929,7 @@ ast::StmtPtr Parser::parseExpressionStatement() {
             binExpr->line = ln; binExpr->column = col;
             auto node = std::make_unique<ast::AssignStmt>(
                 std::move(expr), std::move(binExpr));
-            node->line = ln; node->column = col;
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
             return node;
         }
     }
@@ -942,12 +954,12 @@ ast::StmtPtr Parser::parseExpressionStatement() {
         } else {
             node = std::make_unique<ast::AssignStmt>(std::move(primaryTarget), std::move(value), std::move(extras));
         }
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
     auto node = std::make_unique<ast::ExprStmt>(std::move(expr));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -989,7 +1001,7 @@ ast::ExprPtr Parser::parseExpression() {
             auto val = parseExpression();
             int ln = val->line, col = val->column;
             auto node = std::make_unique<ast::WalrusExpr>(std::move(target), std::move(val));
-            node->line = ln; node->column = col;
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
             return node;
         }
         pos_ = saved; // backtrack
@@ -1020,7 +1032,7 @@ ast::ExprPtr Parser::parseNullCoalesce() {
         auto right = parseOr();
         auto node = std::make_unique<ast::BinaryExpr>(
             ast::BinOp::NullCoalesce, std::move(left), std::move(right));
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         left = std::move(node);
     }
     return left;
@@ -1321,17 +1333,17 @@ ast::ExprPtr Parser::parsePrimary() {
     // ── Literals ───────────────────────────────────────────────────────
     if (match(TokenType::INT_LITERAL)) {
         auto node = std::make_unique<ast::IntLiteral>(std::stoll(previous().lexeme));
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
     if (match(TokenType::FLOAT_LITERAL)) {
         auto node = std::make_unique<ast::FloatLiteral>(std::stod(previous().lexeme));
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
     if (match(TokenType::STRING_LITERAL)) {
         auto node = std::make_unique<ast::StringLiteral>(previous().lexeme);
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
     if (match(TokenType::FSTRING_LITERAL)) {
@@ -1398,17 +1410,17 @@ ast::ExprPtr Parser::parsePrimary() {
         }
 
         auto node = std::make_unique<ast::FStringExpr>(std::move(parts));
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
     if (match(TokenType::BOOL_LITERAL)) {
         auto node = std::make_unique<ast::BoolLiteral>(previous().lexeme == "true");
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
     if (match(TokenType::NULL_LITERAL)) {
         auto node = std::make_unique<ast::NullLiteral>();
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
@@ -1416,7 +1428,7 @@ ast::ExprPtr Parser::parsePrimary() {
     if (match(TokenType::STAR)) {
         auto operand = parseUnary();
         auto node = std::make_unique<ast::SpreadExpr>(std::move(operand));
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
@@ -1424,28 +1436,28 @@ ast::ExprPtr Parser::parsePrimary() {
     if (match(TokenType::DOUBLE_STAR)) {
         auto operand = parseUnary();
         auto node = std::make_unique<ast::DictSpreadExpr>(std::move(operand));
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
     // ── this ───────────────────────────────────────────────────────────
     if (match(TokenType::KW_THIS)) {
         auto node = std::make_unique<ast::ThisExpr>();
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
     // ── super ──────────────────────────────────────────────────────────
     if (match(TokenType::KW_SUPER)) {
         auto node = std::make_unique<ast::SuperExpr>();
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
     // ── Identifiers ────────────────────────────────────────────────────
     if (match(TokenType::IDENTIFIER)) {
         auto node = std::make_unique<ast::Identifier>(previous().lexeme);
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
@@ -1454,7 +1466,7 @@ ast::ExprPtr Parser::parsePrimary() {
         if (match(TokenType::RPAREN)) {
             // empty tuple
             auto node = std::make_unique<ast::TupleExpr>(ast::ExprList{});
-            node->line = ln; node->column = col;
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
             return node;
         }
         auto first = parseExpression();
@@ -1469,7 +1481,7 @@ ast::ExprPtr Parser::parsePrimary() {
             }
             expect(TokenType::RPAREN, "Expected ')' to close tuple");
             auto node = std::make_unique<ast::TupleExpr>(std::move(elements));
-            node->line = ln; node->column = col;
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
             return node;
         }
         expect(TokenType::RPAREN, "Expected ')'");
@@ -1481,7 +1493,7 @@ ast::ExprPtr Parser::parsePrimary() {
         if (check(TokenType::RBRACKET)) {
             advance();
             auto node = std::make_unique<ast::ListExpr>(ast::ExprList{});
-            node->line = ln; node->column = col;
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
             return node;
         }
         auto first = parseExpression();
@@ -1498,7 +1510,7 @@ ast::ExprPtr Parser::parsePrimary() {
             expect(TokenType::RBRACKET, "Expected ']' after list comprehension");
             auto node = std::make_unique<ast::ListComprehension>(
                 std::move(first), std::move(var), std::move(iterable), std::move(condition));
-            node->line = ln; node->column = col;
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
             return node;
         }
         ast::ExprList elements;
@@ -1509,7 +1521,7 @@ ast::ExprPtr Parser::parsePrimary() {
         }
         expect(TokenType::RBRACKET, "Expected ']'");
         auto node = std::make_unique<ast::ListExpr>(std::move(elements));
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
@@ -1519,7 +1531,7 @@ ast::ExprPtr Parser::parsePrimary() {
             advance();
             auto node = std::make_unique<ast::DictExpr>(
                 std::vector<std::pair<ast::ExprPtr, ast::ExprPtr>>{});
-            node->line = ln; node->column = col;
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
             return node;
         }
         auto firstKey = parseExpression();
@@ -1539,7 +1551,7 @@ ast::ExprPtr Parser::parsePrimary() {
             auto node = std::make_unique<ast::DictComprehension>(
                 std::move(firstKey), std::move(firstVal), std::move(var),
                 std::move(iterable), std::move(condition));
-            node->line = ln; node->column = col;
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
             return node;
         }
         std::vector<std::pair<ast::ExprPtr, ast::ExprPtr>> entries;
@@ -1553,7 +1565,7 @@ ast::ExprPtr Parser::parsePrimary() {
         }
         expect(TokenType::RBRACE, "Expected '}'");
         auto node = std::make_unique<ast::DictExpr>(std::move(entries));
-        node->line = ln; node->column = col;
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
     }
 
@@ -1596,7 +1608,7 @@ ast::StmtPtr Parser::parseInterfaceDef() {
     expect(TokenType::DEDENT, "Expected end of interface block");
 
     auto node = std::make_unique<ast::InterfaceDef>(name, std::move(methods));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 
@@ -1612,7 +1624,7 @@ ast::StmtPtr Parser::parseYieldStmt() {
         val = parseExpression();
     }
     auto node = std::make_unique<ast::YieldStmt>(std::move(val));
-    node->line = ln; node->column = col;
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
 

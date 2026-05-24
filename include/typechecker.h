@@ -180,11 +180,22 @@ public:
 
 // ════════════════════════════════════════════════════════════════════════════
 // SymbolTable — scoped name → TypeRef mapping.
+//
+// Uses the Historical Registry Pattern: scopes are never popped from the
+// permanent all_scopes_ vector. Only the active_stack_ is popped, so the
+// complete lexical geography is preserved for LSP queries after check().
 // ════════════════════════════════════════════════════════════════════════════
 class SymbolTable {
 public:
-    void enterScope();
-    void exitScope();
+    struct Scope {
+        std::unordered_map<std::string, TypeRef> symbols;
+        int startLine = 0;
+        int endLine = 0;
+        int parentIndex = -1;
+    };
+
+    void enterScope(int startLine = 0);
+    void exitScope(int endLine = 0);
     void declare(const std::string& name, const TypeRef& type);
     bool isDeclared(const std::string& name) const;
     TypeRef lookup(const std::string& name) const;  // returns makeUnknown() if not found
@@ -193,8 +204,12 @@ public:
     // Return all currently visible names across all scopes.
     std::vector<std::string> allNames() const;
 
+    // Access the complete historical scope registry (for LSP cursor walk).
+    const std::vector<Scope>& getAllScopes() const { return all_scopes_; }
+
 private:
-    std::vector<std::unordered_map<std::string, TypeRef>> scopes_;
+    std::vector<Scope> all_scopes_;       // Historical registry — NEVER popped
+    std::vector<size_t> active_stack_;    // Stack of indices into all_scopes_
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -206,10 +221,19 @@ private:
 // ════════════════════════════════════════════════════════════════════════════
 class TypeChecker : public ASTVisitor {
 public:
-    explicit TypeChecker(const std::string& filename);
+    // When throwOnFirstError is true (default), check() throws the first error
+    // after the pass — preserves existing CLI behavior. When false, all errors
+    // are collected in errors() without throwing — needed by LSP.
+    explicit TypeChecker(const std::string& filename,
+                         bool throwOnFirstError = true);
 
     void check(const ast::Program& program);
-    const std::vector<TypeError>& errors() const { return errors_; };
+    const std::vector<TypeError>& errors() const { return errors_; }
+
+    // Access the complete scope registry for LSP geometric cursor walk.
+    const std::vector<SymbolTable::Scope>& getScopes() const {
+        return symbols_.getAllScopes();
+    }
 
     // ── ASTVisitor overrides — expression nodes ──────────────────────────
     void visit(const ast::IntLiteral& n)          override;
@@ -268,6 +292,7 @@ public:
 private:
     std::string filename_;
     SymbolTable symbols_;
+    bool throwOnFirstError_ = true;
     bool insideClass_ = false;
     TypeRef currentReturnType_;        // expected return type of the current function
     bool hasExplicitReturnType_ = false;
@@ -308,8 +333,8 @@ private:
     std::vector<TypeError> errors_;
 
     // ── Scope helpers ──────────────────────────────────────────────────
-    void enterScope();
-    void exitScope();
+    void enterScope(int startLine = 0);
+    void exitScope(int endLine = 0);
     void declare(const std::string& name, const TypeRef& type, int line, int col);
     TypeRef lookup(const std::string& name, int line, int col);
 

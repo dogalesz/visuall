@@ -1,0 +1,46 @@
+## LSP integration exercise file
+
+import math
+from string import trim, split
+
+class Person:
+	init(name: str, age: int):
+		this.name = name
+		this.age = age
+
+	define greet(prefix: str) -> str:
+		return prefix + ": " + this.name
+
+	define birthday() -> int:
+		this.age = this.age + 1
+		return this.age
+
+
+define add(a: int, b: int) -> int:
+	return a + b
+
+
+define infer_value(x):
+	result = add(x, 2)
+	return result
+
+
+define use_lambda() -> int:
+	double = x -> x * 2
+	return double(10)
+
+
+define nested_calls() -> str:
+	p = Person("Ada", 42)
+	age = p.birthday()
+	msg = p.greet("Hello")
+	return msg + " (" + age + ")"
+
+
+## Intentional type error for diagnostics
+bad_num = "not a number"
+
+
+## Intentional syntax error for diagnostics
+define broken_fn(a: int, b: int)
+	return a + b
