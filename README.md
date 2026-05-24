@@ -9,10 +9,10 @@ Source (.vsl) → Lexer → Parser → Type Checker → LLVM IR → O2 Optimizat
 ## Features
 
 - **Native compilation** via LLVM (O2 optimization, targets host CPU)
-- **Garbage collection** — mark-and-sweep GC with conservative stack scanning, free-list pooling, and O(1) pointer lookup
+- **Garbage collection** — thread-safe mark-and-sweep GC with conservative stack scanning, free-list pooling, and O(1) pointer lookup
 - **Rich syntax** — classes, closures/lambdas, f-strings, list/dict/tuple literals, list comprehensions, slicing, tuple unpacking, chained comparisons, match statements, generators, enums, decorators
 - **Module system** — `import` / `from ... import` with multi-file compilation
-- **Standard library** — math, string, collections, I/O, random, and system modules
+- **Standard library** — math, string, collections, I/O, random, datetime, json, network, and system modules
 - **Error handling** — `try` / `catch` / `finally` / `throw` with typed exceptions
 - **Package manager** — `vslpkg` for declaring, installing, and sharing packages via Git or local paths
 
@@ -234,6 +234,9 @@ visuall/
 │   ├── string.vsl           # String manipulation (split, join, replace, etc.)
 │   ├── collections.vsl      # Stack, Queue, Set
 │   ├── random.vsl           # Random number generation
+│   ├── datetime.vsl         # Date/time manipulation and formatting
+│   ├── json.vsl             # JSON parsing and stringifying
+│   ├── network.vsl          # Socket programming and HTTP client
 │   ├── io.vsl               # File I/O (read, write, append, list_dir)
 │   └── sys.vsl              # System utils (args, exit, env, time)
 ├── tests/
@@ -409,6 +412,15 @@ match status:
     case _:
         print("other")
 
+## Guards (conditional checks on case patterns)
+match value:
+    case x if x > 0:
+        print("positive")
+    case x if x < 0:
+        print("negative")
+    case _:
+        print("zero")
+
 ## String and bool patterns work too
 match name:
     case "alice":
@@ -485,6 +497,44 @@ define clamp<T: int>(x: T, lo: T, hi: T) -> T:
 ```python
 if isinstance(obj, Animal):
     obj.speak()
+```
+
+### Date and time (`datetime`)
+
+```python
+import datetime
+
+now = datetime.now()
+print(now.format("%Y-%m-%d %H:%M:%S"))
+
+tomorrow = now.add_days(1)
+d = datetime.Date(2026, 5, 24)
+```
+
+### JSON (`json`)
+
+```python
+import json
+
+obj = json.parse('{"key": [1, 2, 3]}')
+s = json.stringify(obj)
+```
+
+### Networking (`network`)
+
+```python
+import network
+
+## Low-level sockets
+sock = network.Socket(network.AF_INET, network.SOCK_STREAM)
+sock.connect("example.com", 80)
+sock.send("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+response = sock.recv(4096)
+sock.close()
+
+## HTTP client
+client = network.HTTPClient()
+html = client.get("http://example.com/")
 ```
 
 ---
