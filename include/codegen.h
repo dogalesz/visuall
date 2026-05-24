@@ -319,8 +319,19 @@ private:
     void codegenInterfaceDef(const ast::InterfaceDef& node);
     void codegenEnumDef(const ast::EnumDef& node);
     void codegenYieldStmt(const ast::YieldStmt& node);
-    // Generator support: push yielded value into generator list.
+    llvm::Function* codegenGeneratorFuncLowering(const ast::FuncDef& node,
+                                                   llvm::Function* wrapperFn);
+    void codegenGeneratorWrapper(const ast::FuncDef& node, llvm::Function* wrapperFn,
+                                  llvm::Function* resumeFn);
+    void emitGenSaveVars();
+    void emitGenRestoreVars();
+    // Generator state-machine support.
     llvm::Value* generatorList_ = nullptr; // non-null inside a generator function
+    llvm::Value* genContext_    = nullptr; // GenContext* (i8*) inside resume function
+    int          genSlotCount_  = 0;       // number of tracked variable slots
+    int          genYieldCount_ = 0;       // yield point counter for state IDs
+    // Allocas to save/restore across yield/resume boundaries.
+    std::vector<llvm::AllocaInst*> genTrackedVars_;
 
     // ── Codegen methods for expressions ─────────────────────────────────
     llvm::Value* codegenExpr(const ast::Expr& expr);

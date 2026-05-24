@@ -1,0 +1,15 @@
+## ════════════════════════════════════════════════════════════════════════════
+## Visuall Standard Library — json module
+##
+## Usage:  import json
+##         obj = json.parse("{\"a\": 1}")
+##         str = json.stringify(obj)
+## ════════════════════════════════════════════════════════════════════════════
+
+## Parse a JSON string into Visuall types (dict, list, int, float, str, bool, null).
+define parse(json_str: str) -> any:
+	return __visuall_json_parse(json_str)
+
+## Convert a Visuall object to a JSON string.
+define stringify(obj: any) -> str:
+	return __visuall_json_stringify(obj)

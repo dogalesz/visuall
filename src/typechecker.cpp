@@ -1,4 +1,4 @@
-﻿#include "typechecker.h"
+#include "typechecker.h"
 #include "builtins.h"
 #include <sstream>
 #include <cassert>
@@ -993,10 +993,8 @@ void TypeChecker::visit(const ast::DelStmt& s) {
 
 void TypeChecker::visit(const ast::MatchStmt& s) {
     TypeRef subjectType = checkExpr(*s.subject);
-
     for (const auto& c : s.cases) {
         if (c.pattern) {
-            // Non-wildcard: pattern must be a literal compatible with subject type
             TypeRef patternType = checkExpr(*c.pattern);
             if (subjectType->kind != TypeNode::Kind::Unknown &&
                 patternType->kind != TypeNode::Kind::Unknown &&
@@ -1007,6 +1005,16 @@ void TypeChecker::visit(const ast::MatchStmt& s) {
                     filename_, s.line, s.column);
             }
         }
+        
+        // --- ADDED: Guard support ---
+        if (c.guard) {
+            TypeRef guardType = checkExpr(*c.guard);
+            if (!guardType->isUnknown() && guardType->kind != TypeNode::Bool) {
+                error("Match guard condition must be bool, got " + guardType->toString(),
+                      s.line, s.column);
+            }
+        }
+
         enterScope();
         checkStmtList(c.body);
         exitScope();
@@ -1034,8 +1042,10 @@ void TypeChecker::visit(const ast::EnumDef&)      { /* registered in first pass 
 
 void TypeChecker::visit(const ast::YieldStmt& s) {
     // A yield inside a function marks it as a generator.
-    // Type-check the yielded value (any type is allowed).
-    checkExpr(*s.value);
+    // Type-check the yielded value if present.
+    if (s.value) {
+        checkExpr(*s.value);
+    }
 }
 
 void TypeChecker::visit(const ast::TupleUnpackStmt& s) {

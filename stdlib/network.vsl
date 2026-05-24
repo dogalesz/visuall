@@ -1,0 +1,86 @@
+## ════════════════════════════════════════════════════════════════════════════
+## Visuall Standard Library — network module
+##
+## Usage:  import network
+##         sock = network.Socket(network.AF_INET, network.SOCK_STREAM)
+## ════════════════════════════════════════════════════════════════════════════
+
+# Constants (matching BSD socket values)
+AF_INET = 2
+SOCK_STREAM = 1
+IPPROTO_TCP = 6
+
+class Socket:
+	init(domain: int, type: int, protocol: int = 0):
+		this.fd = __visuall_net_socket(domain, type, protocol)
+		if this.fd < 0:
+			# In a real impl, we'd raise an exception here
+			pass
+
+	define connect(host: str, port: int) -> int:
+		return __visuall_net_connect(this.fd, host, port)
+
+	define bind(host: str, port: int) -> int:
+		return __visuall_net_bind(this.fd, port)
+
+	define listen(backlog: int = 5) -> int:
+		return __visuall_net_listen(this.fd, backlog)
+
+	define accept() -> Socket:
+		client_fd = __visuall_net_accept(this.fd)
+		if client_fd < 0: return null
+		
+		# Create a new socket object for the client
+		client_sock = Socket(AF_INET, SOCK_STREAM)
+		client_sock.fd = client_fd
+		return client_sock
+
+	define send(data: str) -> int:
+		return __visuall_net_send(this.fd, data)
+
+	define recv(size: int = 4096) -> str:
+		return __visuall_net_recv(this.fd, size)
+
+	define close() -> void:
+		__visuall_net_close(this.fd)
+
+class HTTPClient:
+	init():
+		pass
+
+	define get(url: str) -> str:
+		# Very minimal HTTP GET implementation for demonstration
+		# Parses "http://host:port/path" or "host"
+		host = url
+		path = "/"
+		port = 80
+		
+		if url.contains("://"):
+			parts = url.split("://")
+			url = parts[1]
+			
+		if url.contains("/"):
+			idx = url.find("/")
+			host = url.substring(0, idx)
+			path = url.substring(idx)
+		
+		if host.contains(":"):
+			parts = host.split(":")
+			host = parts[0]
+			port = int(parts[1])
+
+		sock = Socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+		if sock.connect(host, port) < 0:
+			return "Error: Could not connect to " + host
+		
+		request = "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n"
+		sock.send(request)
+		
+		response = ""
+		while True:
+			chunk = sock.recv(4096)
+			if chunk == "": break
+			response = response + chunk
+		
+		sock.close()
+		return response

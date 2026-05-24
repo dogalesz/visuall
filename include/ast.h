@@ -479,6 +479,7 @@ struct FromImportStmt : Stmt {
 // ── Match statement ────────────────────────────────────────────────────────
 struct MatchCase {
     ExprPtr  pattern;   // nullptr = wildcard (_)
+    ExprPtr  guard;     // nullptr = no guard (if condition)
     StmtList body;
 };
 

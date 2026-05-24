@@ -765,7 +765,13 @@ ast::StmtPtr Parser::parseMatchStmt() {
         if (check(TokenType::IDENTIFIER) && current().lexeme == "_") {
             advance(); // consume '_'
         } else {
-            pattern = parseExpression();
+            pattern = parseNullCoalesce(); // no ternary in case patterns
+        }
+
+        // --- ADDED: Guard support ---
+        ast::ExprPtr guard = nullptr;
+        if (match(TokenType::KW_IF)) {
+            guard = parseExpression();
         }
 
         expect(TokenType::COLON, "Expected ':' after case pattern");
@@ -774,6 +780,7 @@ ast::StmtPtr Parser::parseMatchStmt() {
 
         ast::MatchCase mc;
         mc.pattern = std::move(pattern);
+        mc.guard   = std::move(guard);
         mc.body    = std::move(body);
         cases.push_back(std::move(mc));
     }
@@ -1599,8 +1606,12 @@ ast::StmtPtr Parser::parseInterfaceDef() {
 ast::StmtPtr Parser::parseYieldStmt() {
     int ln = current().line, col = current().column;
     advance(); // consume 'yield'
-    auto value = parseExpression();
-    auto node = std::make_unique<ast::YieldStmt>(std::move(value));
+    ast::ExprPtr val = nullptr;
+    if (!check(TokenType::NEWLINE) && !check(TokenType::END_OF_FILE) &&
+        !check(TokenType::DEDENT)) {
+        val = parseExpression();
+    }
+    auto node = std::make_unique<ast::YieldStmt>(std::move(val));
     node->line = ln; node->column = col;
     return node;
 }

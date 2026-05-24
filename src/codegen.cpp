@@ -61,6 +61,12 @@ void Codegen::declareVar(const std::string& name, llvm::AllocaInst* alloca) {
     if (!scopes_.empty()) {
         scopes_.back()[name] = alloca;
     }
+    // In a generator resume function, track every alloca for save/restore.
+    if (genContext_) {
+        for (auto* a : genTrackedVars_)
+            if (a == alloca) return;
+        genTrackedVars_.push_back(alloca);
+    }
 }
 
 llvm::AllocaInst* Codegen::lookupVar(const std::string& name) const {
@@ -374,6 +380,12 @@ static bool stmtContainsYield(const ast::Stmt& s) {
             if (stmtListContainsYield(c.body)) return true;
         if (stmtListContainsYield(p->finallyBody)) return true;
     }
+    if (auto* p = dynamic_cast<const ast::MatchStmt*>(&s)) {
+        for (const auto& c : p->cases)
+            if (stmtListContainsYield(c.body)) return true;
+    }
+    if (auto* p = dynamic_cast<const ast::WithStmt*>(&s))
+        return stmtListContainsYield(p->body);
     return false;
 }
 
@@ -381,6 +393,44 @@ static bool stmtListContainsYield(const ast::StmtList& stmts) {
     for (const auto& s : stmts)
         if (stmtContainsYield(*s)) return true;
     return false;
+}
+
+// Count the number of yield points in a statement list (for pre-allocating
+// generator state-machine resume blocks).
+static int countYieldsInStmtList(const ast::StmtList& stmts);
+
+static int countYieldsInStmt(const ast::Stmt& s) {
+    if (dynamic_cast<const ast::YieldStmt*>(&s)) return 1;
+    if (auto* p = dynamic_cast<const ast::IfStmt*>(&s)) {
+        int n = countYieldsInStmtList(p->thenBranch);
+        for (const auto& [cond, body] : p->elsifBranches)
+            n += countYieldsInStmtList(body);
+        return n + countYieldsInStmtList(p->elseBranch);
+    }
+    if (auto* p = dynamic_cast<const ast::ForStmt*>(&s))
+        return countYieldsInStmtList(p->body);
+    if (auto* p = dynamic_cast<const ast::WhileStmt*>(&s))
+        return countYieldsInStmtList(p->body);
+    if (auto* p = dynamic_cast<const ast::TryStmt*>(&s)) {
+        int n = countYieldsInStmtList(p->tryBody);
+        for (const auto& c : p->catchClauses)
+            n += countYieldsInStmtList(c.body);
+        return n + countYieldsInStmtList(p->finallyBody);
+    }
+    if (auto* p = dynamic_cast<const ast::MatchStmt*>(&s)) {
+        int n = 0;
+        for (const auto& c : p->cases)
+            n += countYieldsInStmtList(c.body);
+        return n;
+    }
+    return 0;
+}
+
+static int countYieldsInStmtList(const ast::StmtList& stmts) {
+    int n = 0;
+    for (const auto& s : stmts)
+        n += countYieldsInStmt(*s);
+    return n;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -755,6 +805,24 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
 
     // Default parameter values are handled at call sites for now.
     // Decorators are applied conceptually but emit no extra IR (stubs).
+
+    // ── Generator: state-machine lowering ──────────────────────────────────
+    if (isGenerator) {
+        // Save/restore around generator lowering which uses its own builder.
+        auto* savedGenBB = builder_->GetInsertBlock();
+        auto* savedGenFn = currentFunction_;
+        llvm::Function* resumeFn = codegenGeneratorFuncLowering(node, fn);
+        generatorList_ = nullptr;
+        currentFunction_ = savedGenFn;
+        if (savedGenBB) builder_->SetInsertPoint(savedGenBB);
+        // Generate the wrapper function body.
+        codegenGeneratorWrapper(node, fn, resumeFn);
+        popScope();
+        boxedVars_ = savedBoxedVars;
+        currentFunction_ = savedFn;
+        if (savedBB) builder_->SetInsertPoint(savedBB);
+        return;
+    }
 
     // Generator setup: create a list to collect yielded values.
     auto* savedGeneratorList = generatorList_;
@@ -1451,9 +1519,56 @@ void Codegen::codegenForStmt(const ast::ForStmt& node) {
             auto* skipListBB = llvm::BasicBlock::Create(*context_, "for.skip", fn);
             builder_->CreateBr(skipListBB);
 
-            // ── non-dict path falls through to the list loop ──────────────
+            // ── non-dict path: check for generator first, then list ──────
             fn->insert(fn->end(), notDictBB);
             builder_->SetInsertPoint(notDictBB);
+
+            // Check for generator (VSL_TAG_GENERATOR = 9).
+            auto* genNextFn = module_->getFunction("__visuall_gen_next");
+            if (getTagFn && genNextFn) {
+                auto* isGen = builder_->CreateICmpEQ(
+                    tag, llvm::ConstantInt::get(i64Ty, 9), "iter.isgen");
+                auto* genIterBB = llvm::BasicBlock::Create(*context_, "for.gen.iter", fn);
+                auto* notGenBB  = llvm::BasicBlock::Create(*context_, "for.notgen",   fn);
+                builder_->CreateCondBr(isGen, genIterBB, notGenBB);
+
+                // ── generator path ──────────────────────────────────────────
+                builder_->SetInsertPoint(genIterBB);
+                auto* gCondBB = llvm::BasicBlock::Create(*context_, "for.gen.cond", fn);
+                auto* gBodyBB = llvm::BasicBlock::Create(*context_, "for.gen.body", fn);
+                auto* gExitBB = llvm::BasicBlock::Create(*context_, "for.gen.end",  fn);
+                builder_->CreateBr(gCondBB);
+
+                builder_->SetInsertPoint(gCondBB);
+                auto* gNextVal = builder_->CreateCall(genNextFn, {iterVal}, "gen.next");
+                auto* gSentinel = llvm::ConstantInt::get(
+                    i64Ty, static_cast<uint64_t>(std::numeric_limits<int64_t>::min()));
+                auto* gIsDone = builder_->CreateICmpEQ(gNextVal, gSentinel, "gen.done");
+                builder_->CreateCondBr(gIsDone, gExitBB, gBodyBB);
+
+                builder_->SetInsertPoint(gBodyBB);
+                pushScope();
+                auto* gVarAlloca = createEntryBlockAlloca(
+                    currentFunction_, node.variable, i64Ty);
+                builder_->CreateStore(gNextVal, gVarAlloca);
+                declareVar(node.variable, gVarAlloca);
+                emitUnpackRest(gNextVal);
+                loopStack_.push_back({gCondBB, gExitBB});
+                loopElseAllocas_.push_back(didBreakAlloca);
+                codegenStmtList(node.body);
+                loopElseAllocas_.pop_back();
+                loopStack_.pop_back();
+                popScope();
+                if (!builder_->GetInsertBlock()->getTerminator())
+                    builder_->CreateBr(gCondBB);
+
+                builder_->SetInsertPoint(gExitBB);
+                builder_->CreateBr(skipListBB);
+
+                // ── not-generator falls through to list loop ────────────────
+                fn->insert(fn->end(), notGenBB);
+                builder_->SetInsertPoint(notGenBB);
+            }
 
             auto* listLenFn = module_->getFunction("__visuall_list_len");
             auto* listGetFn = module_->getFunction("__visuall_list_get");
@@ -1679,13 +1794,81 @@ void Codegen::codegenWhileStmt(const ast::WhileStmt& node) {
 // ── ReturnStmt ─────────────────────────────────────────────────────────────
 // ── YieldStmt ─────────────────────────────────────────────────────────────
 void Codegen::codegenYieldStmt(const ast::YieldStmt& node) {
+    // State-machine mode (genContext_ is set in resume function).
+    if (genContext_) {
+        auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+        auto* i32Ty = llvm::Type::getInt32Ty(*context_);
+        auto* fn = builder_->GetInsertBlock()->getParent();
+
+        // Evaluate the yielded value.
+        llvm::Value* val = nullptr;
+        if (node.value) {
+            val = codegenExpr(*node.value);
+        } else {
+            val = llvm::ConstantInt::get(i64Ty, 0); // bare yield → null/0
+        }
+        // Coerce to i64.
+        llvm::Value* asInt = val;
+        if (val->getType()->isPointerTy())
+            asInt = builder_->CreatePtrToInt(val, i64Ty, "yield.val.ptoi");
+        else if (val->getType()->isDoubleTy())
+            asInt = builder_->CreateBitCast(val, i64Ty, "yield.val.bitcast");
+        else if (!val->getType()->isIntegerTy(64))
+            asInt = builder_->CreateZExt(val, i64Ty, "yield.val.ext");
+
+        // Save all tracked variables to context slots.
+        emitGenSaveVars();
+
+        // Set next state.
+        int nextState = genYieldCount_ + 1;
+        auto* setStateFn = module_->getFunction("__visuall_gen_set_state");
+        builder_->CreateCall(setStateFn, {
+            genContext_,
+            llvm::ConstantInt::get(i32Ty, static_cast<uint64_t>(nextState))
+        });
+
+        // Store yielded value.
+        auto* setValFn = module_->getFunction("__visuall_gen_set_value");
+        if (setValFn) builder_->CreateCall(setValFn, {genContext_, asInt});
+
+        // Branch to a return block.
+        auto* retBB = llvm::BasicBlock::Create(
+            *context_, "gen.yield." + std::to_string(genYieldCount_), fn);
+        builder_->CreateBr(retBB);
+
+        // Fill the return block.
+        builder_->SetInsertPoint(retBB);
+        builder_->CreateRet(asInt);
+
+        // Create the next resume block and add to dispatch switch.
+        genYieldCount_ = nextState;
+        auto* nextBB = llvm::BasicBlock::Create(
+            *context_, "resume." + std::to_string(nextState), fn);
+
+        // Find the switch instruction in the dispatch block and add case.
+        // Walk from the function entry to find it.
+        for (auto& bb : *fn) {
+            auto* sw = llvm::dyn_cast<llvm::SwitchInst>(bb.getTerminator());
+            if (sw) {
+                sw->addCase(llvm::ConstantInt::get(i32Ty,
+                    static_cast<uint64_t>(nextState)), nextBB);
+                break;
+            }
+        }
+
+        // Set insert point to next resume block and restore vars there.
+        builder_->SetInsertPoint(nextBB);
+        emitGenRestoreVars();
+        return;
+    }
+
+    // Legacy eager-list mode.
     if (!generatorList_) return; // not inside a generator, ignore
     llvm::Value* val = codegenExpr(*node.value);
     auto* pushFn = module_->getFunction("__visuall_list_push");
     if (!pushFn) return;
     auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-    // Coerce val to i64 for list storage.
     llvm::Value* asInt = val;
     if (val->getType()->isPointerTy())
         asInt = builder_->CreatePtrToInt(val, i64Ty, "yield.val.int");
@@ -1702,7 +1885,21 @@ void Codegen::codegenReturnStmt(const ast::ReturnStmt& node) {
     if (auto* tbPopFn = module_->getFunction("__visuall_traceback_pop"))
         builder_->CreateCall(tbPopFn, {});
 
-    // Inside a generator: any explicit return exits early, returning the list.
+    // Inside a generator resume function: mark exhausted, return sentinel.
+    if (genContext_) {
+        auto* i32Ty = llvm::Type::getInt32Ty(*context_);
+        auto* setStateFn = module_->getFunction("__visuall_gen_set_state");
+        builder_->CreateCall(setStateFn, {
+            genContext_,
+            llvm::ConstantInt::get(i32Ty, 0xFFFFFFFF, true)  // -1
+        });
+        builder_->CreateRet(llvm::ConstantInt::get(
+            llvm::Type::getInt64Ty(*context_),
+            static_cast<uint64_t>(std::numeric_limits<int64_t>::min())));
+        return;
+    }
+
+    // Inside an eager-list generator: any explicit return exits early.
     if (generatorList_) {
         builder_->CreateRet(generatorList_);
         return;
@@ -2241,9 +2438,12 @@ void Codegen::codegenAssertStmt(const ast::AssertStmt& node) {
 // ════════════════════════════════════════════════════════════════════════════
 // match subject:
 //     case literal: body
+//     case literal if guard: body
 //     case _:       wildcard_body
 //
 // Lowered to a chain of if/else if/else branches (no fallthrough).
+// Guards are evaluated after the pattern match; if the guard fails,
+// control falls through to the next case.
 // String patterns use strcmp; int/bool/float use icmp eq / fcmp oeq.
 // ════════════════════════════════════════════════════════════════════════════
 void Codegen::codegenMatchStmt(const ast::MatchStmt& node) {
@@ -2255,7 +2455,7 @@ void Codegen::codegenMatchStmt(const ast::MatchStmt& node) {
     auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
 
     // Evaluate subject once and spill to an alloca.
-    llvm::Value* subjectVal   = codegenExpr(*node.subject);
+    llvm::Value* subjectVal    = codegenExpr(*node.subject);
     auto*        subjectAlloca = builder_->CreateAlloca(
         subjectVal->getType(), nullptr, "match.subject");
     builder_->CreateStore(subjectVal, subjectAlloca);
@@ -2273,74 +2473,84 @@ void Codegen::codegenMatchStmt(const ast::MatchStmt& node) {
         bodyBBs.push_back(llvm::BasicBlock::Create(
             *context_, "match.case." + std::to_string(i) + ".body", fn));
 
-    // Emit check chain.  The insert point at loop entry is the current check
-    // block (starts as the block we are already in).
+    // Helper: emit pattern-vs-subject comparison. Returns the i1 condition.
+    auto emitPatternCmp = [&](const ast::Expr& pattern) -> llvm::Value* {
+        llvm::Value* subj = builder_->CreateLoad(
+            subjectVal->getType(), subjectAlloca, "match.subj");
+        llvm::Value* pat = codegenExpr(pattern);
+        llvm::Type*  sTy = subj->getType();
+        if (sTy->isDoubleTy()) {
+            if (!pat->getType()->isDoubleTy())
+                pat = builder_->CreateSIToFP(pat, sTy, "pat.tofloat");
+            return builder_->CreateFCmpOEQ(subj, pat, "match.fcmp");
+        }
+        if (sTy->isPointerTy()) {
+            if (!pat->getType()->isPointerTy())
+                pat = builder_->CreateIntToPtr(pat, i8Ptr, "pat.toptr");
+            llvm::Value* cmpRes = builder_->CreateCall(
+                strcmpCallee, {subj, pat}, "match.strcmp");
+            return builder_->CreateICmpEQ(
+                cmpRes, llvm::ConstantInt::get(i32Ty, 0), "match.streq");
+        }
+        // Integer (i64, i1, etc.)
+        if (subj->getType() != i64Ty)
+            subj = builder_->CreateZExt(subj, i64Ty, "subj.i64");
+        if (pat->getType() != i64Ty)
+            pat  = builder_->CreateZExt(pat, i64Ty, "pat.i64");
+        return builder_->CreateICmpEQ(subj, pat, "match.icmp");
+    };
+
+    // Emit check chain.
     for (size_t i = 0; i < node.cases.size(); ++i) {
         const auto& c = node.cases[i];
 
-        if (!c.pattern) {
-            // Wildcard — unconditional jump to body (no further checks).
-            builder_->CreateBr(bodyBBs[i]);
+        // Miss target: next check block, or merge for the last case.
+        llvm::BasicBlock* missBB;
+        if (i + 1 < node.cases.size()) {
+            missBB = llvm::BasicBlock::Create(
+                *context_, "match.case." + std::to_string(i + 1) + ".check", fn);
         } else {
-            llvm::Value* subjReload = builder_->CreateLoad(
-                subjectVal->getType(), subjectAlloca, "match.subj");
-            llvm::Value* patVal = codegenExpr(*c.pattern);
-            llvm::Value* cond   = nullptr;
+            missBB = mergeBB;
+        }
 
-            llvm::Type* subjTy = subjReload->getType();
-            if (subjTy->isDoubleTy()) {
-                if (!patVal->getType()->isDoubleTy())
-                    patVal = builder_->CreateSIToFP(patVal, subjTy, "pat.tofloat");
-                cond = builder_->CreateFCmpOEQ(subjReload, patVal, "match.fcmp");
-            } else if (subjTy->isPointerTy()) {
-                if (!patVal->getType()->isPointerTy())
-                    patVal = builder_->CreateIntToPtr(patVal, i8Ptr, "pat.toptr");
-                llvm::Value* cmpRes = builder_->CreateCall(
-                    strcmpCallee, {subjReload, patVal}, "match.strcmp");
-                cond = builder_->CreateICmpEQ(
-                    cmpRes, llvm::ConstantInt::get(i32Ty, 0), "match.streq");
+        // If there is a guard, route through a guard-check block.
+        if (c.guard) {
+            auto* guardBB = llvm::BasicBlock::Create(
+                *context_, "match.case." + std::to_string(i) + ".guard", fn);
+
+            if (c.pattern) {
+                llvm::Value* cond = emitPatternCmp(*c.pattern);
+                builder_->CreateCondBr(cond, guardBB, missBB);
             } else {
-                // integer (i64, i1, etc.)
-                if (subjReload->getType() != i64Ty)
-                    subjReload = builder_->CreateZExt(subjReload, i64Ty, "subj.i64");
-                if (patVal->getType() != i64Ty)
-                    patVal = builder_->CreateZExt(patVal, i64Ty, "pat.i64");
-                cond = builder_->CreateICmpEQ(subjReload, patVal, "match.icmp");
+                // Wildcard with guard: no pattern check, go straight to guard.
+                builder_->CreateBr(guardBB);
             }
 
-            // Where to go on mismatch: next check block or merge.
-            llvm::BasicBlock* missBB;
-            if (i + 1 < node.cases.size()) {
-                missBB = llvm::BasicBlock::Create(
-                    *context_, "match.case." + std::to_string(i + 1) + ".check", fn);
+            // Emit guard check.
+            builder_->SetInsertPoint(guardBB);
+            llvm::Value* guardBool = toBool(codegenExpr(*c.guard));
+            builder_->CreateCondBr(guardBool, bodyBBs[i], missBB);
+        } else {
+            // No guard — match target is the body directly.
+            if (c.pattern) {
+                llvm::Value* cond = emitPatternCmp(*c.pattern);
+                builder_->CreateCondBr(cond, bodyBBs[i], missBB);
             } else {
-                missBB = mergeBB;
-            }
-
-            builder_->CreateCondBr(cond, bodyBBs[i], missBB);
-
-            // If there's a next check block, we'll move to it after the body.
-            // Save it so we can set the insert point back after emitting the body.
-            if (i + 1 < node.cases.size()) {
-                // Emit body then restore insert point to next check block.
-                builder_->SetInsertPoint(bodyBBs[i]);
-                pushScope();
-                codegenStmtList(c.body);
-                popScope();
-                if (!builder_->GetInsertBlock()->getTerminator())
-                    builder_->CreateBr(mergeBB);
-                builder_->SetInsertPoint(missBB);
-                continue;
+                builder_->CreateBr(bodyBBs[i]);
             }
         }
 
-        // Emit body for wildcard or last case (which already set insert to bodyBB).
+        // Emit the body block.
         builder_->SetInsertPoint(bodyBBs[i]);
         pushScope();
         codegenStmtList(c.body);
         popScope();
         if (!builder_->GetInsertBlock()->getTerminator())
             builder_->CreateBr(mergeBB);
+
+        // Continue in the miss block for the next case.
+        if (i + 1 < node.cases.size())
+            builder_->SetInsertPoint(missBB);
     }
 
     fn->insert(fn->end(), mergeBB);
@@ -5138,6 +5348,216 @@ void Codegen::visit(const ast::SuperExpr&) {
     }
     valueResult_ = llvm::ConstantPointerNull::get(
         llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Generator state-machine lowering
+// ════════════════════════════════════════════════════════════════════════════
+
+void Codegen::emitGenSaveVars() {
+    if (!genContext_) return;
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* setSlotFn = module_->getFunction("__visuall_gen_set_slot");
+    if (!setSlotFn) return;
+    for (size_t i = 0; i < genTrackedVars_.size(); i++) {
+        llvm::Value* val = builder_->CreateLoad(
+            genTrackedVars_[i]->getAllocatedType(),
+            genTrackedVars_[i], "gen.save");
+        if (val->getType() != i64Ty) {
+            if (val->getType()->isPointerTy())
+                val = builder_->CreatePtrToInt(val, i64Ty, "gen.save.ptoi");
+            else if (val->getType()->isDoubleTy())
+                val = builder_->CreateBitCast(val, i64Ty, "gen.save.bitcast");
+            else if (!val->getType()->isIntegerTy(64))
+                val = builder_->CreateZExt(val, i64Ty, "gen.save.ext");
+        }
+        builder_->CreateCall(setSlotFn, {
+            genContext_,
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_),
+                                   static_cast<uint64_t>(i)),
+            val
+        });
+    }
+}
+
+void Codegen::emitGenRestoreVars() {
+    if (!genContext_) return;
+    auto* getSlotFn = module_->getFunction("__visuall_gen_get_slot");
+    if (!getSlotFn) return;
+    for (size_t i = 0; i < genTrackedVars_.size(); i++) {
+        llvm::Value* raw = builder_->CreateCall(getSlotFn, {
+            genContext_,
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_),
+                                   static_cast<uint64_t>(i))
+        });
+        // Coerce back to the alloca's type.
+        llvm::Type* allocTy = genTrackedVars_[i]->getAllocatedType();
+        llvm::Value* val = raw;
+        if (allocTy->isPointerTy())
+            val = builder_->CreateIntToPtr(raw, allocTy, "gen.rest.ptr");
+        else if (allocTy->isDoubleTy())
+            val = builder_->CreateBitCast(raw, allocTy, "gen.rest.dbl");
+        else if (allocTy->isIntegerTy() && !allocTy->isIntegerTy(64))
+            val = builder_->CreateTrunc(raw, allocTy, "gen.rest.trunc");
+        builder_->CreateStore(val, genTrackedVars_[i]);
+    }
+}
+
+llvm::Function* Codegen::codegenGeneratorFuncLowering(
+    const ast::FuncDef& node, llvm::Function*) {
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* i32Ty = llvm::Type::getInt32Ty(*context_);
+    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+
+    genTrackedVars_.clear();
+    genYieldCount_ = 0;
+
+    // Create the resume function: i64 @name__resume(i8* %ctx)
+    std::string resumeName = node.name + "__resume";
+    auto* resumeTy = llvm::FunctionType::get(i64Ty, {i8Ptr}, false);
+    auto* resumeFn = llvm::Function::Create(
+        resumeTy, llvm::Function::InternalLinkage, resumeName, module_.get());
+    resumeFn->setCallingConv(llvm::CallingConv::Fast);
+
+    auto* entryBB = llvm::BasicBlock::Create(*context_, "entry", resumeFn);
+    builder_->SetInsertPoint(entryBB);
+    auto* savedFn = currentFunction_;
+    currentFunction_ = resumeFn;
+
+    auto* ctxArg = resumeFn->getArg(0);
+    ctxArg->setName("ctx");
+    genContext_ = ctxArg;
+
+    pushScope();
+
+    // Allocate local allocas for parameters (to be restored from context).
+    for (size_t i = 0; i < node.params.size(); i++) {
+        llvm::Type* pTy = i64Ty;
+        if (!node.params[i].typeAnnotation.empty())
+            pTy = getLLVMType(node.params[i].typeAnnotation);
+        auto* alloca = createEntryBlockAlloca(
+            resumeFn, node.params[i].name, pTy);
+        declareVar(node.params[i].name, alloca);
+    }
+
+    // Create dispatch block and empty switch (cases added as yields found).
+    auto* dispatchBB = llvm::BasicBlock::Create(*context_, "dispatch", resumeFn);
+    builder_->CreateBr(dispatchBB);
+    builder_->SetInsertPoint(dispatchBB);
+
+    auto* getStateFn = module_->getFunction("__visuall_gen_get_state");
+    llvm::Value* state = builder_->CreateCall(getStateFn, {genContext_}, "state");
+    auto* doneBB = llvm::BasicBlock::Create(*context_, "gen.done", resumeFn);
+    auto* switchInst = builder_->CreateSwitch(state, doneBB, 4); // estimate
+
+    // Create the first resume block (state 0) and add to switch.
+    auto* firstBB = llvm::BasicBlock::Create(*context_, "resume.0", resumeFn);
+    switchInst->addCase(llvm::ConstantInt::get(i32Ty, 0), firstBB);
+
+    // Start codegen in state 0.
+    builder_->SetInsertPoint(firstBB);
+    emitGenRestoreVars();
+
+    // Generate the body. Each yield will:
+    //   1. Save vars, set next state, branch to a return block
+    //   2. Create a new resume block and set insert point there
+    //   3. Restore vars in the new block
+    //   4. Continue codegen (codegenStmtList sees no terminator in the new block)
+    codegenStmtList(node.body);
+
+    // After the body: branch to done if not terminated.
+    if (!builder_->GetInsertBlock()->getTerminator()) {
+        if (auto* tbPopFn = module_->getFunction("__visuall_traceback_pop"))
+            builder_->CreateCall(tbPopFn, {});
+        builder_->CreateBr(doneBB);
+    }
+
+    // Done block: mark generator exhausted.
+    builder_->SetInsertPoint(doneBB);
+    auto* setStateFn = module_->getFunction("__visuall_gen_set_state");
+    builder_->CreateCall(setStateFn, {
+        genContext_,
+        llvm::ConstantInt::get(i32Ty, 0xFFFFFFFF, true)  // -1 as u32
+    });
+    builder_->CreateRet(llvm::ConstantInt::get(
+        i64Ty, static_cast<uint64_t>(std::numeric_limits<int64_t>::min())));
+
+    // Save the actual slot count before clearing tracked vars.
+    genSlotCount_ = (int)genTrackedVars_.size();
+    popScope();
+    genContext_ = nullptr;
+    genTrackedVars_.clear();
+    currentFunction_ = savedFn;
+
+    return resumeFn;
+}
+
+void Codegen::codegenGeneratorWrapper(const ast::FuncDef& node,
+                                       llvm::Function* wrapperFn,
+                                       llvm::Function* resumeFn) {
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* i32Ty = llvm::Type::getInt32Ty(*context_);
+    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+
+    // Reuse the existing entry block (already created by codegenFuncDef setup).
+    auto* entryBB = &wrapperFn->getEntryBlock();
+    // Clear any instructions from the setup (traceback push, etc.).
+    while (!entryBB->empty())
+        entryBB->back().eraseFromParent();
+    builder_->SetInsertPoint(entryBB);
+
+    auto* savedFn = currentFunction_;
+    currentFunction_ = wrapperFn;
+
+    // Allocate parameter allocas and store arg values.
+    std::vector<std::pair<llvm::AllocaInst*, llvm::Type*>> paramInfo;
+    for (size_t i = 0; i < node.params.size(); i++) {
+        llvm::Type* pTy = i64Ty;
+        if (!node.params[i].typeAnnotation.empty())
+            pTy = getLLVMType(node.params[i].typeAnnotation);
+        auto* alloca = createEntryBlockAlloca(
+            wrapperFn, node.params[i].name, pTy);
+        llvm::Argument* arg = wrapperFn->getArg(static_cast<unsigned>(i));
+        builder_->CreateStore(arg, alloca);
+        paramInfo.push_back({alloca, pTy});
+    }
+
+    // Use the actual slot count saved from the resume function lowering.
+    auto* genCreateFn = module_->getFunction("__visuall_gen_create");
+    llvm::Value* resumePtr = builder_->CreateBitCast(resumeFn, i8Ptr, "resume.ptr");
+    int numSlots = genSlotCount_;
+    llvm::Value* genArgs[] = {
+        llvm::ConstantInt::get(i32Ty, static_cast<uint64_t>(numSlots)),
+        resumePtr
+    };
+    llvm::Value* ctx = builder_->CreateCall(genCreateFn, genArgs, "gen.ctx");
+
+    // Store parameter values into context slots.
+    auto* setSlotFn = module_->getFunction("__visuall_gen_set_slot");
+    int numParams = (int)paramInfo.size();
+    for (int i = 0; i < numParams; i++) {
+        llvm::Value* val = builder_->CreateLoad(
+            paramInfo[i].first->getAllocatedType(),
+            paramInfo[i].first, "param.val");
+        if (val->getType() != i64Ty) {
+            if (val->getType()->isPointerTy())
+                val = builder_->CreatePtrToInt(val, i64Ty, "param.ptoi");
+            else if (val->getType()->isDoubleTy())
+                val = builder_->CreateBitCast(val, i64Ty, "param.bitcast");
+            else if (!val->getType()->isIntegerTy(64))
+                val = builder_->CreateZExt(val, i64Ty, "param.ext");
+        }
+        llvm::Value* setArgs[] = {
+            ctx,
+            llvm::ConstantInt::get(i32Ty, static_cast<uint64_t>(i)),
+            val
+        };
+        builder_->CreateCall(setSlotFn, setArgs);
+    }
+
+    // Return the context pointer.
+    builder_->CreateRet(ctx);
+    currentFunction_ = savedFn;
 }
 
 } // namespace visuall

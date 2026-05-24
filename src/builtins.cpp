@@ -251,6 +251,17 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
         cxaThrow->addFnAttr(llvm::Attribute::NoReturn);
     }
     getOrDeclareExtern(mod, ctx, "__cxa_begin_catch", i8p,    {i8p});
-    getOrDeclareExtern(mod, ctx, "__cxa_end_catch",   voidTy, {});}
+    getOrDeclareExtern(mod, ctx, "__cxa_end_catch",   voidTy, {});
+
+    /* ── Generator runtime ──────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_gen_create",     i8p, {i32, i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_gen_next",       i64, {i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_gen_get_state",  i32, {i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_gen_set_state",  voidTy, {i8p, i32});
+    getOrDeclareExtern(mod, ctx, "__visuall_gen_get_value",  i64, {i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_gen_set_value",  voidTy, {i8p, i64});
+    getOrDeclareExtern(mod, ctx, "__visuall_gen_get_slot",   i64, {i8p, i32});
+    getOrDeclareExtern(mod, ctx, "__visuall_gen_set_slot",   voidTy, {i8p, i32, i64});
+}
 
 } // namespace visuall

@@ -1,0 +1,52 @@
+## ════════════════════════════════════════════════════════════════════════════
+## Visuall Standard Library — datetime module
+##
+## Usage:  import datetime
+##         now = datetime.now()
+##         tomorrow = now.add_days(1)
+## ════════════════════════════════════════════════════════════════════════════
+
+class DateTime:
+	init(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0):
+		this._handle = __visuall_datetime_create(year, month, day, hour, minute, second)
+
+	define year() -> int: return this._handle.year
+	define month() -> int: return this._handle.month
+	define day() -> int: return this._handle.day
+	define hour() -> int: return this._handle.hour
+	define minute() -> int: return this._handle.minute
+	define second() -> int: return this._handle.second
+
+	define add_days(days: int) -> DateTime:
+		res_handle = __visuall_datetime_add_days(this._handle, days)
+		# Create a new DateTime object with the result handle
+		# Note: In our current runtime, __visuall_datetime_add_days returns a handle
+		# that matches the structure of VisualDateTime.
+		dt = DateTime(1970, 1, 1) # dummy init
+		dt._handle = res_handle
+		return dt
+
+	define format(fmt: str) -> str:
+		return __visuall_datetime_format(this._handle, fmt)
+
+	define to_string() -> str:
+		return this.format("%Y-%m-%d %H:%M:%S")
+
+define now() -> DateTime:
+	handle = __visuall_datetime_now()
+	dt = DateTime(1970, 1, 1) # dummy init
+	dt._handle = handle
+	return dt
+
+class Date:
+	init(year: int, month: int, day: int):
+		this.dt = DateTime(year, month, day)
+
+	define to_string() -> str:
+		return this.dt.format("%Y-%m-%d")
+
+	define add_days(days: int) -> Date:
+		new_dt = this.dt.add_days(days)
+		d = Date(1970, 1, 1)
+		d.dt = new_dt
+		return d

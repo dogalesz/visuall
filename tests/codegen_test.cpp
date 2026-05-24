@@ -491,6 +491,38 @@ static void test_matchStatement() {
     expect(!ir3.empty(), "19g. bool match generates IR");
 }
 
+static void test_matchGuards() {
+    // Match with guard (if condition on case)
+    std::string src =
+        "define test_guard(x: int) -> int:\n"
+        "\tmatch x:\n"
+        "\t\tcase 1 if x > 0:\n"
+        "\t\t\treturn 10\n"
+        "\t\tcase 2:\n"
+        "\t\t\treturn 20\n"
+        "\t\tcase _:\n"
+        "\t\t\treturn 0\n";
+
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "20a. match guard generates IR");
+    expect(ir.find("match.case.0.guard") != std::string::npos,
+           "20b. guard check block present");
+
+    // Wildcard with guard
+    std::string src2 =
+        "define test_wildcard_guard(x: int) -> int:\n"
+        "\tmatch x:\n"
+        "\t\tcase _ if x > 10:\n"
+        "\t\t\treturn 1\n"
+        "\t\tcase _:\n"
+        "\t\t\treturn 0\n";
+
+    std::string ir2 = generateIR(src2);
+    expect(!ir2.empty(), "20c. wildcard guard generates IR");
+    expect(ir2.find("match.case.0.guard") != std::string::npos,
+           "20d. wildcard guard block present");
+}
+
 static void test_magicMethods() {
     // All five magic-method dispatch paths in one class
     std::string src =
@@ -618,7 +650,7 @@ static void test_typeSystemCompletions() {
 }
 
 static void test_generators() {
-    // 24a. Generator function emits list_new + list_push in IR
+    // 24a. Generator state-machine: emits gen_create + resume function
     {
         std::string src =
             "define counter(n: int) -> int:\n"
@@ -628,10 +660,23 @@ static void test_generators() {
             "\t\ti = i + 1\n";
         std::string ir = generateIR(src);
         expect(!ir.empty(), "24a. generator function generates IR");
-        expect(ir.find("__visuall_list_push") != std::string::npos,
-               "24b. yield emits __visuall_list_push call");
-        expect(ir.find("__visuall_list_new") != std::string::npos,
-               "24c. generator creates list via __visuall_list_new");
+        expect(ir.find("__visuall_gen_create") != std::string::npos,
+               "24b. generator emits __visuall_gen_create call");
+        expect(ir.find("__visuall_gen_set_state") != std::string::npos,
+               "24c. yield emits __visuall_gen_set_state call");
+        expect(ir.find("__resume") != std::string::npos,
+               "24d. resume function created for generator");
+        expect(ir.find("dispatch") != std::string::npos,
+               "24e. state dispatch block present");
+    }
+    // 24f. Bare yield (without value)
+    {
+        std::string src =
+            "define bare_yielder() -> int:\n"
+            "\tyield\n"
+            "\tyield 42\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "24f. bare yield generates IR");
     }
 }
 
@@ -707,6 +752,7 @@ int runCodegenTests() {
     test_withStatement();
     test_collectionsAnyType();
     test_matchStatement();
+    test_matchGuards();
     test_magicMethods();
     test_enumTypes();
     test_typedExceptions();
@@ -715,6 +761,6 @@ int runCodegenTests() {
     test_randomModule();
     test_stackTraces();
 
-    std::cout << "  " << (35 - failures) << "/35 codegen tests passed.\n";
+    std::cout << "  " << (117 - failures) << "/117 codegen tests passed.\n";
     return failures;
 }

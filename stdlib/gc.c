@@ -32,6 +32,24 @@
  * Internal state
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+static CRITICAL_SECTION gc_lock;
+#define GC_LOCK()   EnterCriticalSection(&gc_lock)
+#define GC_UNLOCK() LeaveCriticalSection(&gc_lock)
+#else
+#include <pthread.h>
+static pthread_mutex_t gc_lock;
+#define GC_LOCK()   pthread_mutex_lock(&gc_lock)
+#define GC_UNLOCK() pthread_mutex_unlock(&gc_lock)
+#endif
+static int gc_lock_initialized = 0;
+
+/* Global lock API */
+void __visuall_gc_lock(void) { GC_LOCK(); }
+void __visuall_gc_unlock(void) { GC_UNLOCK(); }
+
 /* Linked list of all live GC objects. */
 static GCHeader* heap_head = NULL;
 
@@ -286,6 +304,15 @@ typedef struct {
     int64_t length;
 } VisualDict_GC;
 
+/* Forward declaration for VisualGenerator defined in runtime.c. */
+typedef struct {
+    int32_t state;
+    int32_t num_slots;
+    int64_t value;
+    void*   resume_fn;
+    /* followed by int64_t slots[num_slots] inline */
+} VisualGenerator_GC;
+
 /* Each DictEntry is: char* key (8) + int64_t value (8) + uint8_t state (1) + padding = 24 bytes */
 #define DICT_ENTRY_SIZE 24
 #define DICT_ENTRY_STATE_USED 1
@@ -331,6 +358,19 @@ static GCHeader* find_gc_header(void* ptr) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 void __visuall_gc_init(void* sb) {
+    if (!gc_lock_initialized) {
+#ifdef _WIN32
+        InitializeCriticalSection(&gc_lock);
+#else
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&gc_lock, &attr);
+        pthread_mutexattr_destroy(&attr);
+#endif
+        gc_lock_initialized = 1;
+    }
+    GC_LOCK();
     stack_bottom = sb;
     heap_head = NULL;
     heap_bytes = 0;
@@ -340,14 +380,20 @@ void __visuall_gc_init(void* sb) {
     num_global_roots = 0;
     memset(&gc_stats, 0, sizeof(gc_stats));
     ptr_map_init();
+    GC_UNLOCK();
 }
 
 void __visuall_gc_enable_stats(int enable) {
+    GC_LOCK();
     gc_stats_enabled = enable;
+    GC_UNLOCK();
 }
 
 GCStats __visuall_gc_get_stats(void) {
-    return gc_stats;
+    GC_LOCK();
+    GCStats stats = gc_stats;
+    GC_UNLOCK();
+    return stats;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -355,6 +401,7 @@ GCStats __visuall_gc_get_stats(void) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 void* __visuall_alloc(size_t size, uint8_t type_tag) {
+    GC_LOCK();
     /* Check if we should collect before allocating. */
     if (heap_bytes + sizeof(GCHeader) + size > gc_threshold) {
         __visuall_collect();
@@ -376,6 +423,7 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
             hdr = (GCHeader*)malloc(total);
             if (!hdr) {
                 fprintf(stderr, "out of memory (GC alloc %zu bytes)\n", size);
+                GC_UNLOCK();
                 exit(1);
             }
         }
@@ -410,11 +458,13 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
     uintptr_t htop  = haddr + total;
     if (htop  > heap_hi) heap_hi = htop;
 
+    GC_UNLOCK();
     return user;
 }
 
 void* __visuall_alloc_object(size_t payload, uint32_t field_count,
                               const uint32_t* field_offsets) {
+    GC_LOCK();
     /* Total allocation: GCHeader + user payload + field_offsets array. */
     size_t offsets_bytes = field_count * sizeof(uint32_t);
     size_t total_payload = payload + offsets_bytes;
@@ -431,6 +481,7 @@ void* __visuall_alloc_object(size_t payload, uint32_t field_count,
         hdr = (GCHeader*)malloc(total);
         if (!hdr) {
             fprintf(stderr, "out of memory (GC alloc_object %zu bytes)\n", total_payload);
+            GC_UNLOCK();
             exit(1);
         }
     }
@@ -467,6 +518,7 @@ void* __visuall_alloc_object(size_t payload, uint32_t field_count,
     uintptr_t htop = haddr + total;
     if (htop > heap_hi) heap_hi = htop;
 
+    GC_UNLOCK();
     return user;
 }
 
@@ -475,18 +527,20 @@ void* __visuall_alloc_object(size_t payload, uint32_t field_count,
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 void __visuall_register_global(void** ptr) {
+    GC_LOCK();
     if (num_global_roots < MAX_GLOBAL_ROOTS) {
         global_roots[num_global_roots++] = ptr;
     } else {
         fprintf(stderr, "warning: GC global root table full\n");
     }
+    GC_UNLOCK();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Mark phase
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-void __visuall_mark(void* ptr) {
+static void mark_internal(void* ptr) {
     if (!ptr) return;
 
     GCHeader* hdr = __visuall_get_header(ptr);
@@ -511,7 +565,7 @@ void __visuall_mark(void* ptr) {
             void* elem = (void*)(uintptr_t)list->data[i];
             GCHeader* eh = find_gc_header(elem);
             if (eh) {
-                __visuall_mark(elem);
+                mark_internal(elem);
             }
         }
         break;
@@ -529,11 +583,11 @@ void __visuall_mark(void* ptr) {
                     void* key = *(void**)ent;           /* char* key at offset 0 */
                     if (key) {
                         GCHeader* kh = find_gc_header(key);
-                        if (kh) __visuall_mark(key);
+                        if (kh) mark_internal(key);
                     }
                     void* val = *(void**)(ent + 8);     /* int64_t value at offset 8, may be ptr */
                     GCHeader* vh = find_gc_header(val);
-                    if (vh) __visuall_mark(val);
+                    if (vh) mark_internal(val);
                 }
             }
         }
@@ -548,7 +602,7 @@ void __visuall_mark(void* ptr) {
         if (env) {
             GCHeader* eh = find_gc_header(env);
             if (eh) {
-                __visuall_mark(env);
+                mark_internal(env);
             }
         }
         break;
@@ -571,7 +625,7 @@ void __visuall_mark(void* ptr) {
                 void* fptr = (void*)(uintptr_t)(uint64_t)raw;
                 if (fptr) {
                     GCHeader* eh = find_gc_header(fptr);
-                    if (eh) __visuall_mark(fptr);
+                    if (eh) mark_internal(fptr);
                 }
             }
         } else {
@@ -582,7 +636,7 @@ void __visuall_mark(void* ptr) {
             for (size_t i = 0; i < nwords; i++) {
                 GCHeader* eh = find_gc_header(words[i]);
                 if (eh) {
-                    __visuall_mark(words[i]);
+                    mark_internal(words[i]);
                 }
             }
         }
@@ -596,7 +650,7 @@ void __visuall_mark(void* ptr) {
             void* elem = (void*)(uintptr_t)tup->data[i];
             GCHeader* eh = find_gc_header(elem);
             if (eh) {
-                __visuall_mark(elem);
+                mark_internal(elem);
             }
         }
         break;
@@ -610,9 +664,27 @@ void __visuall_mark(void* ptr) {
         /* VisualSet — no GC child pointers (data array is int64_t values). */
         break;
 
+    case VSL_TAG_GENERATOR: {
+        /* Scan saved-variable slots — each may hold a GC pointer as int64_t. */
+        VisualGenerator_GC* gen = (VisualGenerator_GC*)ptr;
+        int64_t* slots = (int64_t*)((char*)ptr + sizeof(VisualGenerator_GC));
+        for (int32_t i = 0; i < gen->num_slots; i++) {
+            void* candidate = (void*)(uintptr_t)slots[i];
+            GCHeader* hdr = find_gc_header(candidate);
+            if (hdr) mark_internal(candidate);
+        }
+        break;
+    }
+
     default:
         break;
     }
+}
+
+void __visuall_mark(void* ptr) {
+    GC_LOCK();
+    mark_internal(ptr);
+    GC_UNLOCK();
 }
 
 /* ── Mark all registered global roots ──────────────────────────────────── */
@@ -622,7 +694,7 @@ static void mark_global_roots(void) {
         if (val) {
             GCHeader* hdr = find_gc_header(val);
             if (hdr) {
-                __visuall_mark(val);
+                mark_internal(val);
             }
         }
     }
@@ -684,7 +756,7 @@ static void mark_stack(void) {
         void* candidate = *p;
         GCHeader* hdr = find_gc_header(candidate);
         if (hdr) {
-            __visuall_mark(candidate);
+            mark_internal(candidate);
         }
     }
 }
@@ -770,6 +842,7 @@ static void sweep(void) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 void __visuall_collect(void) {
+    GC_LOCK();
     double t0 = 0;
     if (gc_stats_enabled) t0 = now_ns();
 
@@ -788,6 +861,7 @@ void __visuall_collect(void) {
     } else {
         gc_stats.total_collections++;
     }
+    GC_UNLOCK();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -795,6 +869,7 @@ void __visuall_collect(void) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 void __visuall_gc_shutdown(void) {
+    GC_LOCK();
     /* Frees all remaining objects. */
     GCHeader* h = heap_head;
     while (h) {
@@ -826,5 +901,16 @@ void __visuall_gc_shutdown(void) {
             fprintf(stderr, "Avg pause (us):     %.2f\n", avg_us);
         }
         fprintf(stderr, "====================\n");
+    }
+    GC_UNLOCK();
+
+    /* Delete the lock if initialized. */
+    if (gc_lock_initialized) {
+#ifdef _WIN32
+        DeleteCriticalSection(&gc_lock);
+#else
+        pthread_mutex_destroy(&gc_lock);
+#endif
+        gc_lock_initialized = 0;
     }
 }

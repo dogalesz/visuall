@@ -29,7 +29,8 @@ extern "C" {
 #define VSL_TAG_OBJECT   5
 #define VSL_TAG_TUPLE    6
 #define VSL_TAG_BOXED    7   /* single-element heap box for byReference captures */
-#define VSL_TAG_SET      8   /* VisualSet — sorted int64_t array (collections module) */
+#define VSL_TAG_SET        8   /* VisualSet — sorted int64_t array (collections module) */
+#define VSL_TAG_GENERATOR  9   /* VisualGenerator — state-machine generator   */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * GCHeader — prefixed to every GC-managed allocation
@@ -68,7 +69,7 @@ void* __visuall_alloc(size_t size, uint8_t type_tag);
    The offsets array is copied to the tail of the allocation (after payload).
    Returns the user-visible pointer (past the GCHeader). */
 void* __visuall_alloc_object(size_t payload, uint32_t field_count,
-                              const uint32_t* field_offsets);
+                               const uint32_t* field_offsets);
 
 /* Register a global variable as a GC root.  `ptr` must point to a
    location that holds a GC-managed pointer (or NULL). */
@@ -79,6 +80,10 @@ void __visuall_collect(void);
 
 /* ── Mark-phase helpers (also usable from runtime finalizers) ────────── */
 void __visuall_mark(void* ptr);
+
+/* ── Thread Safety API ────────────────────────────────────────────────── */
+void __visuall_gc_lock(void);
+void __visuall_gc_unlock(void);
 
 /* ── Lifecycle ──────────────────────────────────────────────────────── */
 

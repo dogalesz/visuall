@@ -20,13 +20,21 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
 #define PATH_SEP '\\'
 #else
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #define PATH_SEP '/'
 #endif
+#include "yyjson.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Internal helpers
@@ -1158,6 +1166,10 @@ void __visuall_sys_init(int argc, char** argv) {
     for (int i = 0; i < argc; i++) {
         __visuall_list_push(__visuall_sys_args, (int64_t)argv[i]);
     }
+#ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
 }
 
 VisualList* __visuall_sys_get_args(void) {
@@ -1438,4 +1450,265 @@ void __visuall_print_traceback(void) {
         fprintf(stderr, "  File \"<visuall>\", in %s\n", vsl_traceback_stack[i]);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Module: network (BSD Socket Wrapper)
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
+int64_t __visuall_net_socket(int64_t domain, int64_t type, int64_t protocol) {
+    int s = (int)socket((int)domain, (int)type, (int)protocol);
+    return (int64_t)s;
+}
+
+int64_t __visuall_net_connect(int64_t fd, const char* host, int64_t port) {
+    struct hostent* he;
+    struct sockaddr_in addr;
+    if ((he = gethostbyname(host)) == NULL) return -1;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    addr.sin_addr = *((struct in_addr*)he->h_addr);
+    memset(&(addr.sin_zero), 8, 0);
+    if (connect((int)fd, (struct sockaddr*)&addr, sizeof(struct sockaddr)) == -1) return -1;
+    return 0;
+}
+
+int64_t __visuall_net_send(int64_t fd, const char* data) {
+    if (!data) return 0;
+    return (int64_t)send((int)fd, data, (int)strlen(data), 0);
+}
+
+char* __visuall_net_recv(int64_t fd, int64_t max_len) {
+    char* buf = (char*)vsl_malloc((size_t)max_len + 1);
+    int n = recv((int)fd, buf, (int)max_len, 0);
+    if (n <= 0) { free(buf); return vsl_strdup(""); }
+    buf[n] = '\0';
+    char* out = vsl_strdup(buf);
+    free(buf);
+    return out;
+}
+
+void __visuall_net_close(int64_t fd) {
+#ifdef _WIN32
+    closesocket((SOCKET)fd);
+#else
+    close((int)fd);
+#endif
+}
+
+int64_t __visuall_net_bind(int64_t fd, int64_t port) {
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    memset(&(addr.sin_zero), 8, 0);
+    if (bind((int)fd, (struct sockaddr*)&addr, sizeof(struct sockaddr)) == -1) return -1;
+    return 0;
+}
+
+int64_t __visuall_net_listen(int64_t fd, int64_t backlog) {
+    return (int64_t)listen((int)fd, (int)backlog);
+}
+
+int64_t __visuall_net_accept(int64_t fd) {
+    struct sockaddr_in addr;
+    int len = sizeof(struct sockaddr_in);
+    int s = (int)accept((int)fd, (struct sockaddr*)&addr, &len);
+    return (int64_t)s;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Module: datetime (Wraps <ctime>)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    int64_t year;
+    int64_t month;
+    int64_t day;
+    int64_t hour;
+    int64_t minute;
+    int64_t second;
+} VisualDateTime;
+
+VisualDateTime* __visuall_datetime_now(void) {
+    time_t t = time(NULL);
+    struct tm* tm_info = localtime(&t);
+    VisualDateTime* dt = (VisualDateTime*)__visuall_alloc(sizeof(VisualDateTime), VSL_TAG_OBJECT);
+    dt->year = tm_info->tm_year + 1900;
+    dt->month = tm_info->tm_mon + 1;
+    dt->day = tm_info->tm_mday;
+    dt->hour = tm_info->tm_hour;
+    dt->minute = tm_info->tm_min;
+    dt->second = tm_info->tm_sec;
+    return dt;
+}
+
+VisualDateTime* __visuall_datetime_create(int64_t y, int64_t m, int64_t d, int64_t h, int64_t min, int64_t s) {
+    VisualDateTime* dt = (VisualDateTime*)__visuall_alloc(sizeof(VisualDateTime), VSL_TAG_OBJECT);
+    dt->year = y; dt->month = m; dt->day = d; dt->hour = h; dt->minute = min; dt->second = s;
+    return dt;
+}
+
+VisualDateTime* __visuall_datetime_add_days(VisualDateTime* dt, int64_t days) {
+    struct tm tm_info = {0};
+    tm_info.tm_year = (int)dt->year - 1900;
+    tm_info.tm_mon = (int)dt->month - 1;
+    tm_info.tm_mday = (int)dt->day + (int)days;
+    tm_info.tm_hour = (int)dt->hour;
+    tm_info.tm_min = (int)dt->minute;
+    tm_info.tm_sec = (int)dt->second;
+    mktime(&tm_info);
+    VisualDateTime* res = (VisualDateTime*)__visuall_alloc(sizeof(VisualDateTime), VSL_TAG_OBJECT);
+    res->year = tm_info.tm_year + 1900; res->month = tm_info.tm_mon + 1; res->day = tm_info.tm_mday;
+    res->hour = tm_info.tm_hour; res->minute = tm_info.tm_min; res->second = tm_info.tm_sec;
+    return res;
+}
+
+char* __visuall_datetime_format(VisualDateTime* dt, const char* fmt) {
+    struct tm tm_info = {0};
+    tm_info.tm_year = (int)dt->year - 1900; tm_info.tm_mon = (int)dt->month - 1; tm_info.tm_mday = (int)dt->day;
+    tm_info.tm_hour = (int)dt->hour; tm_info.tm_min = (int)dt->minute; tm_info.tm_sec = (int)dt->second;
+    char buf[128]; strftime(buf, sizeof(buf), fmt, &tm_info);
+    return vsl_strdup(buf);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Module: json (yyjson wrapper)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static int64_t vsl_from_yyjson(yyjson_val* val) {
+    if (!val) return 0;
+    yyjson_type type = yyjson_get_type(val);
+    switch (type) {
+        case YYJSON_TYPE_NULL: return 0;
+        case YYJSON_TYPE_BOOL: return (yyjson_get_bool(val) << 1) | 1;
+        case YYJSON_TYPE_NUM: {
+            if (yyjson_is_int(val)) return (yyjson_get_int(val) << 1) | 1;
+            return (int64_t)(yyjson_get_int(val) << 1) | 1; 
+        }
+        case YYJSON_TYPE_STR: return (int64_t)vsl_strdup(yyjson_get_str(val));
+        case YYJSON_TYPE_ARR: {
+            VisualList* list = __visuall_list_new();
+            yyjson_val* item; yyjson_arr_iter iter; yyjson_arr_iter_init(val, &iter);
+            while ((item = yyjson_arr_iter_next(&iter))) __visuall_list_push(list, vsl_from_yyjson(item));
+            return (int64_t)list;
+        }
+        case YYJSON_TYPE_OBJ: {
+            VisualDict* dict = __visuall_dict_new();
+            yyjson_val *key, *item; yyjson_obj_iter iter; yyjson_obj_iter_init(val, &iter);
+            while ((key = yyjson_obj_iter_next(&iter))) {
+                item = yyjson_obj_iter_get_val(key);
+                __visuall_dict_set(dict, vsl_strdup(yyjson_get_str(key)), vsl_from_yyjson(item));
+            }
+            return (int64_t)dict;
+        }
+        default: return 0;
+    }
+}
+
+static yyjson_mut_val* vsl_to_yyjson(yyjson_mut_doc* doc, int64_t val) {
+    if (val & 1) return yyjson_mut_int(doc, val >> 1);
+    if (!val) return yyjson_mut_null(doc);
+    GCHeader* hdr = __visuall_get_header((void*)val);
+    if (!hdr) return yyjson_mut_null(doc);
+    switch (hdr->type_tag) {
+        case VSL_TAG_STRING: return yyjson_mut_str(doc, (const char*)val);
+        case VSL_TAG_LIST: {
+            VisualList* list = (VisualList*)val; yyjson_mut_val* arr = yyjson_mut_arr(doc);
+            for (int64_t i = 0; i < list->length; i++) yyjson_mut_arr_append(arr, vsl_to_yyjson(doc, list->data[i]));
+            return arr;
+        }
+        case VSL_TAG_DICT: {
+            VisualDict* dict = (VisualDict*)val; yyjson_mut_val* obj = yyjson_mut_obj(doc);
+            for (int64_t i = 0; i < dict->capacity; i++) {
+                if (dict->entries[i].state == DICT_USED)
+                    yyjson_mut_obj_add(obj, yyjson_mut_str(doc, dict->entries[i].key), vsl_to_yyjson(doc, dict->entries[i].value));
+            }
+            return obj;
+        }
+        default: return yyjson_mut_null(doc);
+    }
+}
+
+int64_t __visuall_json_parse(const char* json_str) {
+    if (!json_str) return 0;
+    yyjson_doc* doc = yyjson_read(json_str, strlen(json_str), 0);
+    if (!doc) return 0;
+    int64_t res = vsl_from_yyjson(yyjson_doc_get_root(doc));
+    yyjson_doc_free(doc);
+    return res;
+}
+
+char* __visuall_json_stringify(int64_t val) {
+    yyjson_mut_doc* doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_doc_set_root(doc, vsl_to_yyjson(doc, val));
+    char* json = yyjson_mut_write(doc, 0, NULL);
+    char* res = vsl_strdup(json);
+    free(json); yyjson_mut_doc_free(doc);
+    return res;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Module: generator (State-machine generator runtime)
+ *
+ * Each generator is a heap-allocated VisualGenerator that holds:
+ *   - state:      resume point index (-1 = exhausted, 0 = initial)
+ *   - num_slots:  count of saved local-variable slots
+ *   - value:      the most recently yielded value
+ *   - resume_fn:  function pointer to the LLVM-generated resume function
+ *   - slots[]:    variable-length array of int64_t saved locals
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    int32_t state;
+    int32_t num_slots;
+    int64_t value;
+    void*   resume_fn;
+    /* int64_t slots[num_slots]; — variable-length, follows in allocation */
+} VisualGenerator;
+
+VisualGenerator* __visuall_gen_create(int32_t num_slots, void* resume_fn) {
+    size_t payload = sizeof(VisualGenerator) + num_slots * sizeof(int64_t);
+    VisualGenerator* gen = (VisualGenerator*)__visuall_alloc(
+        payload, VSL_TAG_GENERATOR);
+    gen->state     = 0;
+    gen->num_slots = num_slots;
+    gen->value     = 0;
+    gen->resume_fn = resume_fn;
+    memset((char*)gen + sizeof(VisualGenerator), 0,
+           num_slots * sizeof(int64_t));
+    return gen;
+}
+
+int64_t __visuall_gen_next(VisualGenerator* gen) {
+    if (!gen || gen->state < 0) return INT64_MIN;
+    typedef int64_t (*resume_t)(VisualGenerator*);
+    resume_t resume = (resume_t)gen->resume_fn;
+    return resume(gen);
+}
+
+int32_t __visuall_gen_get_state(VisualGenerator* gen) {
+    return gen ? gen->state : -1;
+}
+
+void __visuall_gen_set_state(VisualGenerator* gen, int32_t s) {
+    if (gen) gen->state = s;
+}
+
+int64_t __visuall_gen_get_value(VisualGenerator* gen) {
+    return gen ? gen->value : 0;
+}
+
+void __visuall_gen_set_value(VisualGenerator* gen, int64_t v) {
+    if (gen) gen->value = v;
+}
+
+int64_t __visuall_gen_get_slot(VisualGenerator* gen, int32_t idx) {
+    if (!gen || idx < 0 || idx >= gen->num_slots) return 0;
+    int64_t* slots = (int64_t*)((char*)gen + sizeof(VisualGenerator));
+    return slots[idx];
+}
+
+void __visuall_gen_set_slot(VisualGenerator* gen, int32_t idx, int64_t val) {
+    if (!gen || idx < 0 || idx >= gen->num_slots) return;
+    int64_t* slots = (int64_t*)((char*)gen + sizeof(VisualGenerator));
+    slots[idx] = val;
+}

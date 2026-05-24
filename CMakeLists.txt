@@ -15,10 +15,17 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 set(toml11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-# Disable std::filesystem in toml11 to avoid runtime issues with mixed
-# MinGW/UCRT toolchain environments.
 add_compile_definitions(TOML11_DISABLE_STD_FILESYSTEM)
 FetchContent_MakeAvailable(toml11)
+
+# ── yyjson (Fast JSON library) ──────────────────────────────────────────────
+FetchContent_Declare(
+    yyjson
+    GIT_REPOSITORY https://github.com/ibireme/yyjson.git
+    GIT_TAG        0.9.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(yyjson)
 
 # ── LLVM ────────────────────────────────────────────────────────────────────
 find_package(LLVM REQUIRED CONFIG)
@@ -63,7 +70,6 @@ set(VISUALL_SOURCES
 )
 
 # ── Personality function detection ────────────────────────────────────────
-# MinGW/Windows uses the SEH-based personality; POSIX uses the Itanium one.
 if(WIN32)
     set(VISUALL_PERSONALITY_DEF VISUALL_PERSONALITY_SEH)
     message(STATUS "Visuall EH: using __gxx_personality_seh0 (Windows/MinGW)")
@@ -79,6 +85,11 @@ add_library(visuall_runtime STATIC
     stdlib/exception_support.cpp
 )
 target_include_directories(visuall_runtime PRIVATE stdlib)
+target_link_libraries(visuall_runtime PRIVATE yyjson)
+if(WIN32)
+    target_link_libraries(visuall_runtime PRIVATE ws2_32)
+endif()
+
 target_compile_features(visuall_runtime PRIVATE cxx_std_17)
 if(VISUALL_PERSONALITY_DEF)
     target_compile_definitions(visuall_runtime PRIVATE ${VISUALL_PERSONALITY_DEF})
@@ -96,7 +107,7 @@ if(VISUALL_PERSONALITY_DEF)
     target_compile_definitions(visuallc PRIVATE ${VISUALL_PERSONALITY_DEF})
 endif()
 
-# ── vslpkg binary (NO LLVM dependency) ───────────────────────────────────
+# ── vslpkg binary ────────────────────────────────────────────────────────
 add_executable(vslpkg
     tools/vslpkg/main.cpp
     tools/vslpkg/fetcher.cpp
@@ -106,10 +117,7 @@ add_executable(vslpkg
 )
 target_include_directories(vslpkg PRIVATE include tools/vslpkg)
 target_link_libraries(vslpkg PRIVATE toml11::toml11)
-if(WIN32)
-    # Nothing extra on Windows; APPDATA path helpers use getenv().
-elseif(UNIX)
-    # POSIX: getpwuid fallback needs -lpthread on some systems.
+if(UNIX)
     target_link_libraries(vslpkg PRIVATE pthread)
 endif()
 
@@ -148,14 +156,16 @@ add_executable(visuall_tests
     stdlib/exception_support.cpp
 )
 target_include_directories(visuall_tests PRIVATE include stdlib)
-target_link_libraries(visuall_tests PRIVATE ${LLVM_LIBS} toml11::toml11)
+target_link_libraries(visuall_tests PRIVATE ${LLVM_LIBS} toml11::toml11 yyjson)
+if(WIN32)
+    target_link_libraries(visuall_tests PRIVATE ws2_32)
+endif()
+
 if(VISUALL_PERSONALITY_DEF)
     target_compile_definitions(visuall_tests PRIVATE ${VISUALL_PERSONALITY_DEF})
 endif()
 
 add_test(NAME visuall_tests COMMAND visuall_tests)
-# On Windows with MinGW/msvcrt compiler + ucrt64 LLVM, the ucrt64 runtime DLLs
-# must appear before mingw64 ones at runtime. Prepend the ucrt64 bin dir.
 if(WIN32 AND EXISTS "C:/msys64/ucrt64/bin")
     set_tests_properties(visuall_tests PROPERTIES
         ENVIRONMENT "PATH=C:/msys64/ucrt64/bin;$ENV{PATH}"
