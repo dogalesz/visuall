@@ -1,5 +1,8 @@
 # Visuall Compiler (`visuallc`)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/dogalesz/visuall/actions/workflows/ci.yml/badge.svg)](https://github.com/dogalesz/visuall/actions/workflows/ci.yml)
+
 A compiled programming language with Python-like syntax, built with C++17 and LLVM. Visuall compiles directly to native machine code through LLVM IR, with a mark-and-sweep garbage collector, a growing standard library, and a built-in package manager (`vslpkg`).
 
 ```
@@ -198,6 +201,11 @@ ctest --output-on-failure
 ```
 visuall/
 ├── CMakeLists.txt
+├── LICENSE
+├── CHANGELOG.md
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── .editorconfig
 ├── include/
 │   ├── ast.h                # AST node hierarchy
 │   ├── ast_printer.h        # AST pretty-printer
@@ -787,3 +795,13 @@ lspconfig.visuall_lsp = {
 ```
 
 The server discovers project structure by looking for a `vsl.toml` or `.git` directory at the workspace root, and indexes all `.vsl` files under it.
+
+---
+
+## Links
+
+- [Website](https://visuall.dev) — official site (coming soon)
+- [License](LICENSE) — MIT
+- [Changelog](CHANGELOG.md) — release history
+- [Contributing](CONTRIBUTING.md) — how to get involved
+- [Code of Conduct](CODE_OF_CONDUCT.md)
