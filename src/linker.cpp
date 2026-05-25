@@ -155,7 +155,7 @@ void Linker::emitObjectFile(llvm::Module& mod, const std::string& path) {
 
     llvm::legacy::PassManager pass;
     if (TM->addPassesToEmitFile(pass, dest, nullptr,
-                                 llvm::CodeGenFileType::ObjectFile)) {
+                                 llvm::CodeGenFileType::CGFT_ObjectFile)) {
         throw std::runtime_error("TargetMachine cannot emit object file");
     }
     pass.run(mod);
