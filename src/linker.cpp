@@ -81,7 +81,11 @@ void Linker::optimize(llvm::Module& mod) {
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
 
+#if LLVM_VERSION_MAJOR >= 21
+    llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+#else
     auto triple = llvm::sys::getDefaultTargetTriple();
+#endif
     mod.setTargetTriple(triple);
 
     std::string err;
@@ -131,7 +135,11 @@ void Linker::emitObjectFile(llvm::Module& mod, const std::string& path) {
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
 
+#if LLVM_VERSION_MAJOR >= 21
+    llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+#else
     auto triple = llvm::sys::getDefaultTargetTriple();
+#endif
     mod.setTargetTriple(triple);
 
     std::string err;

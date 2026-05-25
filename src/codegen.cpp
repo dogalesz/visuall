@@ -641,7 +641,11 @@ void Codegen::emitObjectFile(const std::string& path) const {
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
 
+#if LLVM_VERSION_MAJOR >= 21
+    llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+#else
     auto triple = llvm::sys::getDefaultTargetTriple();
+#endif
     module_->setTargetTriple(triple);
 
     std::string err;
