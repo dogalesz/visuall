@@ -670,8 +670,13 @@ void Codegen::emitObjectFile(const std::string& path) const {
     }
 
     llvm::legacy::PassManager pass;
+#if LLVM_VERSION_MAJOR >= 17 && LLVM_VERSION_MAJOR <= 19
     if (TM->addPassesToEmitFile(pass, dest, nullptr,
                                  llvm::CodeGenFileType::CGFT_ObjectFile)) {
+#else
+    if (TM->addPassesToEmitFile(pass, dest, nullptr,
+                                 llvm::CodeGenFileType::ObjectFile)) {
+#endif
         throw std::runtime_error("TargetMachine cannot emit object file");
     }
     pass.run(*module_);
@@ -3277,7 +3282,12 @@ llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
             case ast::BinOp::Mod: return builder_->CreateFRem(L, R, "fmod");
             case ast::BinOp::Pow: {
                 // Use llvm.pow.f64 intrinsic
+#if LLVM_VERSION_MAJOR >= 17 && LLVM_VERSION_MAJOR <= 19
                 auto* powFn = llvm::Intrinsic::getDeclaration(
+#else
+                auto* powFn = llvm::Intrinsic::getOrInsertDeclaration(
+#endif
+
                     module_.get(), llvm::Intrinsic::pow,
                     {llvm::Type::getDoubleTy(*context_)});
                 return builder_->CreateCall(powFn, {L, R}, "fpow");

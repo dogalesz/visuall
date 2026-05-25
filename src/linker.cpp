@@ -154,8 +154,13 @@ void Linker::emitObjectFile(llvm::Module& mod, const std::string& path) {
     }
 
     llvm::legacy::PassManager pass;
+#if LLVM_VERSION_MAJOR >= 17 && LLVM_VERSION_MAJOR <= 19
     if (TM->addPassesToEmitFile(pass, dest, nullptr,
                                  llvm::CodeGenFileType::CGFT_ObjectFile)) {
+#else
+    if (TM->addPassesToEmitFile(pass, dest, nullptr,
+                                 llvm::CodeGenFileType::ObjectFile)) {
+#endif
         throw std::runtime_error("TargetMachine cannot emit object file");
     }
     pass.run(mod);
