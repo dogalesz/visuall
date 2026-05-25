@@ -47,17 +47,13 @@ jobs:
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-gcc
-
-      - name: Install LLVM 17
-        run: |
-          curl -L -o llvm-install.exe https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/LLVM-17.0.6-win64.exe
-          ./llvm-install.exe /S /D=C:\LLVM
+            mingw-w64-x86_64-llvm
 
       - name: Configure
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DLLVM_DIR="C:/LLVM/lib/cmake/llvm"
+            -DLLVM_DIR="/mingw64/lib/cmake/llvm"
 
       - name: Build
         run: cmake --build build --parallel
