@@ -319,13 +319,16 @@ typedef struct {
 
 /* Return current monotonic time in nanoseconds (for pause measurement). */
 static double now_ns(void) {
-    struct timespec ts;
 #ifdef _WIN32
-    timespec_get(&ts, TIME_UTC);
+    LARGE_INTEGER freq, counter;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&counter);
+    return (double)counter.QuadPart * 1e9 / (double)freq.QuadPart;
 #else
+    struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-#endif
     return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
+#endif
 }
 
 /* Check whether `ptr` looks like it points into one of our GC objects.

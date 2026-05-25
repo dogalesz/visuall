@@ -1200,13 +1200,18 @@ const char* __visuall_sys_platform(void) {
 }
 
 double __visuall_sys_time(void) {
-    struct timespec ts;
 #ifdef _WIN32
-    timespec_get(&ts, TIME_UTC);
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER ul;
+    ul.LowPart = ft.dwLowDateTime;
+    ul.HighPart = ft.dwHighDateTime;
+    return (double)(ul.QuadPart - 116444736000000000ULL) / 1e7;
 #else
+    struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
-#endif
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+#endif
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
