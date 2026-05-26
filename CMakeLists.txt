@@ -147,6 +147,19 @@ endif()
 # ── Tests ───────────────────────────────────────────────────────────────────
 enable_testing()
 
+# On Windows with MSYS2, runtime DLLs (LLVM, MinGW runtime, etc.) live in the
+# environment's bin/ directory.  Detect whichever MSYS2 environment is active so
+# ctest can add it to PATH when launching test executables.
+if(WIN32)
+    if(EXISTS "C:/msys64/mingw64/bin")
+        set(VISUALL_MSYS2_BIN "C:/msys64/mingw64/bin")
+    elseif(EXISTS "C:/msys64/ucrt64/bin")
+        set(VISUALL_MSYS2_BIN "C:/msys64/ucrt64/bin")
+    elseif(EXISTS "C:/msys64/clang64/bin")
+        set(VISUALL_MSYS2_BIN "C:/msys64/clang64/bin")
+    endif()
+endif()
+
 add_executable(visuall_tests
     tests/test_main.cpp
     tests/manifest_test.cpp
@@ -181,9 +194,9 @@ if(VISUALL_PERSONALITY_DEF)
 endif()
 
 add_test(NAME visuall_tests COMMAND visuall_tests)
-if(WIN32 AND EXISTS "C:/msys64/ucrt64/bin")
+if(VISUALL_MSYS2_BIN)
     set_tests_properties(visuall_tests PROPERTIES
-        ENVIRONMENT "PATH=C:/msys64/ucrt64/bin;$ENV{PATH}"
+        ENVIRONMENT "PATH=${VISUALL_MSYS2_BIN};$ENV{PATH}"
     )
 endif()
 
@@ -226,8 +239,8 @@ file(WRITE "${CMAKE_BINARY_DIR}/tests/pkg_test/app/vsl.lock"
 
 # Integration test: compile main.vsl using the pkg_test fixture.
 # vslpkg install is not invoked here — the pre-built lock is used directly.
-if(WIN32 AND EXISTS "C:/msys64/ucrt64/bin")
-    set(PKG_TEST_ENV "PATH=C:/msys64/ucrt64/bin;$ENV{PATH}")
+if(VISUALL_MSYS2_BIN)
+    set(PKG_TEST_ENV "PATH=${VISUALL_MSYS2_BIN};$ENV{PATH}")
 else()
     set(PKG_TEST_ENV "")
 endif()
