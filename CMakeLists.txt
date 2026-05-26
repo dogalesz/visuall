@@ -147,16 +147,48 @@ endif()
 # ── Tests ───────────────────────────────────────────────────────────────────
 enable_testing()
 
-# On Windows with MSYS2, runtime DLLs (LLVM, MinGW runtime, etc.) live in the
-# environment's bin/ directory.  Detect whichever MSYS2 environment is active so
-# ctest can add it to PATH when launching test executables.
+# On Windows with MSYS2, runtime DLLs (MinGW runtime, LLVM, etc.) must be
+# findable when test executables start.  Copy them into the build directory
+# so the Windows loader finds them next to the .exe files — no PATH needed.
 if(WIN32)
-    if(EXISTS "C:/msys64/mingw64/bin")
-        set(VISUALL_MSYS2_BIN "C:/msys64/mingw64/bin")
-    elseif(EXISTS "C:/msys64/ucrt64/bin")
-        set(VISUALL_MSYS2_BIN "C:/msys64/ucrt64/bin")
-    elseif(EXISTS "C:/msys64/clang64/bin")
-        set(VISUALL_MSYS2_BIN "C:/msys64/clang64/bin")
+    # Use MSYSTEM (set by the MSYS2 shell) to pick the right bin directory.
+    # e.g. MSYSTEM=MINGW64  →  C:/msys64/mingw64/bin
+    if(DEFINED ENV{MSYSTEM})
+        string(TOLOWER "$ENV{MSYSTEM}" _msystem_lower)
+        set(VISUALL_MSYS2_BIN "C:/msys64/${_msystem_lower}/bin")
+    else()
+        # Fallback: match the environment that owns the C++ compiler.
+        foreach(_env mingw64 ucrt64 clang64)
+            if(EXISTS "C:/msys64/${_env}/bin" AND
+               "${CMAKE_CXX_COMPILER}" MATCHES "/${_env}/")
+                set(VISUALL_MSYS2_BIN "C:/msys64/${_env}/bin")
+                break()
+            endif()
+        endforeach()
+        # Last resort: just pick the first that exists.
+        if(NOT VISUALL_MSYS2_BIN)
+            foreach(_env mingw64 ucrt64 clang64)
+                if(EXISTS "C:/msys64/${_env}/bin")
+                    set(VISUALL_MSYS2_BIN "C:/msys64/${_env}/bin")
+                    break()
+                endif()
+            endforeach()
+        endif()
+    endif()
+    if(VISUALL_MSYS2_BIN)
+        file(GLOB _runtime_dlls
+            "${VISUALL_MSYS2_BIN}/libgcc_s_seh-1.dll"
+            "${VISUALL_MSYS2_BIN}/libgcc_s_dw2-1.dll"
+            "${VISUALL_MSYS2_BIN}/libstdc++-6.dll"
+            "${VISUALL_MSYS2_BIN}/libwinpthread-1.dll"
+            "${VISUALL_MSYS2_BIN}/zlib1.dll"
+            "${VISUALL_MSYS2_BIN}/libzstd.dll"
+            "${VISUALL_MSYS2_BIN}/libLLVM*.dll"
+        )
+        if(_runtime_dlls)
+            file(COPY ${_runtime_dlls} DESTINATION "${CMAKE_BINARY_DIR}")
+            message(STATUS "Copied MSYS2 runtime DLLs to ${CMAKE_BINARY_DIR}")
+        endif()
     endif()
 endif()
 
@@ -194,11 +226,6 @@ if(VISUALL_PERSONALITY_DEF)
 endif()
 
 add_test(NAME visuall_tests COMMAND visuall_tests)
-if(VISUALL_MSYS2_BIN)
-    set_tests_properties(visuall_tests PROPERTIES
-        ENVIRONMENT "PATH=${VISUALL_MSYS2_BIN};$ENV{PATH}"
-    )
-endif()
 
 # ── Copy stdlib .vsl files to build directory ──────────────────────────────
 file(GLOB STDLIB_VSL_FILES "${CMAKE_SOURCE_DIR}/stdlib/*.vsl")
@@ -239,12 +266,6 @@ file(WRITE "${CMAKE_BINARY_DIR}/tests/pkg_test/app/vsl.lock"
 
 # Integration test: compile main.vsl using the pkg_test fixture.
 # vslpkg install is not invoked here — the pre-built lock is used directly.
-if(VISUALL_MSYS2_BIN)
-    set(PKG_TEST_ENV "PATH=${VISUALL_MSYS2_BIN};$ENV{PATH}")
-else()
-    set(PKG_TEST_ENV "")
-endif()
-
 add_test(
     NAME pkg_path_dep_compile
     COMMAND visuallc
@@ -253,14 +274,13 @@ add_test(
             -o "${CMAKE_BINARY_DIR}/tests/pkg_test/app/main_out"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/tests/pkg_test/app"
 )
-if(PKG_TEST_ENV)
-    set_tests_properties(pkg_path_dep_compile PROPERTIES
-        ENVIRONMENT "${PKG_TEST_ENV}"
-    )
-endif()
 
 # ── visuall-lsp (optional) ──────────────────────────────────────────────────
 option(BUILD_LSP "Build the Visuall Language Server" ON)
 if(BUILD_LSP)
     add_subdirectory(tools/visuall-lsp)
+    # Also copy runtime DLLs into the LSP output directory so lsp_test can run
+    if(VISUALL_MSYS2_BIN AND _runtime_dlls)
+        file(COPY ${_runtime_dlls} DESTINATION "${CMAKE_BINARY_DIR}/tools/visuall-lsp")
+    endif()
 endif()
