@@ -57,7 +57,7 @@ Go to the [Releases page](../../releases) and grab the asset for your platform.
 
 ### Windows (x86-64)
 
-Download `visuall-v0.9.3-beta-windows-x86_64.zip` and extract it anywhere (e.g. `C:\visuall\`).
+Download the latest version and extract it anywhere (e.g. `C:\visuall\`).
 
 | File / Folder | Purpose |
 |---------------|---------|
@@ -800,7 +800,7 @@ The server discovers project structure by looking for a `vsl.toml` or `.git` dir
 
 ## Links
 
-- [Website](https://visuall.dev) — official site (coming soon)
+- [Website](https://visuall.dev) — official site
 - [License](LICENSE) — MIT
 - [Changelog](CHANGELOG.md) — release history
 - [Contributing](CONTRIBUTING.md) — how to get involved
