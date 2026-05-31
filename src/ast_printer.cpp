@@ -130,6 +130,16 @@ struct CompactVisitor : public ASTVisitorBase {
         e.value->accept(ov);
         result = e.target + " := " + ov.result;
     }
+    void visit(const ast::GoExpr& e) override {
+        CompactVisitor ov;
+        e.callee->accept(ov);
+        result = ov.result.empty() ? "go ..." : "go " + ov.result;
+    }
+    void visit(const ast::ChanRecvExpr& e) override {
+        CompactVisitor ov;
+        e.channel->accept(ov);
+        result = ov.result.empty() ? "<-?" : "<-" + ov.result;
+    }
     // All other nodes leave result empty (too complex for inline)
 };
 
@@ -512,6 +522,23 @@ struct PrintVisitor : public ASTVisitorBase {
             os_ << cp << connector(i + 1 == p.members.size())
                 << "Member: " << p.members[i] << "\n";
         }
+    }
+    void visit(const ast::GoExpr& e) override {
+        os_ << prefix_ << connector(isLast_) << "GoExpr\n";
+        std::string cp = childPfx();
+        printChildExpr(*e.callee, cp, e.args.empty());
+        for (size_t i = 0; i < e.args.size(); i++)
+            printChildExpr(*e.args[i], cp, i + 1 == e.args.size());
+    }
+    void visit(const ast::ChanSendStmt& s) override {
+        os_ << prefix_ << connector(isLast_) << "ChanSend\n";
+        std::string cp = childPfx();
+        printChildExpr(*s.channel, cp, false);
+        printChildExpr(*s.value, cp, true);
+    }
+    void visit(const ast::ChanRecvExpr& e) override {
+        os_ << prefix_ << connector(isLast_) << "ChanRecv\n";
+        printChildExpr(*e.channel, childPfx(), true);
     }
 };
 

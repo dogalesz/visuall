@@ -21,6 +21,7 @@
  * ════════════════════════════════════════════════════════════════════════════ */
 
 #include "gc.h"
+#include "scheduler.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -679,6 +680,39 @@ static void mark_internal(void* ptr) {
         break;
     }
 
+    case VSL_TAG_TASK: {
+        // VisuallTask: mark the env (closure + saved variables).
+        VisuallTask* task = (VisuallTask*)ptr;
+        if (task->env) {
+            GCHeader* eh = find_gc_header(task->env);
+            if (eh) mark_internal(task->env);
+        }
+        break;
+    }
+
+    case VSL_TAG_CHANNEL: {
+        // VisuallChannel: walk blocked-sender and blocked-receiver queues,
+        // marking each suspended task's env (Trap 9).
+        VisuallChannel* ch = (VisuallChannel*)ptr;
+        VisuallTask* t = ch->blocked_senders_head;
+        while (t) {
+            if (t->env) {
+                GCHeader* eh = find_gc_header(t->env);
+                if (eh) mark_internal(t->env);
+            }
+            t = t->next;
+        }
+        t = ch->blocked_receivers_head;
+        while (t) {
+            if (t->env) {
+                GCHeader* eh = find_gc_header(t->env);
+                if (eh) mark_internal(t->env);
+            }
+            t = t->next;
+        }
+        break;
+    }
+
     default:
         break;
     }
@@ -767,6 +801,15 @@ static void mark_stack(void) {
 static void mark_roots(void) {
     mark_global_roots();
     mark_stack();
+
+    // Walk the scheduler's ready queue — every queued goroutine's task
+    // and its env must survive GC (Trap 5).
+    VisuallTask* t = ready_head;
+    while (t) {
+        GCHeader* th = find_gc_header(t);
+        if (th) mark_internal(t);
+        t = t->next;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -865,6 +908,16 @@ void __visuall_collect(void) {
         gc_stats.total_collections++;
     }
     GC_UNLOCK();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Thread registration — worker threads call this so the GC scans their stack
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+void __visuall_gc_register_thread(void) {
+    /* v1: single-threaded, no-op.  v2 will register the thread's stack
+       base in a global registry for multi-threaded GC scanning. */
+    (void)0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

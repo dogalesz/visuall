@@ -25,6 +25,8 @@
 #include "parser.h"
 #include "codegen.h"
 #include "class_analyzer.h"
+#include "typechecker.h"
+#include "capture_analyzer.h"
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -730,6 +732,60 @@ static void test_stackTraces() {
     }
 }
 
+static void test_externFFI() {
+    // 27a. @extern parses and generates valid IR (verification passes)
+    {
+        std::string src =
+            "@extern(\"m\")\n"
+            "define my_sqrt(x: float) -> float\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "27a. @extern generates IR");
+        expect(ir.find("declare") != std::string::npos &&
+               ir.find("my_sqrt") != std::string::npos,
+               "27b. extern function is declared in IR");
+    }
+}
+
+static void test_concurrency() {
+    // 28a. go spawn generates __visuall_go_create
+    {
+        std::string src =
+            "define greet() -> void:\n"
+            "\tprint(\"hello\")\n"
+            "\n"
+            "define run() -> void:\n"
+            "\tgo greet()\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "28a. go spawn generates IR");
+        expect(ir.find("__visuall_go_create") != std::string::npos,
+               "28b. go emits __visuall_go_create call");
+    }
+    // 28c. make_chan generates __visuall_chan_create
+    {
+        std::string src =
+            "define test_chan():\n"
+            "\tch = make_chan(0)\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "28c. make_chan generates IR");
+        expect(ir.find("__visuall_chan_create") != std::string::npos,
+               "28d. make_chan emits __visuall_chan_create");
+    }
+    // 28e. chan send and receive (with make_chan)
+    {
+        std::string src =
+            "define comms() -> void:\n"
+            "\tch = make_chan(0)\n"
+            "\tch <- 42\n"
+            "\tx = <-ch\n";
+        std::string ir = generateIR(src);
+        expect(!ir.empty(), "28e. chan send/recv generates IR");
+        expect(ir.find("__visuall_chan_send") != std::string::npos,
+               "28f. ch<-val emits __visuall_chan_send");
+        expect(ir.find("__visuall_chan_recv") != std::string::npos,
+               "28g. <-ch emits __visuall_chan_recv");
+    }
+}
+
 int runCodegenTests() {
     failures = 0;
 
@@ -760,7 +816,9 @@ int runCodegenTests() {
     test_generators();
     test_randomModule();
     test_stackTraces();
+    test_externFFI();
+    test_concurrency();
 
-    std::cout << "  " << (117 - failures) << "/117 codegen tests passed.\n";
+    std::cout << "  " << (123 - failures) << "/123 codegen tests passed.\n";
     return failures;
 }

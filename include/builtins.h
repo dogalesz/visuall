@@ -24,7 +24,8 @@ inline bool isBuiltinFunction(const std::string& name) {
         "int", "float", "str", "bool",
         "abs", "min", "max", "round",
         "sorted", "reversed", "enumerate", "zip",
-        "map", "filter"
+        "map", "filter",
+        "make_chan"
     };
     return builtins.count(name) > 0;
 }

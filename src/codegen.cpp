@@ -443,8 +443,10 @@ void Codegen::generate(const ast::Program& program) {
     for (const auto& stmt : program.statements) {
         if (auto* f = dynamic_cast<const ast::FuncDef*>(stmt.get())) {
             // Skip generic functions — they are monomorphized at call sites.
-            if (!f->typeParams.empty()) {
-                genericFuncDefs_[f->name] = f;
+            // Also skip @extern functions — they are declared in codegenExternFuncDef.
+            if (!f->typeParams.empty() || f->isExtern) {
+                if (!f->typeParams.empty())
+                    genericFuncDefs_[f->name] = f;
                 continue;
             }
             // Generator functions always return i8* (VisualList*)
@@ -728,6 +730,11 @@ void Codegen::codegenStmt(const ast::Stmt& stmt) {
 
 // ── FuncDef ────────────────────────────────────────────────────────────────
 void Codegen::codegenFuncDef(const ast::FuncDef& node) {
+    if (node.isExtern) {
+        codegenExternFuncDef(node);
+        return;
+    }
+
     // Skip generic functions — they are monomorphized at call sites.
     if (!node.typeParams.empty()) {
         genericFuncDefs_[node.name] = &node;
@@ -866,6 +873,55 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
     boxedVars_ = savedBoxedVars;
     currentFunction_ = savedFn;
     if (savedBB) builder_->SetInsertPoint(savedBB);
+}
+
+// ── ExternFuncDef (C FFI) ──────────────────────────────────────────────────
+void Codegen::codegenExternFuncDef(const ast::FuncDef& node) {
+    // Map Visuall return type → LLVM type
+    llvm::Type* retTy = nullptr;
+    if (node.returnType.empty() || node.returnType == "void") {
+        retTy = llvm::Type::getVoidTy(*context_);
+    } else if (node.returnType == "int") {
+        retTy = llvm::Type::getInt64Ty(*context_);
+    } else if (node.returnType == "float") {
+        retTy = llvm::Type::getDoubleTy(*context_);
+    } else if (node.returnType == "bool") {
+        retTy = llvm::Type::getInt32Ty(*context_); // C ABI: bool → int
+    } else if (node.returnType == "str" || node.returnType == "string") {
+        retTy = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    } else {
+        // Default for unknown types (should be caught by typechecker)
+        retTy = llvm::Type::getInt64Ty(*context_);
+    }
+
+    // Map parameter types
+    std::vector<llvm::Type*> paramTys;
+    for (const auto& p : node.params) {
+        const auto& ta = p.typeAnnotation;
+        if (ta.empty() || ta == "int") {
+            paramTys.push_back(llvm::Type::getInt64Ty(*context_));
+        } else if (ta == "float") {
+            paramTys.push_back(llvm::Type::getDoubleTy(*context_));
+        } else if (ta == "bool") {
+            paramTys.push_back(llvm::Type::getInt32Ty(*context_));
+        } else if (ta == "str" || ta == "string") {
+            paramTys.push_back(
+                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+        } else {
+            paramTys.push_back(llvm::Type::getInt64Ty(*context_));
+        }
+    }
+
+    // Create external function with C calling convention
+    auto* fnTy = llvm::FunctionType::get(retTy, paramTys, node.isVariadicCFunc);
+    auto* fn = llvm::Function::Create(
+        fnTy, llvm::Function::ExternalLinkage, node.name, module_.get());
+    fn->setCallingConv(llvm::CallingConv::C);
+
+    // Track library for linker
+    if (!node.externLibName.empty()) {
+        linkedLibraries_.insert(node.externLibName);
+    }
 }
 
 // ── ClassDef ───────────────────────────────────────────────────────────────
@@ -2630,6 +2686,114 @@ void Codegen::codegenDelStmt(const ast::DelStmt& node) {
     }
 }
 
+// ── GoExpr / ChanSendStmt / ChanRecvExpr ──────────────────────────────────
+void Codegen::codegenGoExpr(const ast::GoExpr& node) {
+    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+
+    // Evaluate the callee and get function pointer.
+    llvm::Value* fnVal = codegenExpr(*node.callee);
+    llvm::Value* fnPtr = nullptr;
+    if (fnVal->getType()->isPointerTy()) {
+        fnPtr = builder_->CreateBitCast(fnVal, i8Ptr, "go.fn");
+    } else {
+        fnPtr = builder_->CreateIntToPtr(fnVal, i8Ptr, "go.fn");
+    }
+
+    // Pack arguments into a GC-allocated i64 array (VSL_TAG_TASK for GC tracing).
+    size_t argCount = node.args.size();
+    llvm::Value* argsPtr = llvm::ConstantPointerNull::get(i8Ptr);
+    if (argCount > 0) {
+        auto* allocFn = getOrDeclareVisualAlloc();
+        auto* byteSize = llvm::ConstantInt::get(i64Ty, argCount * 8ULL);
+        argsPtr = builder_->CreateCall(allocFn,
+            {byteSize, llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 10)},
+            "go.args");
+        auto* argsI64 = builder_->CreateBitCast(argsPtr,
+            llvm::PointerType::getUnqual(i64Ty), "args.i64p");
+        for (size_t i = 0; i < argCount; i++) {
+            llvm::Value* val = codegenExpr(*node.args[i]);
+            val = coerceToI64(val);
+            auto* gep = builder_->CreateGEP(i64Ty, argsI64,
+                llvm::ConstantInt::get(i64Ty, i), "arg.ptr");
+            builder_->CreateStore(val, gep);
+        }
+    }
+
+    // Allocate VisuallTask via GC (VSL_TAG_TASK = 10).
+    // Task struct: { i8* fn_ptr, i8* env, i64 state, i8* next }
+    auto* taskTy = llvm::StructType::get(*context_,
+        {i8Ptr, i8Ptr, i64Ty, i8Ptr}, true);
+    auto* taskAllocFn = getOrDeclareVisualAlloc();
+    auto* taskRaw = builder_->CreateCall(taskAllocFn,
+        {llvm::ConstantInt::get(i64Ty, 32),
+         llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 10)},
+        "task.raw");
+    auto* taskPtr = builder_->CreateBitCast(taskRaw,
+        llvm::PointerType::getUnqual(taskTy), "task.ptr");
+
+    // Fill task fields.
+    builder_->CreateStore(fnPtr,
+        builder_->CreateStructGEP(taskTy, taskPtr, 0, "fn.ptr"));
+    builder_->CreateStore(argsPtr,
+        builder_->CreateStructGEP(taskTy, taskPtr, 1, "env.ptr"));
+    builder_->CreateStore(llvm::ConstantInt::get(i64Ty, 0),
+        builder_->CreateStructGEP(taskTy, taskPtr, 2, "state.ptr"));
+    builder_->CreateStore(llvm::ConstantPointerNull::get(i8Ptr),
+        builder_->CreateStructGEP(taskTy, taskPtr, 3, "next.ptr"));
+
+    // Call __visuall_go_create(task).
+    auto* goCreateFn = module_->getFunction("__visuall_go_create");
+    if (!goCreateFn) {
+        auto* voidTy = llvm::Type::getVoidTy(*context_);
+        auto* goTy = llvm::FunctionType::get(voidTy, {i8Ptr}, false);
+        goCreateFn = llvm::Function::Create(goTy,
+            llvm::Function::ExternalLinkage, "__visuall_go_create", module_.get());
+    }
+    builder_->CreateCall(goCreateFn, {taskRaw});
+    valueResult_ = llvm::ConstantInt::get(i64Ty, 0);
+}
+
+void Codegen::codegenChanSendStmt(const ast::ChanSendStmt& node) {
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+
+    llvm::Value* chan = codegenExpr(*node.channel);
+    llvm::Value* val  = codegenExpr(*node.value);
+    val = coerceToI64(val);
+
+    if (!chan->getType()->isPointerTy())
+        chan = builder_->CreateIntToPtr(chan, i8Ptr, "chan.ptr");
+
+    auto* sendFn = module_->getFunction("__visuall_chan_send");
+    if (!sendFn) {
+        auto* voidTy = llvm::Type::getVoidTy(*context_);
+        auto* sendTy = llvm::FunctionType::get(voidTy, {i8Ptr, i64Ty, i8Ptr, i8Ptr}, false);
+        sendFn = llvm::Function::Create(sendTy,
+            llvm::Function::ExternalLinkage, "__visuall_chan_send", module_.get());
+    }
+    auto* nullPtr = llvm::ConstantPointerNull::get(i8Ptr);
+    builder_->CreateCall(sendFn, {chan, val, nullPtr, nullPtr});
+}
+
+llvm::Value* Codegen::codegenChanRecvExpr(const ast::ChanRecvExpr& node) {
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+
+    llvm::Value* chan = codegenExpr(*node.channel);
+    if (!chan->getType()->isPointerTy())
+        chan = builder_->CreateIntToPtr(chan, i8Ptr, "chan.ptr");
+
+    auto* recvFn = module_->getFunction("__visuall_chan_recv");
+    if (!recvFn) {
+        auto* recvTy = llvm::FunctionType::get(i64Ty, {i8Ptr, i8Ptr, i8Ptr}, false);
+        recvFn = llvm::Function::Create(recvTy,
+            llvm::Function::ExternalLinkage, "__visuall_chan_recv", module_.get());
+    }
+    auto* nullPtr = llvm::ConstantPointerNull::get(i8Ptr);
+    return builder_->CreateCall(recvFn, {chan, nullPtr, nullPtr}, "chan.recv");
+}
+
 // ── Imports ────────────────────────────────────────────────────────────────
 void Codegen::codegenImportStmt(const ast::ImportStmt& node) {
     // Track imported modules for module-qualified call dispatch.
@@ -3516,6 +3680,19 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
                                node.line, node.column);
         }
 
+        bool isExternCall = callee->getCallingConv() == llvm::CallingConv::C;
+
+        // ── Extern C call: release GC lock, call, re-acquire (Trap 4) ─
+        llvm::Function* gcUnlockFn = nullptr;
+        llvm::Function* gcLockFn = nullptr;
+        if (isExternCall) {
+            gcUnlockFn = module_->getFunction("__visuall_gc_unlock");
+            gcLockFn   = module_->getFunction("__visuall_gc_lock");
+            if (gcUnlockFn) {
+                builder_->CreateCall(gcUnlockFn, {}, "");
+            }
+        }
+
         std::vector<llvm::Value*> args;
         size_t paramIdx = 0;
         for (const auto& a : node.args) {
@@ -3697,9 +3874,14 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
 
         if (callee->getReturnType()->isVoidTy()) {
             emitCallOrInvoke(callee, args);
+            if (isExternCall && gcLockFn)
+                builder_->CreateCall(gcLockFn, {}, "");
             return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
         }
-        return emitCallOrInvoke(callee, args, "call");
+        auto* result = emitCallOrInvoke(callee, args, "call");
+        if (isExternCall && gcLockFn)
+            builder_->CreateCall(gcLockFn, {}, "");
+        return result;
     }
 
     // Member call: object.method(args) — route through module or class method lookup.
@@ -4299,8 +4481,67 @@ llvm::Value* Codegen::codegenListExpr(const ast::ListExpr& node) {
 }
 
 llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& node) {
-    // TODO: stack-allocate when escape analysis permits (requires inlining
-    // VisualDict + DictEntry layout and hash-table insertion logic).
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+
+    bool canStackAlloc = escapeInfo_ && escapeInfo_->count(&node)
+                         && escapeInfo_->at(&node);
+
+    if (canStackAlloc) {
+        // VisualDict C struct: { DictEntry* entries, int64_t capacity, int64_t length }
+        auto* dictTy = llvm::StructType::get(*context_, {i8Ptr, i64Ty, i64Ty});
+        auto* stackDict = createEntryBlockAlloca(currentFunction_, "dict.stack", dictTy);
+
+        // Calculate initial capacity (power-of-2, min 16 to match runtime).
+        uint32_t count = static_cast<uint32_t>(node.entries.size());
+        uint32_t cap = 16;
+        while (cap < count) cap *= 2;
+        auto* capVal = llvm::ConstantInt::get(i64Ty, cap);
+
+        // GC-allocate entries buffer (DictEntry = 24 bytes each: {i8*, i64, i8}).
+        llvm::Value* entriesBuf = nullptr;
+        if (cap > 0) {
+            auto* allocFn = getOrDeclareVisualAlloc();
+            auto* byteSize = llvm::ConstantInt::get(i64Ty, (uint64_t)cap * 24ULL);
+            // Tag=1 (VSL_TAG_STRING): the entries buffer is inert — it contains
+            // raw DictEntry structs {i8*,i64,i8} with no GC-interior-pointers.
+            // The DictEntry.key fields (GC strings) are found by the conservative
+            // stack scanner via the VisualDict.entries pointer on the stack.
+            entriesBuf = builder_->CreateCall(allocFn,
+                {byteSize, llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 1)},
+                "dict.entries");
+        } else {
+            entriesBuf = llvm::ConstantPointerNull::get(i8Ptr);
+        }
+
+        builder_->CreateStore(entriesBuf,
+            builder_->CreateStructGEP(dictTy, stackDict, 0, "dict.entries.ptr"));
+        builder_->CreateStore(capVal,
+            builder_->CreateStructGEP(dictTy, stackDict, 1, "dict.cap.ptr"));
+        builder_->CreateStore(llvm::ConstantInt::get(i64Ty, 0),
+            builder_->CreateStructGEP(dictTy, stackDict, 2, "dict.len.ptr"));
+
+        // Use __visuall_dict_set for insertion — works on stack structs since
+        // it accesses by pointer.
+        auto* dictSetFn = module_->getFunction("__visuall_dict_set");
+        if (dictSetFn) {
+            auto* dictPtr = builder_->CreateBitCast(stackDict, i8Ptr, "dict.ptr");
+            for (const auto& [keyExpr, valExpr] : node.entries) {
+                llvm::Value* key = codegenExpr(*keyExpr);
+                llvm::Value* val = codegenExpr(*valExpr);
+                if (!key->getType()->isPointerTy()) {
+                    auto* toStrFn = module_->getFunction("__visuall_int_to_str");
+                    if (toStrFn)
+                        key = builder_->CreateCall(toStrFn, {key}, "key.str");
+                }
+                val = coerceToI64(val);
+                builder_->CreateCall(dictSetFn, {dictPtr, key, val});
+            }
+        }
+        return builder_->CreateBitCast(stackDict, i8Ptr, "dict.stack.ptr");
+    }
+
+    // Heap path.
     auto* dictNewFn = module_->getFunction("__visuall_dict_new");
     auto* dictSetFn = module_->getFunction("__visuall_dict_set");
     if (!dictNewFn || !dictSetFn)
@@ -5120,6 +5361,16 @@ llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallEx
     // ── map(fn, list) ──────────────────────────────────────────────────
     // Emits a loop in IR: for each element in list, call fn(env, elem) and
     // push the result into a new list.  No runtime helper needed.
+    if (name == "make_chan") {
+        if (node.args.empty())
+            throw CodegenError("make_chan() requires 1 argument (capacity)",
+                               node.line, node.column);
+        llvm::Value* capacity = codegenExpr(*node.args[0]);
+        auto* fn = module_->getFunction("__visuall_chan_create");
+        if (fn) return builder_->CreateCall(fn, {capacity}, "chan.new");
+        return llvm::ConstantPointerNull::get(i8Ptr);
+    }
+
     if (name == "map") {
         if (node.args.size() < 2)
             return llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(i8Ptr));
@@ -5403,6 +5654,9 @@ void Codegen::visit(const ast::FromImportStmt& n)     { codegenFromImportStmt(n)
 void Codegen::visit(const ast::InterfaceDef& n)       { codegenInterfaceDef(n); }
 void Codegen::visit(const ast::EnumDef& n)            { codegenEnumDef(n); }
 void Codegen::visit(const ast::YieldStmt& n)          { codegenYieldStmt(n); }
+void Codegen::visit(const ast::GoExpr& n)             { codegenGoExpr(n); }
+void Codegen::visit(const ast::ChanSendStmt& n)       { codegenChanSendStmt(n); }
+void Codegen::visit(const ast::ChanRecvExpr& n)       { codegenChanRecvExpr(n); }
 
 void Codegen::visit(const ast::BreakStmt&) {
     if (!loopStack_.empty()) {

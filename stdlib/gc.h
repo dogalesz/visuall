@@ -31,6 +31,8 @@ extern "C" {
 #define VSL_TAG_BOXED    7   /* single-element heap box for byReference captures */
 #define VSL_TAG_SET        8   /* VisualSet — sorted int64_t array (collections module) */
 #define VSL_TAG_GENERATOR  9   /* VisualGenerator — state-machine generator   */
+#define VSL_TAG_TASK      10   /* VisuallTask — goroutine task descriptor     */
+#define VSL_TAG_CHANNEL   11   /* VisuallChannel — channel with wait queues   */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * GCHeader — prefixed to every GC-managed allocation
@@ -101,6 +103,10 @@ void __visuall_gc_enable_stats(int enable);
 
 /* Retrieve a copy of the current stats. */
 GCStats __visuall_gc_get_stats(void);
+
+/* Register the calling thread's stack with the GC so its stack is scanned
+   during stop-the-world collection.  Must be called once per worker thread. */
+void __visuall_gc_register_thread(void);
 
 /* Get the GCHeader for a user-visible pointer.  Returns NULL if ptr is
    NULL.  Caller must ensure ptr was returned by __visuall_alloc(). */

@@ -128,6 +128,11 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_enumerate", i8p, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_zip",       i8p, {i8p, i8p});
 
+    /* ── channel runtime ─────────────────────────────────────────────── */
+    getOrDeclareExtern(mod, ctx, "__visuall_chan_create", i8p,   {i64});
+    getOrDeclareExtern(mod, ctx, "__visuall_chan_send",   voidTy, {i8p, i64, i8p, i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_chan_recv",   i64,   {i8p, i8p, i8p});
+    getOrDeclareExtern(mod, ctx, "__visuall_chan_close",  voidTy, {i8p});
 
     /* ── string module ───────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_string_len",         i64, {i8p});

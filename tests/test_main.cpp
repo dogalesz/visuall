@@ -15,6 +15,7 @@ int runGCTests();
 int runClassAnalyzerTests();
 int runDiagnosticTests();
 int runManifestTests();
+int runEscapeTests();
 
 int main() {
     int failures = 0;
@@ -58,6 +59,9 @@ int main() {
 
     std::cout << "\n--- Manifest Tests ---\n";
     failures += runManifestTests();
+
+    std::cout << "\n--- Escape Analysis Tests ---\n";
+    failures += runEscapeTests();
 
     std::cout << "\n=== Results: ";
     if (failures == 0) {

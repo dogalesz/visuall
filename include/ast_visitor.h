@@ -49,6 +49,8 @@ public:
     virtual void visit(const ast::SpreadExpr&)         = 0;
     virtual void visit(const ast::DictSpreadExpr&)     = 0;
     virtual void visit(const ast::WalrusExpr&)         = 0;
+    virtual void visit(const ast::GoExpr&)             = 0;
+    virtual void visit(const ast::ChanRecvExpr&)       = 0;
 
     // ── Statement nodes ───────────────────────────────────────────────────
     virtual void visit(const ast::ExprStmt&)           = 0;
@@ -70,6 +72,7 @@ public:
     virtual void visit(const ast::InterfaceDef&)       = 0;
     virtual void visit(const ast::EnumDef&)            = 0;
     virtual void visit(const ast::YieldStmt&)           = 0;
+    virtual void visit(const ast::ChanSendStmt&)        = 0;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -107,6 +110,8 @@ public:
     void visit(const ast::SpreadExpr&)        override {}
     void visit(const ast::DictSpreadExpr&)     override {}
     void visit(const ast::WalrusExpr&)         override {}
+    void visit(const ast::GoExpr&)             override {}
+    void visit(const ast::ChanRecvExpr&)       override {}
 
     // Statements
     void visit(const ast::ExprStmt&)          override {}
@@ -133,6 +138,7 @@ public:
     void visit(const ast::InterfaceDef&)      override {}
     void visit(const ast::EnumDef&)           override {}
     void visit(const ast::YieldStmt&)          override {}
+    void visit(const ast::ChanSendStmt&)       override {}
 };
 
 } // namespace visuall
@@ -171,6 +177,8 @@ inline void DictComprehension::accept(ASTVisitor& v)  const { v.visit(*this); }
 inline void SpreadExpr::accept(ASTVisitor& v)         const { v.visit(*this); }
 inline void DictSpreadExpr::accept(ASTVisitor& v)     const { v.visit(*this); }
 inline void WalrusExpr::accept(ASTVisitor& v)         const { v.visit(*this); }
+inline void GoExpr::accept(ASTVisitor& v)             const { v.visit(*this); }
+inline void ChanRecvExpr::accept(ASTVisitor& v)       const { v.visit(*this); }
 
 // Statements
 inline void ExprStmt::accept(ASTVisitor& v)           const { v.visit(*this); }
@@ -194,5 +202,6 @@ inline void FromImportStmt::accept(ASTVisitor& v)     const { v.visit(*this); }
 inline void InterfaceDef::accept(ASTVisitor& v)       const { v.visit(*this); }
 inline void EnumDef::accept(ASTVisitor& v)            const { v.visit(*this); }
 inline void YieldStmt::accept(ASTVisitor& v)          const { v.visit(*this); }
+inline void ChanSendStmt::accept(ASTVisitor& v)        const { v.visit(*this); }
 
 }} // namespace visuall::ast

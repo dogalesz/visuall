@@ -85,6 +85,11 @@ public:
     /// Enable GC statistics reporting at shutdown.
     void setGCStats(bool enabled) { gcStatsEnabled_ = enabled; }
 
+    /// Return the set of external shared libraries to link against.
+    const std::unordered_set<std::string>& linkedLibraries() const {
+        return linkedLibraries_;
+    }
+
     /// Inject the class-field map built by ClassAnalyzer.
     /// Must be called before generate().
     void setClassFields(
@@ -117,6 +122,9 @@ private:
 
     // Escape analysis results (set by setEscapeInfo before generate)
     const std::unordered_map<const void*, bool>* escapeInfo_ = nullptr;
+
+    // External shared libraries to link against (populated by @extern)
+    std::unordered_set<std::string> linkedLibraries_;
 
     // ── Symbol table ────────────────────────────────────────────────────
     // Scope stack: each scope is a map from name → alloca.
@@ -273,6 +281,8 @@ private:
     void visit(const ast::InterfaceDef& n) override;
     void visit(const ast::EnumDef& n) override;
     void visit(const ast::YieldStmt& n) override;
+    void visit(const ast::GoExpr& n) override;
+    void visit(const ast::ChanSendStmt& n) override;
 
     // ── ASTVisitor overrides (expression nodes) ──────────────────────────
     void visit(const ast::IntLiteral& n) override;
@@ -301,6 +311,7 @@ private:
     void visit(const ast::SpreadExpr& n) override;
     void visit(const ast::DictSpreadExpr& n) override;
     void visit(const ast::WalrusExpr& n) override;
+    void visit(const ast::ChanRecvExpr& n) override;
 
     // Result slot set by expression visit()s, read by codegenExpr().
     llvm::Value* valueResult_ = nullptr;
@@ -309,6 +320,7 @@ private:
     void codegenStmt(const ast::Stmt& stmt);
     void codegenStmtList(const ast::StmtList& stmts);
     void codegenFuncDef(const ast::FuncDef& node);
+    void codegenExternFuncDef(const ast::FuncDef& node);
     void codegenClassDef(const ast::ClassDef& node);
     void codegenInitDef(const ast::InitDef& node);
     void codegenIfStmt(const ast::IfStmt& node);
@@ -329,6 +341,9 @@ private:
     void codegenInterfaceDef(const ast::InterfaceDef& node);
     void codegenEnumDef(const ast::EnumDef& node);
     void codegenYieldStmt(const ast::YieldStmt& node);
+    void codegenGoExpr(const ast::GoExpr& node);
+    void codegenChanSendStmt(const ast::ChanSendStmt& node);
+    llvm::Value* codegenChanRecvExpr(const ast::ChanRecvExpr& node);
     llvm::Function* codegenGeneratorFuncLowering(const ast::FuncDef& node,
                                                    llvm::Function* wrapperFn);
     void codegenGeneratorWrapper(const ast::FuncDef& node, llvm::Function* wrapperFn,

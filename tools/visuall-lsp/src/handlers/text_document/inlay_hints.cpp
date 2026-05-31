@@ -46,13 +46,21 @@ json LspServer::handleInlayHints(const json& params) {
                 } else if (dynamic_cast<const visuall::ast::TupleExpr*>(assign->value.get())) {
                     inferredType = "tuple";
                 } else if (auto* call = dynamic_cast<const visuall::ast::CallExpr*>(assign->value.get())) {
-                    // Try to infer return type from function definition.
                     if (auto* callee = dynamic_cast<const visuall::ast::Identifier*>(call->callee.get())) {
                         const SymbolInfo* sym = findSymbolByName(doc, callee->name);
                         if (sym && !sym->typeName.empty()) {
                             inferredType = sym->typeName;
                         }
                     }
+                } else if (auto* goe = dynamic_cast<const visuall::ast::GoExpr*>(assign->value.get())) {
+                    if (auto* callee = dynamic_cast<const visuall::ast::Identifier*>(goe->callee.get())) {
+                        const SymbolInfo* sym = findSymbolByName(doc, callee->name);
+                        if (sym && !sym->typeName.empty()) {
+                            inferredType = sym->typeName;
+                        }
+                    }
+                } else if (dynamic_cast<const visuall::ast::ChanRecvExpr*>(assign->value.get())) {
+                    // Channel element type requires TypeChecker — skip for now.
                 }
 
                 if (!inferredType.empty()) {

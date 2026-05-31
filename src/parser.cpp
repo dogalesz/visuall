@@ -158,6 +158,18 @@ static ast::ExprPtr cloneExpr(const ast::Expr& expr) {
         n->line = p->line; n->column = p->column;
         return n;
     }
+    if (auto* p = dynamic_cast<const ast::GoExpr*>(&expr)) {
+        ast::ExprList args;
+        for (const auto& a : p->args) args.push_back(cloneExpr(*a));
+        auto n = std::make_unique<ast::GoExpr>(cloneExpr(*p->callee), std::move(args));
+        n->line = p->line; n->column = p->column;
+        return n;
+    }
+    if (auto* p = dynamic_cast<const ast::ChanRecvExpr*>(&expr)) {
+        auto n = std::make_unique<ast::ChanRecvExpr>(cloneExpr(*p->channel));
+        n->line = p->line; n->column = p->column;
+        return n;
+    }
     // Fallback — should not happen for well-formed trees.
     auto n = std::make_unique<ast::NullLiteral>();
     n->line = expr.line; n->column = expr.column;
@@ -310,6 +322,7 @@ ast::StmtPtr Parser::parseStatement() {
         case TokenType::KW_INTERFACE:return parseInterfaceDef();
         case TokenType::KW_ENUM:     return parseEnumDef();
         case TokenType::KW_YIELD:    return parseYieldStmt();
+        case TokenType::KW_GO:       return parseGoStmt();
         case TokenType::KW_IF:       return parseIfStmt();
         case TokenType::KW_FOR:      return parseForStmt();
         case TokenType::KW_WHILE:    return parseWhileStmt();
@@ -340,11 +353,16 @@ ast::StmtPtr Parser::parseStatement() {
 // ════════════════════════════════════════════════════════════════════════════
 // Parameter list:  (name: type, name2: type2)
 // ════════════════════════════════════════════════════════════════════════════
-std::vector<ast::Param> Parser::parseParamList() {
+std::vector<ast::Param> Parser::parseParamList(bool* out_isVariadicC) {
     expect(TokenType::LPAREN, "Expected '(' for parameter list");
     std::vector<ast::Param> params;
     if (!check(TokenType::RPAREN)) {
         do {
+            // C variadic: ... must be the last "parameter"
+            if (match(TokenType::ELLIPSIS)) {
+                if (out_isVariadicC) *out_isVariadicC = true;
+                break;
+            }
             ast::Param p;
             // Dict-kwargs: **kwargs
             if (match(TokenType::DOUBLE_STAR)) {
@@ -378,6 +396,26 @@ std::vector<ast::Param> Parser::parseParamList() {
 // ════════════════════════════════════════════════════════════════════════════
 ast::StmtPtr Parser::parseFuncDef(std::vector<ast::ExprPtr> decorators) {
     int ln = current().line, col = current().column;
+
+    // ── Detect @extern("lib") or bare @extern in decorators ──────────
+    bool isExtern = false;
+    std::string externLibName;
+    bool isVariadicC = false;
+    for (const auto& dec : decorators) {
+        if (auto* id = dynamic_cast<const ast::Identifier*>(dec.get())) {
+            if (id->name == "extern") isExtern = true;
+        } else if (auto* call = dynamic_cast<const ast::CallExpr*>(dec.get())) {
+            if (auto* calleeId = dynamic_cast<const ast::Identifier*>(call->callee.get())) {
+                if (calleeId->name == "extern" && call->args.size() == 1) {
+                    if (auto* strLit = dynamic_cast<const ast::StringLiteral*>(call->args[0].get())) {
+                        isExtern = true;
+                        externLibName = strLit->value;
+                    }
+                }
+            }
+        }
+    }
+
     advance(); // consume 'define'
     std::string name = expect(TokenType::IDENTIFIER, "Expected function name").lexeme;
 
@@ -395,19 +433,39 @@ ast::StmtPtr Parser::parseFuncDef(std::vector<ast::ExprPtr> decorators) {
         expect(TokenType::GT, "Expected '>' after type parameters");
     }
 
-    auto params = parseParamList();
+    auto params = parseParamList(&isVariadicC);
 
     std::string retType;
     if (match(TokenType::ARROW)) {
         retType = parseTypeAnnotation();
     }
-    expect(TokenType::COLON, "Expected ':' after function signature");
 
+    if (isExtern) {
+        // Extern function: body is optional. If there's a colon, expect ...
+        if (match(TokenType::COLON)) {
+            expect(TokenType::ELLIPSIS, "Expected '...' body for extern function");
+            match(TokenType::NEWLINE);
+        }
+        auto node = std::make_unique<ast::FuncDef>(
+            name, std::move(params), retType, ast::StmtList{});
+        node->decorators      = std::move(decorators);
+        node->typeParams      = std::move(typeParams);
+        node->typeParamBounds = std::move(typeParamBounds);
+        node->isExtern        = true;
+        node->externLibName   = externLibName;
+        node->isVariadicCFunc = isVariadicC;
+        node->line = ln; node->column = col;
+        node->endLine = previous().line; node->endCol = previous().column;
+        return node;
+    }
+
+    expect(TokenType::COLON, "Expected ':' after function signature");
     auto body = parseBlock();
     auto node = std::make_unique<ast::FuncDef>(name, std::move(params), retType, std::move(body));
-    node->decorators = std::move(decorators);
-    node->typeParams = std::move(typeParams);
+    node->decorators      = std::move(decorators);
+    node->typeParams      = std::move(typeParams);
     node->typeParamBounds = std::move(typeParamBounds);
+    node->isVariadicCFunc = isVariadicC;
     node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
     return node;
 }
@@ -882,6 +940,14 @@ ast::StmtPtr Parser::parseExpressionStatement() {
     int ln = current().line, col = current().column;
     auto expr = parseExpression();
 
+    // ── Channel send: expr <- value ─────────────────────────────────────
+    if (match(TokenType::KW_SEND)) {
+        auto val = parseExpression();
+        auto node = std::make_unique<ast::ChanSendStmt>(std::move(expr), std::move(val));
+        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
+        return node;
+    }
+
     // ── Tuple unpacking: a, b, c = expr ────────────────────────────────
     if (match(TokenType::COMMA)) {
         // Collect identifier targets
@@ -1216,6 +1282,10 @@ ast::ExprPtr Parser::parseUnary() {
     if (match(TokenType::TILDE)) {
         auto operand = parseUnary();
         return std::make_unique<ast::UnaryExpr>(ast::UnaryOp::BitNot, std::move(operand));
+    }
+    if (match(TokenType::KW_SEND)) {
+        auto chan = parseUnary();
+        return std::make_unique<ast::ChanRecvExpr>(std::move(chan));
     }
     return parsePower();
 }
@@ -1629,6 +1699,30 @@ ast::StmtPtr Parser::parseYieldStmt() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// go funcName(args)
+// ════════════════════════════════════════════════════════════════════════════
+ast::StmtPtr Parser::parseGoStmt() {
+    int ln = current().line, col = current().column;
+    advance(); // consume 'go'
+    auto expr = parseExpression();
+
+    ast::ExprList args;
+    ast::ExprPtr  callee;
+
+    if (auto* call = dynamic_cast<ast::CallExpr*>(expr.get())) {
+        callee = std::move(call->callee);
+        args   = std::move(call->args);
+    } else {
+        // go lambda: body — treat the expression as a zero-arg callable
+        callee = std::move(expr);
+    }
+
+    auto node = std::make_unique<ast::GoExpr>(std::move(callee), std::move(args));
+    node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
+    return std::make_unique<ast::ExprStmt>(std::move(node));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Type annotation: int, int | null, ?str, list[int], dict[str, int]
 // ════════════════════════════════════════════════════════════════════════════
 std::string Parser::parseTypeAnnotation() {
@@ -1667,6 +1761,12 @@ std::string Parser::parseTypeAnnotation() {
         // since the grammar is unambiguous at this point)
         pos_ = savedPos;
         result.clear();
+    }
+
+    // chan type: chan ElemType
+    if (match(TokenType::KW_CHAN)) {
+        std::string inner = parseTypeAnnotation();
+        return "chan[" + inner + "]";
     }
 
     // Base type name (identifiers and 'null' keyword)

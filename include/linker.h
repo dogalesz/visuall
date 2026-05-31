@@ -47,9 +47,11 @@ public:
 
     /// Link object file(s) to a final binary using the system linker.
     /// @param exeDir  directory containing the visuallc binary (for locating runtime libs)
+    /// @param extraLibs  additional -l flags for extern libraries
     static int linkToBinary(const std::string& objPath,
                             const std::string& outPath,
-                            const std::string& exeDir = ".");
+                            const std::string& exeDir = ".",
+                            const std::vector<std::string>& extraLibs = {});
 
     /// Full pipeline: merge → optimize → IR → object → binary.
     static int compileAndLink(std::unique_ptr<llvm::Module> mainModule,
@@ -57,7 +59,8 @@ public:
                                const std::string& outputPath,
                                const std::string& exeDir = ".",
                                bool emitIR = false,
-                               std::ostream* irStream = nullptr);
+                               std::ostream* irStream = nullptr,
+                               const std::vector<std::string>& extraLibs = {});
 };
 
 } // namespace visuall

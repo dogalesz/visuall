@@ -61,6 +61,9 @@ static uint32_t classifyToken(visuall::TokenType tt) {
         case visuall::TokenType::KW_INTERFACE:
         case visuall::TokenType::KW_SUPER:
         case visuall::TokenType::KW_YIELD:
+        case visuall::TokenType::KW_GO:
+        case visuall::TokenType::KW_CHAN:
+        case visuall::TokenType::KW_SEND:
         case visuall::TokenType::KW_MATCH:
         case visuall::TokenType::KW_CASE:
         case visuall::TokenType::KW_ENUM:

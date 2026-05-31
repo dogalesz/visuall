@@ -65,6 +65,8 @@ static const std::unordered_map<std::string, TokenType> keywords = {
     {"case",       TokenType::KW_CASE},
     {"enum",       TokenType::KW_ENUM},
     {"yield",      TokenType::KW_YIELD},
+    {"go",         TokenType::KW_GO},
+    {"chan",       TokenType::KW_CHAN},
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -524,6 +526,8 @@ Token Lexer::lexOperator(char c, int tokLine, int tokCol) {
                     return makeToken(TokenType::LSHIFT_EQ, "<<=", tokLine, tokCol);
                 return makeToken(TokenType::LSHIFT, "<<", tokLine, tokCol);
             }
+            if (match('-'))
+                return makeToken(TokenType::KW_SEND, "<-", tokLine, tokCol);
             if (match('='))
                 return makeToken(TokenType::LTE, "<=", tokLine, tokCol);
             return makeToken(TokenType::LT, "<", tokLine, tokCol);

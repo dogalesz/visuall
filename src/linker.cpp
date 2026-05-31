@@ -179,13 +179,17 @@ void Linker::emitObjectFile(llvm::Module& mod, const std::string& path) {
 
 int Linker::linkToBinary(const std::string& objPath,
                           const std::string& outPath,
-                          const std::string& exeDir) {
+                          const std::string& exeDir,
+                          const std::vector<std::string>& extraLibs) {
     std::string libDir = exeDir;
     std::string yyjsonDir = exeDir + "/_deps/yyjson-build";
     std::string cmd = "gcc \"" + objPath + "\" -o \"" + outPath + "\""
         " -L\"" + libDir + "\" -lvisuall_runtime"
         " -L\"" + yyjsonDir + "\" -lyyjson"
         " -lws2_32 -lm";
+    for (const auto& lib : extraLibs) {
+        cmd += " -l" + lib;
+    }
     return std::system(cmd.c_str());
 }
 
@@ -196,7 +200,8 @@ int Linker::compileAndLink(std::unique_ptr<llvm::Module> mainModule,
                             const std::string& outputPath,
                             const std::string& exeDir,
                             bool emitIR,
-                            std::ostream* irStream) {
+                            std::ostream* irStream,
+                            const std::vector<std::string>& extraLibs) {
     // 1. Link all modules together
     auto merged = link(std::move(mainModule), std::move(others));
 
@@ -221,7 +226,7 @@ int Linker::compileAndLink(std::unique_ptr<llvm::Module> mainModule,
     emitObjectFile(*merged, objPath);
 
     // 6. Link to final binary
-    return linkToBinary(objPath, outputPath, exeDir);
+    return linkToBinary(objPath, outputPath, exeDir, extraLibs);
 }
 
 } // namespace visuall

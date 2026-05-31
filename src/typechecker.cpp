@@ -151,6 +151,12 @@ bool NullableType::equals(const TypeNode& o) const {
     return typeEquals(inner, static_cast<const NullableType&>(o).inner);
 }
 
+TypeRef makeChan(TypeRef elem) { return std::make_shared<ChanType>(std::move(elem)); }
+
+bool ChanType::equals(const TypeNode& other) const {
+    if (other.kind != TypeNode::Chan) return false;
+    return typeEquals(elem, static_cast<const ChanType&>(other).elem);
+}
 // â”€â”€â”€ Factory functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 TypeRef makeInt()     { return std::make_shared<PrimitiveType>(TypeNode::Int); }
 TypeRef makeFloat()   { return std::make_shared<PrimitiveType>(TypeNode::Float); }
@@ -284,6 +290,13 @@ TypeRef TypeChecker::lookup(const std::string& name, int line, int col) {
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 TypeRef TypeChecker::resolveTypeName(const std::string& name) const {
+    // Channel types: chan[T]
+    static const std::string chanPrefix = "chan[";
+    if (name.compare(0, chanPrefix.size(), chanPrefix) == 0 && name.back() == ']') {
+        std::string inner = name.substr(chanPrefix.size(), name.size() - chanPrefix.size() - 1);
+        return makeChan(resolveTypeName(inner));
+    }
+
     // Function types: (int,str)->bool
     if (!name.empty() && name[0] == '(') {
         auto arrowPos = name.find(")->");
@@ -682,8 +695,32 @@ void TypeChecker::visit(const ast::ReturnStmt& s) {
 void TypeChecker::visit(const ast::FuncDef& s) {
     for ([[maybe_unused]] const auto& dec : s.decorators) {
         // Skip type-checking decorator expressions — they are compile-time
-        // annotations, not runtime expressions.  Unknown ones produce a
-        // codegen-level warning instead of a type error.
+        // annotations, not runtime expressions.
+    }
+
+    if (s.isExtern) {
+        // Validate C-compatible types for extern function declarations.
+        auto isCompatible = [&](const std::string& t) -> bool {
+            return t.empty() || t == "int" || t == "float" || t == "bool"
+                || t == "str" || t == "string" || t == "void";
+        };
+        if (!s.returnType.empty() && !isCompatible(s.returnType)) {
+            error("extern function '" + s.name +
+                  "' has non-C-compatible return type '" + s.returnType + "'",
+                  s.line, s.column,
+                  "use int, float, str, bool, or void for C FFI");
+        }
+        for (const auto& p : s.params) {
+            if (!p.typeAnnotation.empty() && !isCompatible(p.typeAnnotation)) {
+                error("extern function '" + s.name +
+                      "' has non-C-compatible parameter type '" +
+                      p.typeAnnotation + "'",
+                      s.line, s.column,
+                      "use int, float, str, or bool for C FFI");
+            }
+        }
+        // No body type-checking for extern declarations.
+        return;
     }
 
     TypeRef savedRetType = currentReturnType_;
@@ -1060,6 +1097,35 @@ void TypeChecker::visit(const ast::YieldStmt& s) {
     }
 }
 
+void TypeChecker::visit(const ast::GoExpr& e) {
+    checkExpr(*e.callee);
+    for (const auto& arg : e.args) {
+        checkExpr(*arg);
+    }
+    exprResult_ = makeVoid();
+}
+
+void TypeChecker::visit(const ast::ChanSendStmt& s) {
+    TypeRef chanType = checkExpr(*s.channel);
+    if (chanType->kind != TypeNode::Chan) {
+        error("expected channel type for send, got '" + chanType->toString() + "'", s.line, s.column);
+        return;
+    }
+    TypeRef valType = checkExpr(*s.value);
+    auto* ct = static_cast<ChanType*>(chanType.get());
+    unify(ct->elem, valType, s.line, s.column);
+}
+
+void TypeChecker::visit(const ast::ChanRecvExpr& e) {
+    TypeRef chanType = checkExpr(*e.channel);
+    if (chanType->kind != TypeNode::Chan) {
+        error("expected channel type for receive, got '" + chanType->toString() + "'", e.line, e.column);
+        exprResult_ = makeUnknown();
+        return;
+    }
+    exprResult_ = static_cast<ChanType*>(chanType.get())->elem;
+}
+
 void TypeChecker::visit(const ast::TupleUnpackStmt& s) {
     checkExpr(*s.value);
     for (const auto& target : s.targets) {
@@ -1247,6 +1313,17 @@ void TypeChecker::visit(const ast::CallExpr& e) {
                 }
             }
             exprResult_ = makeStr();
+            return;
+        }
+        if (id->name == "make_chan") {
+            if (e.args.size() != 1) {
+                error("make_chan() requires exactly 1 argument (capacity)",
+                      e.line, e.column);
+            }
+            if (!e.args.empty()) checkExpr(*e.args[0]);
+            // Channel element type comes from typeArgs if present, else unknown.
+            TypeRef elemType = makeUnknown();
+            exprResult_ = makeChan(elemType);
             return;
         }
     }

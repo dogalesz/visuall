@@ -41,9 +41,9 @@ find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
-include_directories(${LLVM_INCLUDE_DIRS})
+# Use target-specific includes (not global) to avoid system header shadowing
+# (libxml2's parser.h would otherwise shadow our include/parser.h).
 separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
-add_definitions(${LLVM_DEFINITIONS_LIST})
 
 llvm_map_components_to_libnames(LLVM_LIBS
     core
@@ -109,6 +109,7 @@ endif()
 add_library(visuall_runtime STATIC
     stdlib/runtime.c
     stdlib/gc.c
+    stdlib/scheduler.c
     stdlib/exception_support.cpp
 )
 target_include_directories(visuall_runtime PRIVATE stdlib)
@@ -128,8 +129,11 @@ target_compile_options(visuall_runtime PRIVATE
 
 # ── visuallc binary ────────────────────────────────────────────────────────
 add_executable(visuallc ${VISUALL_LLVM_SOURCES})
-target_include_directories(visuallc PRIVATE include)
+target_include_directories(visuallc PRIVATE include ${LLVM_INCLUDE_DIRS})
 target_link_libraries(visuallc PRIVATE visuall_frontend ${LLVM_LIBS})
+if(LLVM_DEFINITIONS_LIST)
+    target_compile_definitions(visuallc PRIVATE ${LLVM_DEFINITIONS_LIST})
+endif()
 if(VISUALL_PERSONALITY_DEF)
     target_compile_definitions(visuallc PRIVATE ${VISUALL_PERSONALITY_DEF})
 endif()
@@ -184,12 +188,34 @@ if(WIN32)
             "${VISUALL_MSYS2_BIN}/libwinpthread-1.dll"
             "${VISUALL_MSYS2_BIN}/zlib1.dll"
             "${VISUALL_MSYS2_BIN}/libzstd.dll"
-            "${VISUALL_MSYS2_BIN}/libLLVM*.dll"
         )
-        if(_runtime_dlls)
-            file(COPY ${_runtime_dlls} DESTINATION "${CMAKE_BINARY_DIR}")
-            message(STATUS "Copied MSYS2 runtime DLLs to ${CMAKE_BINARY_DIR}")
+    endif()
+
+    # LLVM may be installed in a different MSYS2 environment than the compiler.
+    # Extract the bin directory from LLVM's own cmake path so we can find
+    # libLLVM*.dll and its transitive dependencies (e.g. libffi).
+    if(LLVM_DIR)
+        # LLVM_DIR ends in .../lib/cmake/llvm; go up 3 levels to the prefix.
+        get_filename_component(_llvm_lib_cmake "${LLVM_DIR}" DIRECTORY)
+        get_filename_component(_llvm_lib       "${_llvm_lib_cmake}" DIRECTORY)
+        get_filename_component(_llvm_prefix    "${_llvm_lib}" DIRECTORY)
+        set(VISUALL_LLVM_BIN "${_llvm_prefix}/bin")
+    endif()
+
+    if(VISUALL_LLVM_BIN AND EXISTS "${VISUALL_LLVM_BIN}")
+        file(GLOB _llvm_dlls
+            "${VISUALL_LLVM_BIN}/libLLVM*.dll"
+            "${VISUALL_LLVM_BIN}/libffi*.dll"
+        )
+        if(_llvm_dlls)
+            file(COPY ${_llvm_dlls} DESTINATION "${CMAKE_BINARY_DIR}")
+            message(STATUS "Copied LLVM runtime DLLs from ${VISUALL_LLVM_BIN}")
         endif()
+    endif()
+
+    if(_runtime_dlls)
+        file(COPY ${_runtime_dlls} DESTINATION "${CMAKE_BINARY_DIR}")
+        message(STATUS "Copied MSYS2 runtime DLLs to ${CMAKE_BINARY_DIR}")
     endif()
 endif()
 
@@ -208,16 +234,21 @@ add_executable(visuall_tests
     tests/gc_test.cpp
     tests/class_analyzer_test.cpp
     tests/diagnostic_test.cpp
+    tests/escape_test.cpp
     src/codegen.cpp
     src/builtins.cpp
     src/module_loader.cpp
     src/linker.cpp
     stdlib/gc.c
     stdlib/runtime.c
+    stdlib/scheduler.c
     stdlib/exception_support.cpp
 )
-target_include_directories(visuall_tests PRIVATE include stdlib)
+target_include_directories(visuall_tests PRIVATE include stdlib ${LLVM_INCLUDE_DIRS})
 target_link_libraries(visuall_tests PRIVATE visuall_frontend ${LLVM_LIBS} yyjson)
+if(LLVM_DEFINITIONS_LIST)
+    target_compile_definitions(visuall_tests PRIVATE ${LLVM_DEFINITIONS_LIST})
+endif()
 if(WIN32)
     target_link_libraries(visuall_tests PRIVATE ws2_32)
 endif()
@@ -274,6 +305,28 @@ add_test(
             "${CMAKE_BINARY_DIR}/tests/pkg_test/app/main.vsl"
             -o "${CMAKE_BINARY_DIR}/tests/pkg_test/app/main_out"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/tests/pkg_test/app"
+)
+
+# Integration test: FFI @extern compiles to IR without errors.
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tests/ffi")
+add_test(
+    NAME ffi_extern_compile
+    COMMAND visuallc
+            --emit-ir
+            "${CMAKE_SOURCE_DIR}/tests/ffi/math_extern.vsl"
+            -o "${CMAKE_BINARY_DIR}/tests/ffi/math_extern_out"
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
+# Integration test: concurrency go+make_chan compiles to IR without errors.
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tests/concurrency")
+add_test(
+    NAME concurrency_basic
+    COMMAND visuallc
+            --emit-ir
+            "${CMAKE_SOURCE_DIR}/tests/concurrency/basic.vsl"
+            -o "${CMAKE_BINARY_DIR}/tests/concurrency/basic_out"
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
 # ── visuall-lsp (optional) ──────────────────────────────────────────────────

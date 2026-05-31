@@ -56,6 +56,7 @@ private:
     ast::StmtPtr  parseClassDef();
     ast::StmtPtr  parseEnumDef();
     ast::StmtPtr  parseYieldStmt();
+    ast::StmtPtr  parseGoStmt();
     ast::StmtPtr  parseIfStmt();
     ast::StmtPtr  parseForStmt();
     ast::StmtPtr  parseWhileStmt();
@@ -74,7 +75,7 @@ private:
     ast::StmtPtr  parseDecorated();
     ast::StmtPtr  parseInterfaceDef();
 
-    std::vector<ast::Param> parseParamList();
+    std::vector<ast::Param> parseParamList(bool* out_isVariadicC = nullptr);
     std::string parseTypeAnnotation();
 
     // ── Expression parsing (precedence climbing) ───────────────────────

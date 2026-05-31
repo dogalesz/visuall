@@ -248,7 +248,11 @@ int main(int argc, char* argv[]) {
         std::string objPath = outputFile + ".o";
         visuall::Linker::emitObjectFile(*mainModule, objPath);
 
-        int result = visuall::Linker::linkToBinary(objPath, outputFile, exeDir);
+        std::vector<std::string> externLibs(
+            codegen.linkedLibraries().begin(),
+            codegen.linkedLibraries().end());
+        int result = visuall::Linker::linkToBinary(
+            objPath, outputFile, exeDir, externLibs);
         if (result != 0) {
             std::cerr << "error: native compilation failed (linker returned "
                       << result << ")\n";

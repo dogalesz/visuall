@@ -168,7 +168,7 @@ void EscapeAnalyzer::visit(const ast::AssignStmt& n) {
         dynamic_cast<ast::TupleExpr*>(n.value.get())) {
         analyzeExpr(*n.value);
         registerAlloc(*n.value, lhsName);
-    } else if (auto* call = dynamic_cast<ast::CallExpr*>(n.value.get())) {
+    } else if (dynamic_cast<ast::CallExpr*>(n.value.get())) {
         // Constructor call — treat as allocation site
         analyzeExpr(*n.value);
         registerAlloc(*n.value, lhsName);
@@ -245,6 +245,13 @@ void EscapeAnalyzer::visit(const ast::MatchStmt& n) {
     }
 }
 
+void EscapeAnalyzer::visit(const ast::ChanSendStmt& n) {
+    // Channel send is a yield point — allocations must survive suspension.
+    isYieldingFunction_ = true;
+    n.channel->accept(*this);
+    n.value->accept(*this);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Visitor overrides — Expression nodes
 // ════════════════════════════════════════════════════════════════════════════
@@ -297,10 +304,25 @@ void EscapeAnalyzer::visit(const ast::LambdaExpr& n) {
 }
 
 void EscapeAnalyzer::visit(const ast::MemberExpr& n) {
-    // Member access on a variable — the object itself doesn't escape
-    // just from being accessed, but the result of the member expression
-    // doesn't introduce a new allocation.
     n.object->accept(*this);
+}
+
+void EscapeAnalyzer::visit(const ast::GoExpr& n) {
+    // Goroutine entry — allocations must survive scheduler suspension.
+    isYieldingFunction_ = true;
+    n.callee->accept(*this);
+    for (const auto& arg : n.args) {
+        if (auto* id = dynamic_cast<ast::Identifier*>(arg.get())) {
+            markEscaped(id->name);
+        }
+        arg->accept(*this);
+    }
+}
+
+void EscapeAnalyzer::visit(const ast::ChanRecvExpr& n) {
+    // Channel receive is a yield point — allocations must survive suspension.
+    isYieldingFunction_ = true;
+    n.channel->accept(*this);
 }
 
 } // namespace visuall

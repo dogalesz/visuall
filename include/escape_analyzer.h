@@ -84,6 +84,9 @@ private:
     void visit(const ast::ThrowStmt& n) override;
     void visit(const ast::TryStmt& n) override;
     void visit(const ast::MatchStmt& n) override;
+    void visit(const ast::GoExpr& n) override;
+    void visit(const ast::ChanSendStmt& n) override;
+    void visit(const ast::ChanRecvExpr& n) override;
 };
 
 } // namespace visuall

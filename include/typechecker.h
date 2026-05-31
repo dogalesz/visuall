@@ -17,7 +17,8 @@ struct TypeNode {
     enum Kind {
         Int, Float, Str, Bool, Void, Null,
         List, Dict, Tuple, Func, Class, Unknown,
-        Union, Interface, TypeVar, Nullable
+        Union, Interface, TypeVar, Nullable,
+        Chan
     };
 
     Kind kind;
@@ -147,6 +148,14 @@ struct NullableType : TypeNode {
     bool equals(const TypeNode& other) const override;
 };
 
+// ChanType — chan[T]  (concurrent channel of element type T)
+struct ChanType : TypeNode {
+    TypeRef elem;
+    explicit ChanType(TypeRef e) : TypeNode(Chan), elem(std::move(e)) {}
+    std::string toString() const override { return "chan[" + elem->toString() + "]"; }
+    bool equals(const TypeNode& other) const override;
+};
+
 // ════════════════════════════════════════════════════════════════════════════
 // Factory functions — return TypeRef, preserve the old Type::make*() names.
 // ════════════════════════════════════════════════════════════════════════════
@@ -165,6 +174,7 @@ TypeRef makeClass(const std::string& name);
 TypeRef makeInterface(const std::string& name);
 TypeRef makeTypeVar(const std::string& name);
 TypeRef makeUnion(std::vector<TypeRef> members);
+TypeRef makeChan(TypeRef elem);
 
 // ════════════════════════════════════════════════════════════════════════════
 // TypeError — thrown on all type-checking errors.
@@ -287,6 +297,9 @@ public:
     void visit(const ast::InterfaceDef& n)        override;
     void visit(const ast::EnumDef& n)             override;
     void visit(const ast::YieldStmt& n)           override;
+    void visit(const ast::GoExpr& n)              override;
+    void visit(const ast::ChanSendStmt& n)        override;
+    void visit(const ast::ChanRecvExpr& n)        override;
 
 private:
     std::string filename_;

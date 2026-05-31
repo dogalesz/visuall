@@ -325,6 +325,31 @@ struct WalrusExpr : Expr {
     void accept(ASTVisitor& v) const override;
 };
 
+// ── Goroutine spawn: go funcName(args) ────────────────────────────────────
+struct GoExpr : Expr {
+    ExprPtr  callee;
+    ExprList args;
+    GoExpr(ExprPtr c, ExprList a)
+        : callee(std::move(c)), args(std::move(a)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
+// ── Channel receive: value = <-chanExpr ──────────────────────────────────
+struct ChanRecvExpr : Expr {
+    ExprPtr channel;
+    explicit ChanRecvExpr(ExprPtr ch) : channel(std::move(ch)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
+// ── Channel send: chanExpr <- value (statement form) ──────────────────────
+struct ChanSendStmt : Stmt {
+    ExprPtr channel;
+    ExprPtr value;
+    ChanSendStmt(ExprPtr ch, ExprPtr v)
+        : channel(std::move(ch)), value(std::move(v)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
 // ── Function definition ────────────────────────────────────────────────────
 struct FuncDef : Stmt {
     std::string         name;
@@ -334,6 +359,12 @@ struct FuncDef : Stmt {
     std::string         returnType; // may be empty
     StmtList            body;
     std::vector<ExprPtr> decorators; // may be empty
+
+    // C FFI: @extern("libname") decorator support
+    bool        isExtern         = false;  // @extern decorator present
+    std::string externLibName;            // library name (e.g. "m", "pthread") or empty
+    bool        isVariadicCFunc  = false; // C variadic (...) for printf-style
+
     FuncDef(std::string n, std::vector<Param> p, std::string ret, StmtList b)
         : name(std::move(n)), params(std::move(p)),
           returnType(std::move(ret)), body(std::move(b)) {}

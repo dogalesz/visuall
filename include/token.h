@@ -61,8 +61,11 @@ enum class TokenType {
     KW_CASE,            // case
     KW_ENUM,            // enum
     KW_YIELD,           // yield
+    KW_GO,              // go
+    KW_CHAN,            // chan
 
     // ── Operators ──────────────────────────────────────────────────────────
+    KW_SEND,            // <- (channel send arrow)
     PLUS,               // +
     MINUS,              // -
     STAR,               // *
@@ -190,6 +193,9 @@ inline const char* tokenTypeToString(TokenType t) {
         case TokenType::KW_CASE:        return "KW_CASE";
         case TokenType::KW_ENUM:        return "KW_ENUM";
         case TokenType::KW_YIELD:       return "KW_YIELD";
+        case TokenType::KW_GO:          return "KW_GO";
+        case TokenType::KW_CHAN:        return "KW_CHAN";
+        case TokenType::KW_SEND:        return "KW_SEND";
         case TokenType::PLUS:           return "PLUS";
         case TokenType::MINUS:          return "MINUS";
         case TokenType::STAR:           return "STAR";
