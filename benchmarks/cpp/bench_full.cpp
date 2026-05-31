@@ -1,8 +1,14 @@
 #include <cstdio>
 #include <cstring>
 
+#ifdef _MSC_VER
+#define NOINLINE __declspec(noinline)
+#else
+#define NOINLINE __attribute__((noinline))
+#endif
+
 // ── 1. Count primes via trial division ────────────────────────────
-static int is_prime(int n) {
+NOINLINE static int is_prime(int n) {
     if (n < 2) return 0;
     if (n < 4) return 1;
     if (n % 2 == 0) return 0;
@@ -11,7 +17,7 @@ static int is_prime(int n) {
     return 1;
 }
 
-static int count_primes(int limit) {
+NOINLINE static int count_primes(int limit) {
     int count = 0;
     for (int n = 2; n < limit; n++)
         count += is_prime(n);
@@ -19,7 +25,7 @@ static int count_primes(int limit) {
 }
 
 // ── 2. Recursive tree sum ─────────────────────────────────────────
-static long long build_tree_sum(int depth, long long val) {
+NOINLINE static long long build_tree_sum(int depth, long long val) {
     if (depth <= 0) return val;
     long long left_sum = build_tree_sum(depth - 1, val * 2);
     long long right_sum = build_tree_sum(depth - 1, val * 2 + 1);
@@ -27,7 +33,7 @@ static long long build_tree_sum(int depth, long long val) {
 }
 
 // ── 3. Collatz conjecture ─────────────────────────────────────────
-static int collatz_steps(int n) {
+NOINLINE static int collatz_steps(int n) {
     int steps = 0;
     while (n != 1) {
         if (n % 2 == 0) n /= 2;
@@ -38,7 +44,7 @@ static int collatz_steps(int n) {
 }
 
 // ── 4. String building ───────────────────────────────────────────
-static int string_build(int iterations) {
+NOINLINE static int string_build(int iterations) {
     int total_len = 0;
     for (int i = 0; i < iterations; i++) {
         char buf[64];
@@ -49,7 +55,7 @@ static int string_build(int iterations) {
 }
 
 // ── 5. Floating-point: Leibniz pi ────────────────────────────────
-static double compute_pi(int terms) {
+NOINLINE static double compute_pi(int terms) {
     double pi = 0.0, sign = 1.0;
     for (int i = 0; i < terms; i++) {
         pi += sign / (double)(2 * i + 1);
@@ -59,7 +65,7 @@ static double compute_pi(int terms) {
 }
 
 // ── 6. Nested loops + modular arithmetic ─────────────────────────
-static int nested_loops(int n) {
+NOINLINE static int nested_loops(int n) {
     int total = 0;
     for (int i = 0; i < n; i++)
         for (int j = 0; j < n; j++)
@@ -68,14 +74,14 @@ static int nested_loops(int n) {
 }
 
 // ── 7. Ackermann function ────────────────────────────────────────
-static int ackermann(int m, int n) {
+NOINLINE static int ackermann(int m, int n) {
     if (m == 0) return n + 1;
     if (n == 0) return ackermann(m - 1, 1);
     return ackermann(m - 1, ackermann(m, n - 1));
 }
 
 // ── 8. GCD-heavy computation ─────────────────────────────────────
-static int gcd(int a, int b) {
+NOINLINE static int gcd(int a, int b) {
     while (b != 0) {
         int temp = b;
         b = a % b;
@@ -84,7 +90,7 @@ static int gcd(int a, int b) {
     return a;
 }
 
-static long long gcd_sum(int limit) {
+NOINLINE static long long gcd_sum(int limit) {
     long long total = 0;
     for (int i = 1; i <= limit; i++)
         for (int j = i; j <= limit; j++)
@@ -93,7 +99,7 @@ static long long gcd_sum(int limit) {
 }
 
 // ── 9. Fibonacci ─────────────────────────────────────────────────
-static int fibonacci(int n) {
+NOINLINE static int fibonacci(int n) {
     if (n <= 1) return n;
     int a = 0, b = 1;
     for (int i = 2; i <= n; i++) {
@@ -105,7 +111,7 @@ static int fibonacci(int n) {
 }
 
 // ── 10. Float distance (no struct) ───────────────────────────────
-static double dist_bench(int count) {
+NOINLINE static double dist_bench(int count) {
     double total_dist = 0.0;
     for (int i = 0; i < count; i++) {
         double x = (double)(i % 100) - 50.0;

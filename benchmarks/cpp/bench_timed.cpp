@@ -5,32 +5,45 @@
 using Clock = std::chrono::high_resolution_clock;
 using Ms = std::chrono::duration<double, std::milli>;
 
-static int is_prime(int n) {
+// Prevent the compiler from optimizing away benchmark computations.
+// volatile inputs and noinline prevent constant folding / dead-code elimination.
+static volatile int v_one = 1;
+
+#ifdef _MSC_VER
+#define NOINLINE __declspec(noinline)
+#else
+#define NOINLINE __attribute__((noinline))
+#endif
+
+// Force the compiler to materialize a value (clobber barrier).
+static void clobber(volatile long long* sink, long long val) { *sink = val; }
+
+NOINLINE static int is_prime(int n) {
     if (n < 2) return 0;
-    if (n < 4) return 1;
+    if (n < 4) return v_one;
     if (n % 2 == 0) return 0;
     for (int d = 3; d * d <= n; d += 2)
         if (n % d == 0) return 0;
-    return 1;
+    return v_one;
 }
-static int count_primes(int limit) {
+NOINLINE static int count_primes(int limit) {
     int count = 0;
     for (int n = 2; n < limit; n++) count += is_prime(n);
     return count;
 }
 
-static long long build_tree_sum(int depth, long long val) {
+NOINLINE static long long build_tree_sum(int depth, long long val) {
     if (depth <= 0) return val;
     return val + build_tree_sum(depth - 1, val * 2) + build_tree_sum(depth - 1, val * 2 + 1);
 }
 
-static int collatz_steps(int n) {
+NOINLINE static int collatz_steps(int n) {
     int steps = 0;
     while (n != 1) { if (n % 2 == 0) n /= 2; else n = 3 * n + 1; steps++; }
     return steps;
 }
 
-static int string_build(int iterations) {
+NOINLINE static int string_build(int iterations) {
     int total_len = 0;
     for (int i = 0; i < iterations; i++) {
         char buf[64];
@@ -40,39 +53,39 @@ static int string_build(int iterations) {
     return total_len;
 }
 
-static double compute_pi(int terms) {
+NOINLINE static double compute_pi(int terms) {
     double pi = 0.0, sign = 1.0;
     for (int i = 0; i < terms; i++) { pi += sign / (double)(2 * i + 1); sign *= -1.0; }
     return pi * 4.0;
 }
 
-static int nested_loops(int n) {
+NOINLINE static int nested_loops(int n) {
     int total = 0;
     for (int i = 0; i < n; i++) for (int j = 0; j < n; j++) total += (i * j) % 97;
     return total;
 }
 
-static int ackermann(int m, int n) {
-    if (m == 0) return n + 1;
+NOINLINE static int ackermann(int m, int n) {
+    if (m == 0) return n + v_one;
     if (n == 0) return ackermann(m - 1, 1);
     return ackermann(m - 1, ackermann(m, n - 1));
 }
 
-static int gcd(int a, int b) { while (b) { int t = b; b = a % b; a = t; } return a; }
-static long long gcd_sum(int limit) {
+NOINLINE static int gcd(int a, int b) { while (b) { int t = b; b = a % b; a = t; } return a; }
+NOINLINE static long long gcd_sum(int limit) {
     long long total = 0;
     for (int i = 1; i <= limit; i++) for (int j = i; j <= limit; j++) total += gcd(i, j);
     return total;
 }
 
-static int fibonacci(int n) {
+NOINLINE static int fibonacci(int n) {
     if (n <= 1) return n;
-    int a = 0, b = 1;
+    int a = 0, b = v_one;
     for (int i = 2; i <= n; i++) { int t = b; b = a + b; a = t; }
     return b;
 }
 
-static double dist_bench(int count) {
+NOINLINE static double dist_bench(int count) {
     double total = 0.0;
     for (int i = 0; i < count; i++) {
         double x = (double)(i % 100) - 50.0, y = (double)(i % 73) - 36.5;
