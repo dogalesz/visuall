@@ -1,0 +1,5 @@
+define spawn_test() -> void:
+	print("goroutine spawned")
+
+define main() -> void:
+	go spawn_test()

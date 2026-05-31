@@ -10,6 +10,7 @@
 #include "module_loader.h"
 #include "linker.h"
 #include "vsl_manifest.h"
+#include "version.h"
 
 #include <fstream>
 #include <iostream>
@@ -78,7 +79,8 @@ static void printUsage(const char* progName) {
               << "  --module-path <d> Add directory to module search path\n"
               << "  --dump-modules    Print resolved module paths during compilation\n"
               << "  --gc-stats        Print GC statistics to stderr at program exit\n"
-              << "  -h, --help        Show this message\n";
+              << "  -h, --help        Show this message\n"
+              << "  -v, --version     Print compiler version and exit\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -107,6 +109,9 @@ int main(int argc, char* argv[]) {
             dumpModules = true;
         } else if (arg == "--gc-stats") {
             gcStats = true;
+        } else if (arg == "-v" || arg == "--version") {
+            std::cout << "visuallc v" << VISUALL_VERSION << "\n";
+            return 0;
         } else if (arg == "-h" || arg == "--help") {
             printUsage(argv[0]);
             return 0;

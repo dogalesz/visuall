@@ -1,0 +1,2 @@
+@extern("m")
+define my_sqrt(x: float) -> float

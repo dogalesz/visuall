@@ -5,6 +5,20 @@ All notable changes to the Visuall language are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-31
+
+### Added
+- Escape analysis: stack allocation for non-escaping lists, dicts, tuples, and lambda environments via LLVM `alloca`
+- Zero-overhead C FFI: `@extern("libname")` decorator for calling C libraries directly with C calling convention
+- Concurrency: `go` keyword for goroutines, `chan` type, `make_chan` builtin, `<-` send/receive operators
+- M:N scheduler with 2-thread worker pool for goroutine execution
+- GC root tracing for scheduler ready-queue and channel blocked-queues
+
+### Changed
+- CMake build improved for cross-environment MSYS2 auto-detection (UCRT64/MINGW64)
+- CI updated with Windows and Ubuntu build workflows
+- Escape analysis inserted between ClassAnalyzer and TypeChecker in compilation pipeline
+
 ## [1.1.0] - 2026-05-24
 
 ### Added

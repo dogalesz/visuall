@@ -1,0 +1,4 @@
+#ifndef VISUALL_VERSION_H
+#define VISUALL_VERSION_H
+#define VISUALL_VERSION "1.2.0"
+#endif

@@ -13,7 +13,10 @@ Source (.vsl) → Lexer → Parser → Type Checker → LLVM IR → O2 Optimizat
 
 - **Native compilation** via LLVM (O2 optimization, targets host CPU)
 - **Garbage collection** — thread-safe mark-and-sweep GC with conservative stack scanning, free-list pooling, and O(1) pointer lookup
-- **Rich syntax** — classes, closures/lambdas, f-strings, list/dict/tuple literals, list comprehensions, slicing, tuple unpacking, chained comparisons, match statements, generators, enums, decorators
+- **Rich syntax** — classes, closures/lambdas, f-strings, list/dict/tuple literals, list comprehensions, slicing, tuple unpacking, chained comparisons, match statements, generators, enums, decorators, walrus operator, nullable types, generics, isinstance
+- **Concurrency** — goroutines (`go`), channels (`chan`), `make_chan`, send (`<-`) and receive (`<-`) with continuation-passing semantics
+- **Zero-overhead C FFI** — `@extern("libname")` decorator for calling C libraries directly via C calling convention
+- **Escape analysis** — stack allocation for non-escaping lists, dicts, tuples, and lambda environments, bringing recursive data structure performance closer to C++
 - **Module system** — `import` / `from ... import` with multi-file compilation
 - **Standard library** — math, string, collections, I/O, random, datetime, json, network, and system modules
 - **Error handling** — `try` / `catch` / `finally` / `throw` with typed exceptions
@@ -37,7 +40,7 @@ Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best
 | Fibonacci (fib(35) ×500K) | 9.2 | 9.7 | 684 | 1.0x | 74x |
 | Float distance (1M) | 10.4 | 10.1 | 403 | 1.0x | 39x |
 
-Compute-bound integer and loop work is within **1.0–1.4x** of C++. Visuall matches or beats C++ on 6 of 10 tests. Recursion-heavy workloads (Ackermann, TreeSum) are 4–9x due to GC stack scanning overhead.
+Compute-bound integer and loop work is within **1.0–1.4x** of C++. Visuall matches or beats C++ on 6 of 10 tests. Recursion-heavy workloads (Ackermann, TreeSum) are 4–9x due to GC stack scanning overhead — the escape analysis pass reduces this gap by stack-allocating non-escaping data structures, avoiding GC heap allocation for list/dict/tuple literals and closure environments.
 
 ### Micro-benchmarks
 
@@ -559,6 +562,38 @@ sock.close()
 client = network.HTTPClient()
 html = client.get("http://example.com/")
 ```
+
+### Concurrency (`go`, `chan`)
+
+```python
+ch = make_chan[int](0)
+
+define worker(id: int):
+    ch <- id * id
+
+go worker(1)
+go worker(2)
+
+x = <-ch
+y = <-ch
+print(x + y)
+```
+
+`go` spawns a goroutine that runs concurrently. `<-` sends a value into a channel, and `= <-ch` receives from one. `make_chan[T](capacity)` creates a buffered (capacity > 0) or unbuffered (capacity = 0) channel.
+
+### C FFI (`@extern`)
+
+```python
+@extern("m")
+define sqrt(x: float) -> float
+
+@extern("c")
+define printf(fmt: str) -> void
+
+result = sqrt(16.0)
+```
+
+`@extern("libname")` declares an external C function — the compiler emits a native C calling-convention call with no marshaling overhead.
 
 ---
 
