@@ -71,6 +71,7 @@ set(VISUALL_FRONTEND_SOURCES
     src/typechecker.cpp
     src/capture_analyzer.cpp
     src/class_analyzer.cpp
+    src/escape_analyzer.cpp
     src/vsl_manifest.cpp
     src/vsl_paths.cpp
     src/vsl_resolver.cpp

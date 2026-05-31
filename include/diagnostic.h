@@ -70,23 +70,6 @@ struct Diagnostic : std::exception {
 
     const char* what() const noexcept override { return what_.c_str(); }
 
-    // ── Factory helpers ───────────────────────────────────────────────────
-
-    // Throw a bare Diagnostic (not a subclass).
-    static void emit(Severity sev, const std::string& msg,
-                     const std::string& hnt,
-                     const std::string& file, int ln, int c,
-                     const std::string& src_line = "") {
-        throw Diagnostic(sev, msg, hnt, file, ln, c, src_line);
-    }
-
-    // Convenience: throw an error-severity Diagnostic.
-    static void error(const std::string& msg, const std::string& hnt,
-                      const std::string& file, int ln, int c,
-                      const std::string& src_line = "") {
-        throw Diagnostic(Severity::Error, msg, hnt, file, ln, c, src_line);
-    }
-
 protected:
     std::string what_;
     std::string buildWhat() const { return format(); }

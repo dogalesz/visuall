@@ -15,25 +15,6 @@
 
 namespace visuall {
 
-// ── Builtin function descriptor ────────────────────────────────────────────
-struct BuiltinInfo {
-    std::string name;           // Visuall-visible name: "len", "range", etc.
-    std::string runtimeName;    // C symbol: "__visuall_str_len", etc.
-    int minArgs;
-    int maxArgs;                // -1 = variadic
-    bool isVariadic;
-};
-
-// ── Module-qualified names ─────────────────────────────────────────────────
-// e.g. "string.upper" -> "__visuall_string_upper"
-struct ModuleFuncInfo {
-    std::string moduleName;     // "string", "math", "io", "sys", "collections"
-    std::string funcName;       // "upper", "sqrt", etc.
-    std::string runtimeName;    // "__visuall_string_upper"
-    int minArgs;
-    int maxArgs;
-};
-
 // ── Registry ───────────────────────────────────────────────────────────────
 
 inline bool isBuiltinFunction(const std::string& name) {

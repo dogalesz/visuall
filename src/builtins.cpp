@@ -65,9 +65,7 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_float_to_int", i64, {f64});
     getOrDeclareExtern(mod, ctx, "__visuall_int_to_float", f64, {i64});
     getOrDeclareExtern(mod, ctx, "__visuall_bool_to_int",  i64, {i64});
-    getOrDeclareExtern(mod, ctx, "__visuall_str_to_bool",  i64, {i8p});
-    getOrDeclareExtern(mod, ctx, "__visuall_int_to_bool",  i64, {i64});
-    getOrDeclareExtern(mod, ctx, "__visuall_float_to_bool", i64, {f64});
+
 
     /* ── String concat ───────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_str_concat", i8p, {i8p, i8p});
@@ -130,9 +128,6 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     getOrDeclareExtern(mod, ctx, "__visuall_enumerate", i8p, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_zip",       i8p, {i8p, i8p});
 
-    /* ── map, filter ─────────────────────────────────────────────────── */
-    getOrDeclareExtern(mod, ctx, "__visuall_map",    i8p, {i8p, i8p, i8p});
-    getOrDeclareExtern(mod, ctx, "__visuall_filter", i8p, {i8p, i8p, i8p});
 
     /* ── string module ───────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_string_len",         i64, {i8p});

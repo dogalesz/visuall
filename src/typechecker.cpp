@@ -169,7 +169,7 @@ TypeRef makeClass(const std::string& n)     { return std::make_shared<ClassType>
 TypeRef makeInterface(const std::string& n) { return std::make_shared<InterfaceTypeNode>(n); }
 TypeRef makeTypeVar(const std::string& n)   { return std::make_shared<TypeVarNode>(n); }
 TypeRef makeUnion(std::vector<TypeRef> m) { return std::make_shared<UnionType>(std::move(m)); }
-TypeRef makeNullable(TypeRef i) { return std::make_shared<NullableType>(std::move(i)); }
+
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // SymbolTable
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

@@ -3478,6 +3478,38 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
             }
         }
 
+        // ── Class constructor: stack-allocate if escape analysis permits ──
+        auto fieldIt = classFields_.find(funcName);
+        bool isClassCtor = fieldIt != classFields_.end();
+        bool canStackAllocCtor = isClassCtor && escapeInfo_
+            && escapeInfo_->count(&node) && escapeInfo_->at(&node);
+
+        if (canStackAllocCtor) {
+            uint32_t fieldCount = static_cast<uint32_t>(fieldIt->second.size());
+            auto* fieldTy = llvm::ArrayType::get(i64Ty, fieldCount > 0 ? fieldCount : 1);
+            auto* stackObj = createEntryBlockAlloca(
+                currentFunction_, funcName + ".local", fieldTy);
+            auto* objPtr = builder_->CreateBitCast(stackObj, i8Ptr, "obj.local");
+
+            // Evaluate args
+            std::vector<llvm::Value*> initArgs;
+            initArgs.push_back(objPtr);
+            for (const auto& a : node.args) {
+                llvm::Value* val = codegenExpr(*a);
+                val = coerceToI64(val);
+                initArgs.push_back(val);
+            }
+
+            // Call init directly
+            std::string initName = funcName + "__init";
+            auto* initFn = module_->getFunction(initName);
+            if (initFn) {
+                emitCallOrInvoke(initFn, initArgs);
+            }
+
+            return builder_->CreatePtrToInt(objPtr, i64Ty, "obj.result");
+        }
+
         auto* callee = module_->getFunction(funcName);
         if (!callee) {
             throw CodegenError("Unknown function: " + funcName,
@@ -4122,16 +4154,26 @@ llvm::Value* Codegen::codegenLambdaExpr(const ast::LambdaExpr& node) {
         return builder_->CreateLoad(closureTy, closureAlloca, name + ".val");
     }
 
-    // ── 3b. Heap-allocate the environment and fill it ──────────────────
-    // Closure environments are GC-managed via __visuall_alloc (TAG_CLOSURE=4).
-    auto* allocFn = getOrDeclareVisualAlloc();
+    // ── 3b. Allocate the environment (stack or heap) and fill it ────────
     auto* dataLayout = &module_->getDataLayout();
     uint64_t envSize = dataLayout->getTypeAllocSize(envStructTy);
-    auto* envRaw = builder_->CreateCall(
-        allocFn,
-        {llvm::ConstantInt::get(i64Ty, envSize),
-         llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 4)},
-        "env.raw");
+
+    bool canStackEnv = escapeInfo_ && escapeInfo_->count(&node)
+                       && escapeInfo_->at(&node);
+
+    llvm::Value* envRaw;
+    if (canStackEnv) {
+        auto* envAlloca = createEntryBlockAlloca(currentFunction_,
+            name + ".env.local", envStructTy);
+        envRaw = builder_->CreateBitCast(envAlloca, i8Ptr, "env.raw");
+    } else {
+        auto* allocFn = getOrDeclareVisualAlloc();
+        envRaw = builder_->CreateCall(
+            allocFn,
+            {llvm::ConstantInt::get(i64Ty, envSize),
+             llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 4)},
+            "env.raw");
+    }
 
     auto* envTyped = builder_->CreateBitCast(
         envRaw, llvm::PointerType::getUnqual(envStructTy), "env.typed");
@@ -4190,8 +4232,55 @@ llvm::Value* Codegen::codegenLambdaExpr(const ast::LambdaExpr& node) {
 // ── ListExpr / DictExpr / TupleExpr ────────────────────────────────────────
 llvm::Value* Codegen::codegenListExpr(const ast::ListExpr& node) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* i8Ptr  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
 
-    // Create a new list via __visuall_list_new()
+    bool canStackAlloc = escapeInfo_ && escapeInfo_->count(&node)
+                         && escapeInfo_->at(&node);
+
+    if (canStackAlloc) {
+        // VisualList C struct: { int64_t* data; int64_t length; int64_t capacity; }
+        auto* dataPtrTy = llvm::PointerType::getUnqual(i64Ty);
+        auto* listTy = llvm::StructType::get(*context_, {dataPtrTy, i64Ty, i64Ty});
+        auto* stackList = createEntryBlockAlloca(currentFunction_, "list.stack", listTy);
+
+        auto count = static_cast<uint32_t>(node.elements.size());
+        auto* cap   = llvm::ConstantInt::get(i64Ty, count);
+
+        // GC-allocate data buffer with exact capacity (Trap 2: GC-managed).
+        llvm::Value* dataBuf = nullptr;
+        if (count > 0) {
+            auto* allocFn = getOrDeclareVisualAlloc();
+            auto* byteSize = llvm::ConstantInt::get(i64Ty, count * 8ULL);
+            dataBuf = builder_->CreateCall(allocFn,
+                {byteSize, llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 1)},
+                "list.buf");
+        } else {
+            dataBuf = llvm::ConstantPointerNull::get(dataPtrTy);
+        }
+
+        auto* dataField = builder_->CreateStructGEP(listTy, stackList, 0, "data.ptr");
+        auto* lenField  = builder_->CreateStructGEP(listTy, stackList, 1, "len.ptr");
+        auto* capField  = builder_->CreateStructGEP(listTy, stackList, 2, "cap.ptr");
+        builder_->CreateStore(dataBuf, dataField);
+        builder_->CreateStore(cap,    lenField);
+        builder_->CreateStore(cap,    capField);
+
+        // Store elements directly into the GC buffer.
+        if (count > 0) {
+            auto* bufTyped = builder_->CreateBitCast(dataBuf, dataPtrTy, "buf.i64p");
+            for (uint32_t i = 0; i < count; i++) {
+                llvm::Value* val = codegenExpr(*node.elements[i]);
+                val = coerceToI64(val);
+                auto* gep = builder_->CreateGEP(i64Ty, bufTyped,
+                    llvm::ConstantInt::get(i64Ty, i), "elem.ptr");
+                builder_->CreateStore(val, gep);
+            }
+        }
+
+        return builder_->CreateBitCast(stackList, i8Ptr, "list.stack.ptr");
+    }
+
+    // Heap path (existing).
     auto* newFn = module_->getFunction("__visuall_list_new");
     auto* pushFn = module_->getFunction("__visuall_list_push");
     if (!newFn || !pushFn) {
@@ -4200,19 +4289,9 @@ llvm::Value* Codegen::codegenListExpr(const ast::ListExpr& node) {
 
     llvm::Value* list = builder_->CreateCall(newFn, {}, "list.new");
 
-    // Push each element
     for (const auto& elem : node.elements) {
         llvm::Value* val = codegenExpr(*elem);
-        // Convert to i64 for storage
-        if (val->getType()->isIntegerTy(1)) {
-            val = builder_->CreateZExt(val, i64Ty, "bext");
-        } else if (val->getType()->isPointerTy()) {
-            val = builder_->CreatePtrToInt(val, i64Ty, "ptoi");
-        } else if (val->getType()->isDoubleTy()) {
-            val = builder_->CreateBitCast(val, i64Ty, "dcast");
-        } else if (val->getType()->isIntegerTy() && val->getType() != i64Ty) {
-            val = builder_->CreateSExt(val, i64Ty, "sext");
-        }
+        val = coerceToI64(val);
         builder_->CreateCall(pushFn, {list, val});
     }
 
@@ -4220,6 +4299,8 @@ llvm::Value* Codegen::codegenListExpr(const ast::ListExpr& node) {
 }
 
 llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& node) {
+    // TODO: stack-allocate when escape analysis permits (requires inlining
+    // VisualDict + DictEntry layout and hash-table insertion logic).
     auto* dictNewFn = module_->getFunction("__visuall_dict_new");
     auto* dictSetFn = module_->getFunction("__visuall_dict_set");
     if (!dictNewFn || !dictSetFn)
@@ -4231,17 +4312,13 @@ llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& node) {
         llvm::Value* key = codegenExpr(*keyExpr);
         llvm::Value* val = codegenExpr(*valExpr);
 
-        // Key must be i8* (string)
         if (!key->getType()->isPointerTy()) {
-            // Convert int key to string
             auto* toStrFn = module_->getFunction("__visuall_int_to_str");
             if (toStrFn)
                 key = builder_->CreateCall(toStrFn, {key}, "key.str");
         }
 
-        // Value must be i64
         val = coerceToI64(val);
-
         builder_->CreateCall(dictSetFn, {dict, key, val});
     }
 
@@ -4249,12 +4326,59 @@ llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& node) {
 }
 
 llvm::Value* Codegen::codegenTupleExpr(const ast::TupleExpr& node) {
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+
+    bool canStackAlloc = escapeInfo_ && escapeInfo_->count(&node)
+                         && escapeInfo_->at(&node);
+
+    if (canStackAlloc) {
+        // Tuples reuse VisualList: { int64_t* data; int64_t length; int64_t capacity; }
+        auto* dataPtrTy = llvm::PointerType::getUnqual(i64Ty);
+        auto* listTy = llvm::StructType::get(*context_, {dataPtrTy, i64Ty, i64Ty});
+        auto* stackTup = createEntryBlockAlloca(currentFunction_, "tuple.stack", listTy);
+
+        auto count = static_cast<uint32_t>(node.elements.size());
+        auto* cap = llvm::ConstantInt::get(i64Ty, count);
+
+        llvm::Value* dataBuf = nullptr;
+        if (count > 0) {
+            auto* allocFn = getOrDeclareVisualAlloc();
+            auto* byteSize = llvm::ConstantInt::get(i64Ty, count * 8ULL);
+            dataBuf = builder_->CreateCall(allocFn,
+                {byteSize, llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 1)},
+                "tup.buf");
+        } else {
+            dataBuf = llvm::ConstantPointerNull::get(dataPtrTy);
+        }
+
+        builder_->CreateStore(dataBuf,
+            builder_->CreateStructGEP(listTy, stackTup, 0, "data.ptr"));
+        builder_->CreateStore(cap,
+            builder_->CreateStructGEP(listTy, stackTup, 1, "len.ptr"));
+        builder_->CreateStore(cap,
+            builder_->CreateStructGEP(listTy, stackTup, 2, "cap.ptr"));
+
+        if (count > 0) {
+            auto* bufTyped = builder_->CreateBitCast(dataBuf, dataPtrTy, "buf.i64p");
+            for (uint32_t i = 0; i < count; i++) {
+                llvm::Value* val = codegenExpr(*node.elements[i]);
+                val = coerceToI64(val);
+                auto* gep = builder_->CreateGEP(i64Ty, bufTyped,
+                    llvm::ConstantInt::get(i64Ty, i), "elem.ptr");
+                builder_->CreateStore(val, gep);
+            }
+        }
+
+        return builder_->CreateBitCast(stackTup, i8Ptr, "tuple.stack.ptr");
+    }
+
+    // Heap path (existing).
     auto* tupleNewFn = module_->getFunction("__visuall_tuple_new");
     auto* listPushFn = module_->getFunction("__visuall_list_push");
     if (!tupleNewFn || !listPushFn)
         return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
 
-    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     auto* count = llvm::ConstantInt::get(i64Ty, node.elements.size());
     auto* tup = builder_->CreateCall(tupleNewFn, {count}, "tuple.new");
 

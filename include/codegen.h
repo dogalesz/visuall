@@ -91,6 +91,13 @@ public:
         const std::unordered_map<std::string, std::vector<std::string>>& fields)
     { classFields_ = fields; }
 
+    /// Inject escape-analysis results from EscapeAnalyzer.
+    /// Map from allocation-site AST node pointer → true if stack-allocatable.
+    /// Must be called before generate().
+    void setEscapeInfo(const std::unordered_map<const void*, bool>* info) {
+        escapeInfo_ = info;
+    }
+
     /// Transfer ownership of the LLVM module out.
     std::unique_ptr<llvm::Module> takeModule() { return std::move(module_); }
 
@@ -107,6 +114,9 @@ private:
     std::unique_ptr<llvm::IRBuilder<>> builder_;
     bool moduleMode_ = false;
     bool gcStatsEnabled_ = false;
+
+    // Escape analysis results (set by setEscapeInfo before generate)
+    const std::unordered_map<const void*, bool>* escapeInfo_ = nullptr;
 
     // ── Symbol table ────────────────────────────────────────────────────
     // Scope stack: each scope is a map from name → alloca.

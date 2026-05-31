@@ -4,6 +4,7 @@
 #include "ast_printer.h"
 #include "capture_analyzer.h"
 #include "class_analyzer.h"
+#include "escape_analyzer.h"
 #include "typechecker.h"
 #include "codegen.h"
 #include "module_loader.h"
@@ -166,6 +167,10 @@ int main(int argc, char* argv[]) {
     visuall::ClassAnalyzer classAnalyzer;
     classAnalyzer.analyze(*program);
 
+    // ── Escape analysis ──────────────────────────────────────────────
+    visuall::EscapeAnalyzer escapeAnalyzer;
+    escapeAnalyzer.analyze(*program);
+
     // ── Type checking ─────────────────────────────────────────────────
     {
         visuall::TypeChecker typeChecker(inputFile);
@@ -208,6 +213,7 @@ int main(int argc, char* argv[]) {
         codegen.setSourceFile(inputFile);
         codegen.setGCStats(gcStats);
         codegen.setClassFields(classAnalyzer.classFields());
+        codegen.setEscapeInfo(&escapeAnalyzer.stackAllocatable());
         moduleLoader.setContext(&codegen.getContext());
         codegen.generate(*program);
 

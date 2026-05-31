@@ -165,7 +165,6 @@ TypeRef makeClass(const std::string& name);
 TypeRef makeInterface(const std::string& name);
 TypeRef makeTypeVar(const std::string& name);
 TypeRef makeUnion(std::vector<TypeRef> members);
-TypeRef makeNullable(TypeRef inner);
 
 // ════════════════════════════════════════════════════════════════════════════
 // TypeError — thrown on all type-checking errors.

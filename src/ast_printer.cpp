@@ -37,7 +37,8 @@ const char* AstPrinter::binOpStr(ast::BinOp op) {
         case ast::BinOp::BitOr:  return "|";
         case ast::BinOp::BitXor: return "^";
         case ast::BinOp::Shl:    return "<<";
-        case ast::BinOp::Shr:    return ">>";
+        case ast::BinOp::Shr:         return ">>";
+        case ast::BinOp::NullCoalesce: return "??";
     }
     return "?";
 }

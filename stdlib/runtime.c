@@ -407,10 +407,6 @@ static int fast_i64_to_buf(int64_t val, char* buf) {
     return len;
 }
 
-int __visuall_int_to_buf(int64_t val, char* buf, int bufsize) {
-    (void)bufsize;
-    return fast_i64_to_buf(val, buf);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * f-string builder — single allocation for all parts
@@ -586,26 +582,6 @@ int64_t __visuall_bool_to_int(int64_t v) {
     return v ? 1 : 0;
 }
 
-const char* __visuall_int_to_str_const(int64_t v) {
-    return __visuall_int_to_str(v);
-}
-
-const char* __visuall_float_to_str_const(double v) {
-    return __visuall_float_to_str(v);
-}
-
-int64_t __visuall_str_to_bool(const char* s) {
-    if (!s || *s == '\0') return 0;
-    return 1;
-}
-
-int64_t __visuall_int_to_bool(int64_t v) {
-    return v != 0 ? 1 : 0;
-}
-
-int64_t __visuall_float_to_bool(double v) {
-    return v != 0.0 ? 1 : 0;
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Builtin: abs, min, max, round
@@ -694,43 +670,6 @@ VisualList* __visuall_zip(VisualList* a, VisualList* b) {
     for (int64_t i = 0; i < min_len; i++) {
         __visuall_list_push(out, a->data[i]);
         __visuall_list_push(out, b->data[i]);
-    }
-    return out;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Builtin: map(fn, list) -> list
- * fn is a closure fat pointer: { i8* env, i8* fn_ptr }.
- * The function pointer signature is: int64_t (*)(i8* env, int64_t elem)
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-typedef int64_t (*vsl_map_fn)(void* env, int64_t elem);
-
-VisualList* __visuall_map(void* env, void* fn_ptr, VisualList* src) {
-    VisualList* out = __visuall_list_new();
-    if (!src || !fn_ptr) return out;
-    vsl_map_fn fn = (vsl_map_fn)fn_ptr;
-    for (int64_t i = 0; i < src->length; i++) {
-        __visuall_list_push(out, fn(env, src->data[i]));
-    }
-    return out;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Builtin: filter(fn, list) -> list
- * fn is a closure fat pointer.  Signature: int64_t (*)(i8* env, int64_t elem)
- * Returns nonzero => keep.
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-typedef int64_t (*vsl_filter_fn)(void* env, int64_t elem);
-
-VisualList* __visuall_filter(void* env, void* fn_ptr, VisualList* src) {
-    VisualList* out = __visuall_list_new();
-    if (!src || !fn_ptr) return out;
-    vsl_filter_fn fn = (vsl_filter_fn)fn_ptr;
-    for (int64_t i = 0; i < src->length; i++) {
-        if (fn(env, src->data[i]))
-            __visuall_list_push(out, src->data[i]);
     }
     return out;
 }
@@ -1154,23 +1093,7 @@ void __visuall_io_make_dir(const char* path) {
  * Module: sys
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* sys.args is populated by main — stored as a global list */
 static VisualList* __visuall_sys_args = NULL;
-static int    __visuall_sys_argc = 0;
-static char** __visuall_sys_argv = NULL;
-
-void __visuall_sys_init(int argc, char** argv) {
-    __visuall_sys_argc = argc;
-    __visuall_sys_argv = argv;
-    __visuall_sys_args = __visuall_list_new();
-    for (int i = 0; i < argc; i++) {
-        __visuall_list_push(__visuall_sys_args, (int64_t)argv[i]);
-    }
-#ifdef _WIN32
-    WSADATA wsa;
-    WSAStartup(MAKEWORD(2, 2), &wsa);
-#endif
-}
 
 VisualList* __visuall_sys_get_args(void) {
     if (!__visuall_sys_args)
