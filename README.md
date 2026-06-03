@@ -199,6 +199,62 @@ cd build
 ctest --output-on-failure
 ```
 
+### Cross-compilation
+
+`visuallc` can cross-compile to any target LLVM supports via `--target`:
+
+```bash
+# Compile for ARM64 Linux from an x86-64 host
+./visuallc hello.vsl -o hello --target aarch64-linux-gnu
+
+# With CPU tuning and explicit linker
+./visuallc hello.vsl -o hello --target aarch64-linux-gnu \
+    --cpu cortex-a72 --linker aarch64-linux-gnu-gcc
+
+# Or use --linker-prefix as a shorter alternative
+./visuallc hello.vsl -o hello --target aarch64-linux-gnu \
+    --linker-prefix aarch64-linux-gnu-
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--target <triple>` | LLVM target triple (e.g. `aarch64-linux-gnu`, `x86_64-w64-mingw32`) |
+| `--cpu <cpu>` | Target CPU model (e.g. `cortex-a72`). Default: host CPU for native builds, `generic` for cross builds |
+| `--linker <path>` | Full path to linker executable. Takes priority over `--linker-prefix` if both are set |
+| `--linker-prefix <p>` | Shorthand: prepends to `gcc` (e.g. `aarch64-linux-gnu-` → `aarch64-linux-gnu-gcc`) |
+| `--runtime-lib-dir <d>` | Directory containing cross-compiled runtime libraries |
+
+The linker must be GCC-compatible (accepts `-L`, `-l`, `-o`, `-lm` flags). On Windows this means MinGW GCC, not MSVC `link.exe`.
+
+**Runtime libraries** for the target architecture must be built separately.
+The compiler looks for them in this exact order:
+1. `--runtime-lib-dir` if provided
+2. `<compiler-dir>/runtime/<normalized-triple>/` (cross-compile only)
+3. `<compiler-dir>/` (native only — cross builds never fall back here)
+
+The `<normalized-triple>` is LLVM's canonical form of your `--target` triple
+(e.g. `aarch64-linux-gnu` normalizes to `aarch64-unknown-linux-gnu`).
+
+Build cross-compiled runtimes (use the **normalized** triple in directory paths —
+run `llvm-config --host-target` or check the error message if unsure of the exact form):
+
+```bash
+# Example: cross-compile runtime for aarch64
+TARGET=aarch64-unknown-linux-gnu   # normalized form of "aarch64-linux-gnu"
+mkdir build-cross && cd build-cross
+cmake .. -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+         -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+         -DCMAKE_BUILD_TYPE=Release
+cmake --build . --target visuall_runtime yyjson
+mkdir -p ../runtime/${TARGET}/_deps/yyjson-build/
+cp libvisuall_runtime.a ../runtime/${TARGET}/
+cp _deps/yyjson-build/libyyjson.a ../runtime/${TARGET}/_deps/yyjson-build/
+```
+
+Without `--target`, the compiler behaves exactly as before (host-only compilation).
+
 ## Project Structure
 
 ```
