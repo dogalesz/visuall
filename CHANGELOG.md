@@ -5,6 +5,31 @@ All notable changes to the Visuall language are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-03
+
+### Added
+- Cross-compilation: `--target`, `--cpu`, `--linker`, `--linker-prefix`, `--sysroot`, `--features`, and `--runtime-lib-dir` CLI flags for compiling to non-host architectures
+- `TargetSpec` struct carrying target triple, CPU, features, linker path, sysroot, and runtime library directory through the compilation pipeline
+- CPU safety: cross builds default to `"generic"` CPU (not host CPU) to avoid emitting instructions the target cannot execute
+- Triple normalization (`llvm::Triple::normalize()`) for runtime library directory names
+- Pre-link existence checks for runtime and yyjson libraries with user-friendly error messages
+- Deterministic runtime library lookup order with fallback from normalized to user-supplied triple directory
+
+### Changed
+- `Linker::optimize()`, `Linker::emitObjectFile()`, `Linker::linkToBinary()`, and `Linker::compileAndLink()` accept an optional `TargetSpec` parameter (defaults to native host)
+- `Linker::optimize()` now throws on null target lookup (was silently ignored)
+- LLVM target initialization centralized into `initializeTargets()` / `ensureTargetsReady()` helpers
+- TargetMachine creation factored into shared `createTargetMachine()` helper
+- `-lws2_32` is now conditionally added only when targeting Windows (not unconditionally)
+- Linker executable configurable via `--linker <path>` or `--linker-prefix <prefix>`
+
+### Fixed
+- Command injection vulnerability: replaced `std::system()` with `llvm::sys::ExecuteAndWait()` — linker is now invoked via argument array with no shell
+- `CodeGenFileType` version guard corrected to `LLVM_VERSION_MAJOR <= 17` (scoped enum boundary is LLVM 18)
+
+### Removed
+- Dead code: `Codegen::emitObjectFile()`, `Codegen::linkToBinary()`, and `Codegen::compileToNative()` methods (unused by the standard pipeline)
+
 ## [1.2.0] - 2026-05-31
 
 ### Added
