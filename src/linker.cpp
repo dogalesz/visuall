@@ -66,7 +66,12 @@ createTargetMachine(const TargetSpec& spec, llvm::Module& mod) {
 #endif
 
     std::string err;
+#if LLVM_VERSION_MAJOR >= 21
+    const auto* target = llvm::TargetRegistry::lookupTarget(
+        llvm::Triple(tripleStr), err);
+#else
     auto* target = llvm::TargetRegistry::lookupTarget(tripleStr, err);
+#endif
     if (!target) {
         throw std::runtime_error("unsupported target triple '" + tripleStr +
                                  "': " + err);
@@ -74,9 +79,15 @@ createTargetMachine(const TargetSpec& spec, llvm::Module& mod) {
 
     llvm::TargetOptions opt;
     auto cpuStr = spec.effectiveCPU();
+#if LLVM_VERSION_MAJOR >= 21
+    auto TM = std::unique_ptr<llvm::TargetMachine>(
+        target->createTargetMachine(llvm::Triple(tripleStr), cpuStr,
+                                    spec.features, opt, llvm::Reloc::PIC_));
+#else
     auto TM = std::unique_ptr<llvm::TargetMachine>(
         target->createTargetMachine(tripleStr, cpuStr, spec.features, opt,
                                     llvm::Reloc::PIC_));
+#endif
     mod.setDataLayout(TM->createDataLayout());
 
     // Attach target-cpu / target-features attributes ONLY for cross-compilation,
