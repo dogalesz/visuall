@@ -9,6 +9,7 @@
 #include "codegen.h"
 #include "module_loader.h"
 #include "linker.h"
+#include "target_spec.h"
 #include "vsl_manifest.h"
 #include "version.h"
 
@@ -80,7 +81,16 @@ static void printUsage(const char* progName) {
               << "  --dump-modules    Print resolved module paths during compilation\n"
               << "  --gc-stats        Print GC statistics to stderr at program exit\n"
               << "  -h, --help        Show this message\n"
-              << "  -v, --version     Print compiler version and exit\n";
+              << "  -v, --version     Print compiler version and exit\n"
+              << "\n"
+              << "Cross-compilation:\n"
+              << "  --target <triple>  LLVM target triple (e.g. aarch64-linux-gnu)\n"
+              << "  --cpu <cpu>        Target CPU model (e.g. cortex-a72)\n"
+              << "  --linker <path>    Full path to linker executable\n"
+              << "  --linker-prefix <p>Shorthand: prepends to gcc\n"
+              << "  --runtime-lib-dir <d> Directory with cross-compiled runtime libs\n"
+              << "  --sysroot <path>  Sysroot for cross-compilation\n"
+              << "  --features <f>    Target CPU features (e.g. +neon)\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -92,6 +102,7 @@ int main(int argc, char* argv[]) {
     bool dumpModules  = false;
     bool gcStats      = false;
     std::vector<std::string> extraModulePaths;
+    visuall::TargetSpec targetSpec;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -109,6 +120,20 @@ int main(int argc, char* argv[]) {
             dumpModules = true;
         } else if (arg == "--gc-stats") {
             gcStats = true;
+        } else if (arg == "--target" && i + 1 < argc) {
+            targetSpec.triple = argv[++i];
+        } else if (arg == "--cpu" && i + 1 < argc) {
+            targetSpec.cpu = argv[++i];
+        } else if (arg == "--linker" && i + 1 < argc) {
+            targetSpec.linker = argv[++i];
+        } else if (arg == "--linker-prefix" && i + 1 < argc) {
+            targetSpec.linkerPrefix = argv[++i];
+        } else if (arg == "--runtime-lib-dir" && i + 1 < argc) {
+            targetSpec.runtimeLibDir = argv[++i];
+        } else if (arg == "--sysroot" && i + 1 < argc) {
+            targetSpec.sysroot = argv[++i];
+        } else if (arg == "--features" && i + 1 < argc) {
+            targetSpec.features = argv[++i];
         } else if (arg == "-v" || arg == "--version") {
             std::cout << "visuallc v" << VISUALL_VERSION << "\n";
             return 0;
@@ -230,7 +255,7 @@ int main(int argc, char* argv[]) {
                 mainModule = visuall::Linker::link(
                     std::move(mainModule), std::move(otherModules));
             }
-            visuall::Linker::optimize(*mainModule);
+            visuall::Linker::optimize(*mainModule, targetSpec);
             std::string irStr;
             llvm::raw_string_ostream rso(irStr);
             mainModule->print(rso, nullptr);
@@ -245,19 +270,19 @@ int main(int argc, char* argv[]) {
             mainModule = visuall::Linker::link(
                 std::move(mainModule), std::move(otherModules));
         }
-        visuall::Linker::optimize(*mainModule);
+        visuall::Linker::optimize(*mainModule, targetSpec);
 
         std::string irPath = outputFile + ".ll";
         visuall::Linker::writeIR(*mainModule, irPath);
 
         std::string objPath = outputFile + ".o";
-        visuall::Linker::emitObjectFile(*mainModule, objPath);
+        visuall::Linker::emitObjectFile(*mainModule, objPath, targetSpec);
 
         std::vector<std::string> externLibs(
             codegen.linkedLibraries().begin(),
             codegen.linkedLibraries().end());
         int result = visuall::Linker::linkToBinary(
-            objPath, outputFile, exeDir, externLibs);
+            objPath, outputFile, exeDir, externLibs, targetSpec);
         if (result != 0) {
             std::cerr << "error: native compilation failed (linker returned "
                       << result << ")\n";

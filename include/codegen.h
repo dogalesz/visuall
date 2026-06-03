@@ -57,16 +57,6 @@ public:
     /// Write the LLVM IR (.ll) to a file.
     void writeIRToFile(const std::string& path) const;
 
-    /// Emit a native object file (.o) via LLVM TargetMachine.
-    void emitObjectFile(const std::string& path) const;
-
-    /// Link an object file into a final binary using the system linker.
-    static int linkToBinary(const std::string& objPath,
-                            const std::string& outPath);
-
-    /// Convenience: write IR, emit object, link — all in one call.
-    void compileToNative(const std::string& basePath) const;
-
     // ── Module system ───────────────────────────────────────────────────
     /// Set the module loader for resolving imports.
     void setModuleLoader(ModuleLoader* loader) { moduleLoader_ = loader; }

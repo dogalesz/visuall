@@ -8,6 +8,8 @@
  * passes and emits the final binary or object file.
  * ════════════════════════════════════════════════════════════════════════════ */
 
+#include "target_spec.h"
+
 #include <string>
 #include <vector>
 #include <memory>
@@ -37,30 +39,38 @@ public:
          std::vector<std::unique_ptr<llvm::Module>> others);
 
     /// Run LLVM optimization passes (O2) on the module.
-    static void optimize(llvm::Module& mod);
+    /// @param spec  target specification; default = native host
+    static void optimize(llvm::Module& mod,
+                         const TargetSpec& spec = TargetSpec{});
 
     /// Write IR to a file.
     static void writeIR(const llvm::Module& mod, const std::string& path);
 
     /// Emit a native object file.
-    static void emitObjectFile(llvm::Module& mod, const std::string& path);
+    /// @param spec  target specification; default = native host
+    static void emitObjectFile(llvm::Module& mod, const std::string& path,
+                                const TargetSpec& spec = TargetSpec{});
 
     /// Link object file(s) to a final binary using the system linker.
     /// @param exeDir  directory containing the visuallc binary (for locating runtime libs)
     /// @param extraLibs  additional -l flags for extern libraries
+    /// @param spec  target specification; default = native host
     static int linkToBinary(const std::string& objPath,
                             const std::string& outPath,
                             const std::string& exeDir = ".",
-                            const std::vector<std::string>& extraLibs = {});
+                            const std::vector<std::string>& extraLibs = {},
+                            const TargetSpec& spec = TargetSpec{});
 
     /// Full pipeline: merge → optimize → IR → object → binary.
+    /// @param spec  target specification; default = native host
     static int compileAndLink(std::unique_ptr<llvm::Module> mainModule,
                                std::vector<std::unique_ptr<llvm::Module>> others,
                                const std::string& outputPath,
                                const std::string& exeDir = ".",
                                bool emitIR = false,
                                std::ostream* irStream = nullptr,
-                               const std::vector<std::string>& extraLibs = {});
+                               const std::vector<std::string>& extraLibs = {},
+                               const TargetSpec& spec = TargetSpec{});
 };
 
 } // namespace visuall
