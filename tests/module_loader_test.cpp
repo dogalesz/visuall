@@ -308,6 +308,68 @@ static void test_moduleLink() {
            "10d. test_add has a body in merged module");
 }
 
+// ── Test 11: Path traversal in module names is rejected (VSL-002) ──────────
+static void test_pathTraversalRejected() {
+    ModuleLoader loader("stdlib", {}, false);
+
+    // Module name containing .. should be rejected before filesystem access.
+    bool caught = false;
+    try {
+        loader.load("..\\..\\etc\\passwd", "tests/module_test/main.vsl");
+    } catch (const ImportError& e) {
+        caught = true;
+        std::string msg = e.what();
+        expect(msg.find("Invalid module name") != std::string::npos ||
+               msg.find("path characters") != std::string::npos ||
+               msg.find("empty component") != std::string::npos ||
+               msg.find("'..'") != std::string::npos,
+               "traversal-dots: error mentions invalid module name");
+    }
+    expect(caught, "traversal-dots: .. module name throws ImportError");
+
+    // Forward-slash path separator in module name should be rejected.
+    caught = false;
+    try {
+        loader.load("evil/../../../etc/passwd", "tests/module_test/main.vsl");
+    } catch (const ImportError& e) {
+        caught = true;
+        std::string msg = e.what();
+        expect(msg.find("path characters") != std::string::npos,
+               "traversal-slash: error mentions path characters");
+    }
+    expect(caught, "traversal-slash: / in module name throws ImportError");
+
+    // Backslash should also be rejected.
+    caught = false;
+    try {
+        loader.load("evil\\hidden", "tests/module_test/main.vsl");
+    } catch (const ImportError& e) {
+        caught = true;
+        std::string msg = e.what();
+        expect(msg.find("path characters") != std::string::npos,
+               "traversal-backslash: error mentions path characters");
+    }
+    expect(caught, "traversal-backslash: \\ in module name throws ImportError");
+
+    // Null byte in module name should be rejected.
+    caught = false;
+    try {
+        std::string evilName("safe");
+        evilName += '\0';
+        evilName += "malicious";
+        loader.load(evilName, "tests/module_test/main.vsl");
+    } catch (const ImportError& e) {
+        caught = true;
+        std::string msg = e.what();
+        // Message may be truncated at null byte by c_str(), so check
+        // for either the full message or just "Invalid module name".
+        expect(msg.find("Invalid module name") != std::string::npos ||
+               msg.find("path characters") != std::string::npos,
+               "traversal-null: error mentions invalid module name");
+    }
+    expect(caught, "traversal-null: null byte in module name throws ImportError");
+}
+
 // ── Public entry point ─────────────────────────────────────────────────────
 int runModuleLoaderTests() {
     failures = 0;
@@ -322,6 +384,7 @@ int runModuleLoaderTests() {
     test_cacheHit();
     test_missingModule();
     test_moduleLink();
+    test_pathTraversalRejected();   // 11 (VSL-002)
 
     if (failures > 0) {
         std::cerr << "\n  " << failures << " module loader test(s) FAILED.\n";

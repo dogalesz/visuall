@@ -224,7 +224,18 @@ int Linker::linkToBinary(const std::string& objPath,
     std::string libDir;
     if (!spec.runtimeLibDir.empty()) {
         // Priority 1: explicit --runtime-lib-dir override
-        libDir = spec.runtimeLibDir;
+        // Canonicalize the user-supplied path to resolve '..', symlinks,
+        // and other non-canonical components before constructing linker flags.
+        if (llvm::sys::fs::exists(spec.runtimeLibDir)) {
+            llvm::SmallString<256> realDir;
+            if (!llvm::sys::fs::real_path(spec.runtimeLibDir, realDir)) {
+                libDir = realDir.str().str();
+            } else {
+                libDir = spec.runtimeLibDir;  // fallback on real_path failure
+            }
+        } else {
+            libDir = spec.runtimeLibDir;  // will fail below with clear error
+        }
     } else if (spec.isNative()) {
         // Priority 2 (native only): legacy flat directory
         libDir = exeDir;
@@ -296,6 +307,9 @@ int Linker::linkToBinary(const std::string& objPath,
     llvm::Triple triple(spec.effectiveTriple());
     if (triple.isOSWindows()) {
         args.push_back("-lws2_32");
+        // MinGW uses msvcrt.dll; GCC's implicit -lc maps to a nonexistent
+        // libc.a.  Adding -lmsvcrt provides the C runtime symbols.
+        args.push_back("-lmsvcrt");
     }
     args.push_back("-lm");
 
@@ -308,7 +322,11 @@ int Linker::linkToBinary(const std::string& objPath,
     std::vector<std::string> extraLibFlags;
     extraLibFlags.reserve(extraLibs.size());
     for (const auto& lib : extraLibs) {
-        extraLibFlags.push_back("-l" + lib);
+        // On Windows/MinGW, "c" → "msvcrt" (no libc.a on MinGW).
+        std::string libName = lib;
+        if (triple.isOSWindows() && lib == "c")
+            libName = "msvcrt";
+        extraLibFlags.push_back("-l" + libName);
         args.push_back(extraLibFlags.back());
     }
 

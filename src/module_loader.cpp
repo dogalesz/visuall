@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <iostream>
 #include <algorithm>
+#include <sstream>
+#include <vector>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -33,7 +35,45 @@ static std::string getDirectory(const std::string& filepath) {
 
 static std::string normalizePath(const std::string& path) {
     std::string result = path;
+
+    // 1. Strip null bytes — they truncate paths when passed to C APIs
+    //    (GetFileAttributesA, stat, fopen, etc.).
+    result.erase(std::remove(result.begin(), result.end(), '\0'), result.end());
+
+    // 2. Normalize directory separators to forward slashes.
     std::replace(result.begin(), result.end(), '\\', '/');
+
+    // 3. Resolve '.' and '..' components to prevent path-traversal escapes.
+    //    Split on '/', process components, then rebuild the canonical path.
+    std::vector<std::string> components;
+    std::istringstream ss(result);
+    std::string component;
+    while (std::getline(ss, component, '/')) {
+        if (component.empty() || component == ".") {
+            // Skip empty components (double-slashes) and current-dir markers.
+            continue;
+        }
+        if (component == "..") {
+            // Pop the last component unless we're already at the root.
+            if (!components.empty()) {
+                components.pop_back();
+            }
+            // If at the root, ".." has no effect (cannot escape above root).
+            continue;
+        }
+        components.push_back(component);
+    }
+
+    // 4. Rebuild the path from resolved components.
+    //    Preserve whether the original path was absolute.
+    bool wasAbsolute = (!path.empty() && (path[0] == '/' || path[0] == '\\'));
+    result.clear();
+    for (const auto& c : components) {
+        result += (result.empty() && !wasAbsolute) ? c : "/" + c;
+    }
+    if (result.empty()) {
+        result = wasAbsolute ? "/" : ".";
+    }
     return result;
 }
 
@@ -111,6 +151,27 @@ void ModuleLoader::registerAlias(const std::string& alias,
 
 std::string ModuleLoader::resolve(const std::string& moduleName,
                                    const std::string& importDir) {
+    // ── Validate module name ─────────────────────────────────────────────
+    // Reject path separators, null bytes, and traversal sequences before
+    // the module name is merged with filesystem paths.
+    for (char c : moduleName) {
+        if (c == '\0' || c == '/' || c == '\\') {
+            throw ImportError("Invalid module name '" + moduleName +
+                              "': contains path characters");
+        }
+    }
+    {
+        // Reject empty components and '..' in dot-separated parts.
+        std::istringstream iss(moduleName);
+        std::string part;
+        while (std::getline(iss, part, '.')) {
+            if (part.empty() || part == "..") {
+                throw ImportError("Invalid module name '" + moduleName +
+                                  "': contains empty component or '..'");
+            }
+        }
+    }
+
     // Convert dots to path separators for submodule access
     std::string relativePath = moduleName;
     std::replace(relativePath.begin(), relativePath.end(), '.', '/');
