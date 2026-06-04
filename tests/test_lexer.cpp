@@ -188,23 +188,19 @@ static void testMultipleDedents() {
     expect(dedentCount == 2, "multi-dedent: 2 DEDENTs emitted");
 }
 
-// ── 10. Space indentation throws IndentationError ──────────────────────────
-static void testSpaceIndentationError() {
+// ── 10. 4-space indentation is normalized to tabs and works ──────────────────
+static void testSpaceIndentationNormalized() {
+    // 4-space indentation should be normalized to tabs and tokenize correctly.
     Lexer lexer("if true:\n    x = 1\n", "test.vsl");
-    bool caught = false;
+    bool ok = false;
     try {
-        lexer.tokenize();
+        auto tokens = lexer.tokenize();
+        // Should successfully tokenize without throwing.
+        ok = true;
     } catch (const IndentationError& e) {
-        caught = true;
-        std::string msg = e.what();
-        expect(msg.find("tabs") != std::string::npos ||
-               msg.find("Visuall uses tabs") != std::string::npos,
-               "indent-err: message mentions tabs");
-    } catch (...) {
-        // Might be caught as LexerError alias.
-        caught = true;
-    }
-    expect(caught, "indent-err: space indentation throws");
+        // 4 spaces should be normalized, not throw.
+    } catch (...) {}
+    expect(ok, "indent-ok: 4-space indentation normalized to tabs");
 }
 
 // ── 11. Unterminated string throws LexError ────────────────────────────────
@@ -322,6 +318,51 @@ static void testEofFlushesDedents() {
     expect(hasDedent, "eof-flush: DEDENT emitted before EOF");
 }
 
+// ── 18. Unicode \U escape above U+10FFFF is rejected (VSL-004) ─────────────
+static void testUnicodeBeyondMax() {
+    // U+FFFFFFFF is far above the Unicode scalar max U+10FFFF.
+    bool caught = false;
+    try {
+        Lexer lexer("\"hello \\UFFFFFFFF world\"", "test.vsl");
+        lexer.tokenize();
+    } catch (const LexError& e) {
+        caught = true;
+        std::string msg = e.what();
+        expect(msg.find("exceeds U+10FFFF") != std::string::npos,
+               "unicode-max: error mentions U+10FFFF limit");
+    }
+    expect(caught, "unicode-max: \\UFFFFFFFF throws LexError");
+}
+
+// ── 19. Unicode \u surrogate halves are rejected (VSL-005) ─────────────────
+static void testUnicodeSurrogateRejected() {
+    // U+D800 is the start of the surrogate range (invalid Unicode scalar).
+    bool caught = false;
+    try {
+        Lexer lexer("\"bad surrogate: \\uD800\"", "test.vsl");
+        lexer.tokenize();
+    } catch (const LexError& e) {
+        caught = true;
+        std::string msg = e.what();
+        expect(msg.find("surrogate") != std::string::npos,
+               "unicode-surrogate: error mentions 'surrogate'");
+    }
+    expect(caught, "unicode-surrogate: \\uD800 throws LexError");
+
+    // Also test the \U form with a surrogate.
+    caught = false;
+    try {
+        Lexer lexer("\"bad surrogate: \\U0000DFFF\"", "test.vsl");
+        lexer.tokenize();
+    } catch (const LexError& e) {
+        caught = true;
+        std::string msg = e.what();
+        expect(msg.find("surrogate") != std::string::npos,
+               "unicode-surrogate-U: error mentions 'surrogate'");
+    }
+    expect(caught, "unicode-surrogate-U: \\Uxxxxxxxx surrogate throws LexError");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Test-suite entry point (called from tests/test_main.cpp).
 // ════════════════════════════════════════════════════════════════════════════
@@ -337,7 +378,7 @@ int runLexerTests() {
     testIndentEmitted();                //  7
     testDedentEmitted();                //  8
     testMultipleDedents();              //  9
-    testSpaceIndentationError();        // 10
+    testSpaceIndentationNormalized();   // 10
     testUnterminatedString();           // 11
     testUnterminatedMultiLineComment(); // 12
     testChainedComparison();            // 13
@@ -345,6 +386,8 @@ int runLexerTests() {
     testEllipsis();                     // 15
     testBlankLinesIgnored();            // 16
     testEofFlushesDedents();            // 17
+    testUnicodeBeyondMax();             // 18 (VSL-004)
+    testUnicodeSurrogateRejected();     // 19 (VSL-005)
 
     return failures;
 }

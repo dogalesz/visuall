@@ -93,6 +93,11 @@ private:
 
     // ── Indentation ────────────────────────────────────────────────────
 
+    // Normalize leading whitespace: convert every sequence of 4 spaces
+    // to 1 tab, rounding up any remainder.  Called once in the constructor
+    // so that handleIndentation() only ever sees tabs.
+    static std::string normalizeIndentation(const std::string& source);
+
     // Called at the start of every new line.  Counts leading tabs,
     // rejects spaces, and emits INDENT / DEDENT tokens as needed.
     void handleIndentation(std::vector<Token>& tokens);

@@ -63,6 +63,7 @@ enum class TokenType {
     KW_YIELD,           // yield
     KW_GO,              // go
     KW_CHAN,            // chan
+    KW_CONST,           // const
 
     // ── Operators ──────────────────────────────────────────────────────────
     KW_SEND,            // <- (channel send arrow)
@@ -195,6 +196,7 @@ inline const char* tokenTypeToString(TokenType t) {
         case TokenType::KW_YIELD:       return "KW_YIELD";
         case TokenType::KW_GO:          return "KW_GO";
         case TokenType::KW_CHAN:        return "KW_CHAN";
+        case TokenType::KW_CONST:       return "KW_CONST";
         case TokenType::KW_SEND:        return "KW_SEND";
         case TokenType::PLUS:           return "PLUS";
         case TokenType::MINUS:          return "MINUS";
@@ -245,8 +247,8 @@ inline const char* tokenTypeToString(TokenType t) {
         case TokenType::INDENT:         return "INDENT";
         case TokenType::DEDENT:         return "DEDENT";
         case TokenType::END_OF_FILE:    return "END_OF_FILE";
+        default:                        return "UNKNOWN";  // new token type added without updating this switch
     }
-    return "UNKNOWN";
 }
 
 // Backward-compatible alias used by the parser.

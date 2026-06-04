@@ -17,6 +17,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 #include "lexer.h"
+#include <cassert>
 #include <cctype>
 #include <unordered_map>
 
@@ -67,14 +68,71 @@ static const std::unordered_map<std::string, TokenType> keywords = {
     {"yield",      TokenType::KW_YIELD},
     {"go",         TokenType::KW_GO},
     {"chan",       TokenType::KW_CHAN},
+    {"const",      TokenType::KW_CONST},
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// normalizeIndentation — preprocess the entire source so that leading
+// whitespace on every line uses tabs exclusively (4 spaces → 1 tab).
+//
+// This matches the LSP formatter's behaviour and lets users write
+// space-indented code without hitting IndentationError.
+// ════════════════════════════════════════════════════════════════════════════
+std::string Lexer::normalizeIndentation(const std::string& source) {
+    std::string result;
+    result.reserve(source.size());
+    bool atLineStart = true;
+    int  spaces = 0;
+
+    for (char c : source) {
+        if (atLineStart) {
+            if (c == ' ') {
+                spaces++;
+                if (spaces == 4) {
+                    result += '\t';
+                    spaces = 0;
+                }
+                continue;
+            }
+            if (c == '\t') {
+                if (spaces > 0) {
+                    // Mixed indentation: flush accumulated spaces first
+                    // (round up to a tab), then emit the tab.
+                    if (spaces <= 2) {
+                        // Small stray: treat as error — mixed indentation
+                        result += std::string(spaces, ' ');
+                    } else {
+                        // 3 spaces + tab: round up to another tab
+                        result += '\t';
+                    }
+                    spaces = 0;
+                }
+                result += '\t';
+                continue;
+            }
+            // Non-whitespace character: flush any remaining spaces
+            if (spaces > 0) {
+                // Spaces that don't form a full tab level —
+                // round up to a tab for consistency with the LSP formatter.
+                result += '\t';
+                spaces = 0;
+            }
+            atLineStart = false;
+        } else if (c == '\n') {
+            atLineStart = true;
+            spaces = 0;
+        }
+        result += c;
+    }
+    return result;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constructor
 // ════════════════════════════════════════════════════════════════════════════
 Lexer::Lexer(const std::string& source, const std::string& filename)
-    : source_(source), filename_(filename), pos_(0), line_(1), column_(1),
-      atLineStart_(true)
+    : source_(normalizeIndentation(source)), filename_(filename),
+      pos_(0), line_(1), column_(1), atLineStart_(true)
 {
     indentStack_.push(0);   // base indent level is always zero
 }
@@ -283,6 +341,86 @@ Token Lexer::lexString(char delimiter) {
                 case '\'': value += '\''; break;
                 case '"':  value += '"';  break;
                 case '0':  value += '\0'; break;
+                case 'a':  value += '\a'; break;
+                case 'b':  value += '\b'; break;
+                case 'f':  value += '\f'; break;
+                case 'v':  value += '\v'; break;
+                case 'e':  value += '\x1B'; break; // ESC (non-standard but common)
+                case 'x': {
+                    // \xNN — hex byte (1-2 hex digits)
+                    char hex[3] = {0};
+                    int n = 0;
+                    while (n < 2 && !isAtEnd() &&
+                           std::isxdigit(static_cast<unsigned char>(peek())))
+                        hex[n++] = advance();
+                    if (n == 0)
+                        error("malformed hex escape: expected hex digit(s) after \\x");
+                    value += static_cast<char>(std::strtoul(hex, nullptr, 16));
+                    break;
+                }
+                case 'u': {
+                    // \uNNNN — unicode BMP (4 hex digits), encode as UTF-8
+                    char hex[5] = {0};
+                    for (int i = 0; i < 4; i++) {
+                        if (isAtEnd() ||
+                            !std::isxdigit(static_cast<unsigned char>(peek())))
+                            error("malformed unicode escape: expected 4 hex digits after \\u");
+                        hex[i] = advance();
+                    }
+                    unsigned long code = std::strtoul(hex, nullptr, 16);
+                    // Reject surrogate halves (U+D800–U+DFFF); they are not
+                    // valid Unicode scalar values and produce ill-formed UTF-8.
+                    if (code >= 0xD800 && code <= 0xDFFF)
+                        error("invalid unicode escape: surrogate codepoint U+" +
+                              std::to_string(code) + " is not a valid character");
+                    if (code <= 0x7F) {
+                        value += static_cast<char>(code);
+                    } else if (code <= 0x7FF) {
+                        value += static_cast<char>(0xC0 | (code >> 6));
+                        value += static_cast<char>(0x80 | (code & 0x3F));
+                    } else {
+                        value += static_cast<char>(0xE0 | (code >> 12));
+                        value += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                        value += static_cast<char>(0x80 | (code & 0x3F));
+                    }
+                    break;
+                }
+                case 'U': {
+                    // \UNNNNNNNN — unicode full range (8 hex digits), encode as UTF-8
+                    char hex[9] = {0};
+                    for (int i = 0; i < 8; i++) {
+                        if (isAtEnd() ||
+                            !std::isxdigit(static_cast<unsigned char>(peek())))
+                            error("malformed unicode escape: expected 8 hex digits after \\U");
+                        hex[i] = advance();
+                    }
+                    unsigned long long code = std::strtoull(hex, nullptr, 16);
+                    // Reject codepoints beyond the Unicode scalar range
+                    // (U+0000–U+10FFFF).
+                    if (code > 0x10FFFF)
+                        error("invalid unicode escape: codepoint U+" +
+                              std::to_string(code) + " exceeds U+10FFFF");
+                    // Reject surrogate halves (U+D800–U+DFFF).
+                    if (code >= 0xD800 && code <= 0xDFFF)
+                        error("invalid unicode escape: surrogate codepoint U+" +
+                              std::to_string(code) + " is not a valid character");
+                    if (code <= 0x7F) {
+                        value += static_cast<char>(code);
+                    } else if (code <= 0x7FF) {
+                        value += static_cast<char>(0xC0 | (code >> 6));
+                        value += static_cast<char>(0x80 | (code & 0x3F));
+                    } else if (code <= 0xFFFF) {
+                        value += static_cast<char>(0xE0 | (code >> 12));
+                        value += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                        value += static_cast<char>(0x80 | (code & 0x3F));
+                    } else {
+                        value += static_cast<char>(0xF0 | (code >> 18));
+                        value += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+                        value += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                        value += static_cast<char>(0x80 | (code & 0x3F));
+                    }
+                    break;
+                }
                 default:
                     // Unknown escape — preserve literally.
                     value += '\\';
@@ -741,6 +879,11 @@ std::vector<Token> Lexer::tokenize() {
             advance();
         }
     }
+
+    // Safety net: each source byte produces at most 1 token (plus END_OF_FILE).
+    // Catch regressions in debug builds without limiting valid inputs.
+    assert(tokens.size() <= source_.size() + 1 &&
+           "lexer produced more tokens than source bytes — possible infinite loop");
 
     // ── 10. EOF: flush remaining DEDENTs ──────────────────────────────
     while (indentStack_.top() > 0) {
