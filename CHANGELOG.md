@@ -5,6 +5,40 @@ All notable changes to the Visuall language are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-06-04
+
+### Added
+- `const` keyword for compile-time constant declarations (`const NAME [: Type] = expr`)
+- Typed variable declarations: `x: int = 42` syntax with type annotation validation
+- Collection type generics: `list[int]`, `dict[str, int]`, `tuple[int, str]` in type annotations
+- Bare collection types (`list`, `dict`, `tuple`) as wildcard type annotations
+- `len()` builtin type-checked in the type system
+- Pointer types in `@extern` declarations: `int*`, `void*`, `char*`, and arbitrary pointer suffixes
+- New string escape sequences: `\xNN` (hex byte), `\a` (bell), `\b` (backspace), `\f` (form feed), `\v` (vertical tab), `\e` (ESC)
+- 4-space indentation normalization: spaces are automatically converted to tabs before lexing
+- `print()` now dispatches via GC tag for readable list and tuple output
+
+### Changed
+- Extern declarations (`@extern`) now validated to be at module scope (not inside functions)
+- Functions that return a value now require explicit `-> ReturnType` annotation
+- Return type checking now uses `isAssignableTo` instead of strict `typeEquals` for better collection compatibility
+- `getLLVMType()` handles parameterized, nullable, and pointer type suffixes
+- Class field LLVM types now preserved through `classFieldTypes_` for correct pointer/double round-tripping
+
+### Fixed
+- **VSL-001**: Use-after-free risk: `escapeInfo_` raw pointer replaced with `std::shared_ptr`
+- **VSL-002**: Path traversal in module loader: `..` and `/` components in module names now rejected, null bytes stripped, `normalizePath()` resolves `.`/`..` components
+- **VSL-003**: Parser out-of-bounds read on empty or comment-only source files
+- **VSL-004/005**: Unicode validation: surrogate codepoints (U+D800–U+DFFF) and codepoints above U+10FFFF now rejected with clear errors
+- **VSL-006**: Missing `__cxa_throw` fallback changed from `unreachable` to `abort()` — prevents undefined behavior on throw in compiled programs
+- **VSL-008**: `externLibName` now validated against allowed characters (alphanumeric, `_`, `.`, `-`); path separators and leading dashes rejected
+- **VSL-009**: Integer overflow in allocation size multiplication — added `safeMul8()` with compile-time overflow check
+- **VSL-010**: Library search paths canonicalized via `llvm::sys::fs::real_path()` before linker flag construction
+- **VSL-012**: C variadic `...` now enforced as the last parameter in a function signature
+- **VSL-014**: Added `std::abort()` guard after `error()` in `expect()` for safety if `[[noreturn]]` is violated
+- **VSL-015**: `tokenTypeToString()` now has a `default:` case instead of returning `"UNKNOWN"` outside the switch
+- **VSL-017**: Added assertion guard in lexer main loop to catch infinite-loop regressions in debug builds
+
 ## [1.3.0] - 2026-06-03
 
 ### Added
