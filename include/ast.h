@@ -224,10 +224,26 @@ struct AssignStmt : Stmt {
     ExprPtr target;
     ExprPtr value;
     std::vector<ExprPtr> extraTargets; // for chained assignment: a = b = 1
+    std::string typeAnnotation;        // for typed declarations: x: int = 5
     AssignStmt(ExprPtr t, ExprPtr v)
         : target(std::move(t)), value(std::move(v)) {}
     AssignStmt(ExprPtr t, ExprPtr v, std::vector<ExprPtr> extras)
         : target(std::move(t)), value(std::move(v)), extraTargets(std::move(extras)) {}
+    AssignStmt(ExprPtr t, ExprPtr v, std::string ta)
+        : target(std::move(t)), value(std::move(v)), typeAnnotation(std::move(ta)) {}
+    AssignStmt(ExprPtr t, ExprPtr v, std::vector<ExprPtr> extras, std::string ta)
+        : target(std::move(t)), value(std::move(v)), extraTargets(std::move(extras)),
+          typeAnnotation(std::move(ta)) {}
+    void accept(ASTVisitor& v) const override;
+};
+
+// ── Const declaration: const NAME [: Type] = expr ──────────────────────────
+struct ConstStmt : Stmt {
+    std::string name;
+    ExprPtr     value;
+    std::string typeAnnotation;  // may be empty
+    ConstStmt(std::string n, ExprPtr v, std::string ta = "")
+        : name(std::move(n)), value(std::move(v)), typeAnnotation(std::move(ta)) {}
     void accept(ASTVisitor& v) const override;
 };
 

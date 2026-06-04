@@ -243,7 +243,7 @@ int main(int argc, char* argv[]) {
         codegen.setSourceFile(inputFile);
         codegen.setGCStats(gcStats);
         codegen.setClassFields(classAnalyzer.classFields());
-        codegen.setEscapeInfo(&escapeAnalyzer.stackAllocatable());
+        codegen.setEscapeInfo(std::make_shared<const std::unordered_map<const void*, bool>>(escapeAnalyzer.stackAllocatable()));
         moduleLoader.setContext(&codegen.getContext());
         codegen.generate(*program);
 

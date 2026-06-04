@@ -99,7 +99,7 @@ static void test_default_params() {
 
 // ── Test 2: Default param with type annotation ────────────────────────────
 static void test_default_param_with_type() {
-    std::string src = "define add(x: int, y: int = 0):\n\treturn x + y\n";
+    std::string src = "define add(x: int, y: int = 0) -> int:\n\treturn x + y\n";
     auto ast = parseToAST(src);
     expect(ast.find("Param: x (int)") != std::string::npos,
            "Default param + type: x has type annotation");

@@ -311,7 +311,7 @@ static void testSuperInitDispatch() {
 // 18. **kwargs receiving side
 static void testKwargsReceiving() {
     std::string src =
-        "define greet(**opts):\n"
+        "define greet(**opts) -> int:\n"
         "\treturn 0\n"
         "\n"
         "greet()\n";

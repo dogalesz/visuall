@@ -349,6 +349,52 @@ static void testUnclosedBlock() {
     }
 }
 
+// ── 13. Empty source file is handled without crashing (VSL-003) ────────────
+static void testEmptyFile() {
+    // Parsing an empty file (or one with only whitespace/comments) must
+    // not access tokens_[-1] via previous().
+    bool ok = true;
+    try {
+        auto prog = parseSource("");
+        expect(prog != nullptr, "empty-file: program is not null");
+    } catch (...) {
+        ok = false;
+    }
+    expect(ok, "empty-file: no crash on empty source");
+
+    // Comment-only file
+    try {
+        auto prog = parseSource("## just a comment\n");
+        expect(prog != nullptr, "comment-only: program is not null");
+    } catch (...) {
+        expect(false, "comment-only: no crash on comment-only source");
+    }
+}
+
+// ── 14. C variadic ... must be the last parameter (VSL-012) ─────────────────
+static void testVariadicMustBeLast() {
+    // ... before another parameter should be a ParseError.
+    bool caught = false;
+    try {
+        parseSource("define foo(a: int, ..., b: str):\n\tpass\n");
+    } catch (const ParseError& e) {
+        caught = true;
+        std::string msg = e.what();
+        expect(msg.find("must be the last") != std::string::npos,
+               "variadic-last: error says 'must be the last parameter'");
+    }
+    expect(caught, "variadic-last: ... before other params throws ParseError");
+
+    // ... as the last parameter after a named param should be OK.
+    caught = false;
+    try {
+        auto prog = parseSource("define foo(a: int, ...):\n\treturn 0\n");
+    } catch (const ParseError&) {
+        caught = true;
+    }
+    expect(!caught, "variadic-ok: ... as last param parses successfully");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Test-suite entry point (called from tests/test_main.cpp).
 // ════════════════════════════════════════════════════════════════════════════
@@ -367,6 +413,8 @@ int runParserTests() {
     testDictAndList();          // 10
     testMissingColon();         // 11
     testUnclosedBlock();        // 12
+    testEmptyFile();            // 13 (VSL-003)
+    testVariadicMustBeLast();   // 14 (VSL-012)
 
     return failures;
 }

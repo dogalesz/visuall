@@ -92,6 +92,20 @@ llvm::AllocaInst* Codegen::createEntryBlockAlloca(llvm::Function* fn,
 // Box helpers — heap-allocate a VSL_TAG_BOXED cell for byRef captures.
 // ════════════════════════════════════════════════════════════════════════════
 
+/// Multiply count by element stride (8 bytes), throwing CodegenError on overflow.
+/// Prevents silent wrap-around that would under-allocate at runtime.
+static uint64_t safeMul8(uint64_t count, const std::string& description,
+                         int line, int col, const std::string& filename) {
+    if (count > UINT64_MAX / 8) {
+        throw CodegenError(
+            "Overflow: " + description + " count " + std::to_string(count) +
+                " exceeds maximum safe value (" +
+                std::to_string(UINT64_MAX / 8) + ")",
+            line, col, filename);
+    }
+    return count * 8ULL;
+}
+
 // allocBox() — emit a call to __visuall_alloc(8, VSL_TAG_BOXED=7).
 // Returns the raw i8* pointing to the 8-byte payload.
 llvm::Value* Codegen::allocBox() {
@@ -186,18 +200,32 @@ bool Codegen::isStringExpr(const ast::Expr& e) const {
 // Type mapping
 // ════════════════════════════════════════════════════════════════════════════
 llvm::Type* Codegen::getLLVMType(const std::string& typeName) {
-    if (typeName == "int")   return llvm::Type::getInt64Ty(*context_);
-    if (typeName == "float") return llvm::Type::getDoubleTy(*context_);
-    if (typeName == "bool")  return llvm::Type::getInt1Ty(*context_);
-    if (typeName == "str" || typeName == "string")
+    // Strip generic parameters ("tuple[int,int]" → "tuple"),
+    // nullable suffix ("int?" → "int"), and pointer suffix ("void*" → "void")
+    // so that parameterized types match their base type.
+    std::string baseName = typeName;
+    auto bracket = baseName.find('[');
+    if (bracket != std::string::npos)
+        baseName = baseName.substr(0, bracket);
+    if (!baseName.empty() && baseName.back() == '?')
+        baseName.pop_back();
+    if (!baseName.empty() && baseName.back() == '*')
+        baseName.pop_back();
+
+    if (baseName == "int")   return llvm::Type::getInt64Ty(*context_);
+    if (baseName == "float") return llvm::Type::getDoubleTy(*context_);
+    if (baseName == "bool")  return llvm::Type::getInt1Ty(*context_);
+    if (baseName == "str" || baseName == "string")
         return llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
-    if (typeName == "void")  return llvm::Type::getVoidTy(*context_);
+    if (baseName == "list" || baseName == "dict" || baseName == "tuple")
+        return llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    if (baseName == "void")  return llvm::Type::getVoidTy(*context_);
     // Function types: "(int)->int" etc. map to the closure struct type.
     if (!typeName.empty() && typeName[0] == '(') {
         return getClosureType();
     }
     // Class types: instances are heap-allocated i8* pointers
-    if (classFields_.count(typeName)) {
+    if (classFields_.count(baseName)) {
         return llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
     }
     // Default: i64
@@ -288,8 +316,114 @@ llvm::Value* Codegen::emitPrintCall(const ast::CallExpr& node) {
                 }
             }
             if (!usedCustomStr) {
-                auto* fn = module_->getFunction("__visuall_print_str");
-                if (fn) builder_->CreateCall(fn, {val});
+                // If the argument is a known string expression, print it
+                // directly — don't call __visuall_get_tag on raw C strings
+                // (they aren't GC-tagged and the tag lookup would fail).
+                if (isStringExpr(*node.args[i])) {
+                    auto* fn = module_->getFunction("__visuall_print_str");
+                    if (fn) builder_->CreateCall(fn, {val});
+                } else {
+                // Dispatch via runtime GC tag: list/tuple get a readable
+                // representation, strings print as-is.
+                auto* getTagFn = module_->getFunction("__visuall_get_tag");
+                auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+                if (getTagFn) {
+                    auto* tag = builder_->CreateCall(getTagFn, {val}, "tag");
+                    auto* isList = builder_->CreateICmpEQ(tag,
+                        llvm::ConstantInt::get(i64Ty, 2), "islist");   // VSL_TAG_LIST
+                    auto* isTuple = builder_->CreateICmpEQ(tag,
+                        llvm::ConstantInt::get(i64Ty, 6), "istuple"); // VSL_TAG_TUPLE
+                    auto* isCollection = builder_->CreateOr(isList, isTuple, "iscol");
+
+                    auto* curFn = builder_->GetInsertBlock()->getParent();
+                    auto* colBB = llvm::BasicBlock::Create(
+                        *context_, "print.col", curFn);
+                    auto* strBB = llvm::BasicBlock::Create(
+                        *context_, "print.str", curFn);
+                    auto* mergeBB = llvm::BasicBlock::Create(
+                        *context_, "print.merge", curFn);
+
+                    builder_->CreateCondBr(isCollection, colBB, strBB);
+
+                    // Collection path: print as "[elem, elem, ...]"
+                    builder_->SetInsertPoint(colBB);
+                    auto* printStrFn = module_->getFunction("__visuall_print_str");
+                    auto* printIntFn = module_->getFunction("__visuall_print_int");
+                    auto* listLenFn  = module_->getFunction("__visuall_list_len");
+                    auto* listGetFn  = module_->getFunction("__visuall_list_get");
+                    if (printStrFn && printIntFn && listLenFn && listGetFn) {
+                        auto* open = builder_->CreateGlobalString("[", "lb");
+                        builder_->CreateCall(printStrFn, {open});
+
+                        auto* len = builder_->CreateCall(listLenFn, {val}, "col.len");
+                        // len is already i64 (int64_t from runtime.c:124)
+
+                        // Loop over elements 0..len-1
+                        auto* loopBB = llvm::BasicBlock::Create(
+                            *context_, "print.col.loop", curFn);
+                        auto* loopEndBB = llvm::BasicBlock::Create(
+                            *context_, "print.col.loopend", curFn);
+                        auto* iAlloca = createEntryBlockAlloca(
+                            curFn, "col.i", i64Ty);
+                        builder_->CreateStore(llvm::ConstantInt::get(i64Ty, 0), iAlloca);
+                        builder_->CreateBr(loopBB);
+
+                        builder_->SetInsertPoint(loopBB);
+                        auto* iVal = builder_->CreateLoad(i64Ty, iAlloca, "col.i.val");
+                        auto* more = builder_->CreateICmpSLT(iVal, len, "col.more");
+                        auto* colInnerBB = llvm::BasicBlock::Create(
+                            *context_, "print.col.inner", curFn);
+                        builder_->CreateCondBr(more, colInnerBB, loopEndBB);
+
+                        builder_->SetInsertPoint(colInnerBB);
+                        // Print separator ", " between elements
+                        if (/* not first element */ true) {
+                            auto* notFirst = builder_->CreateICmpSGT(iVal,
+                                llvm::ConstantInt::get(i64Ty, 0), "col.notfirst");
+                            auto* sepBB = llvm::BasicBlock::Create(
+                                *context_, "print.col.sep", curFn);
+                            auto* noSepBB = llvm::BasicBlock::Create(
+                                *context_, "print.col.nosep", curFn);
+                            auto* sepMergeBB = llvm::BasicBlock::Create(
+                                *context_, "print.col.sepmerge", curFn);
+                            builder_->CreateCondBr(notFirst, sepBB, noSepBB);
+
+                            builder_->SetInsertPoint(sepBB);
+                            auto* sep = builder_->CreateGlobalString(", ", "sep");
+                            builder_->CreateCall(printStrFn, {sep});
+                            builder_->CreateBr(sepMergeBB);
+
+                            builder_->SetInsertPoint(noSepBB);
+                            builder_->CreateBr(sepMergeBB);
+
+                            builder_->SetInsertPoint(sepMergeBB);
+                        }
+                        auto* elem = builder_->CreateCall(listGetFn, {val, iVal}, "col.elem");
+                        builder_->CreateCall(printIntFn, {elem});
+                        auto* next = builder_->CreateAdd(iVal,
+                            llvm::ConstantInt::get(i64Ty, 1), "col.next");
+                        builder_->CreateStore(next, iAlloca);
+                        builder_->CreateBr(loopBB);
+
+                        builder_->SetInsertPoint(loopEndBB);
+                        auto* close = builder_->CreateGlobalString("]", "rb");
+                        builder_->CreateCall(printStrFn, {close});
+                    }
+                    builder_->CreateBr(mergeBB);
+
+                    // String path: original behavior
+                    builder_->SetInsertPoint(strBB);
+                    auto* fn = module_->getFunction("__visuall_print_str");
+                    if (fn) builder_->CreateCall(fn, {val});
+                    builder_->CreateBr(mergeBB);
+
+                    builder_->SetInsertPoint(mergeBB);
+                } else {
+                    // No getTag available — fall back to raw string print
+                    auto* fn = module_->getFunction("__visuall_print_str");
+                    if (fn) builder_->CreateCall(fn, {val});
+                }
+                }  // end !isStringExpr → tag dispatch else
             }
         } else {
             // Fallback: printf
@@ -442,6 +576,10 @@ void Codegen::generate(const ast::Program& program) {
     // First pass: declare all top-level functions so forward calls work.
     for (const auto& stmt : program.statements) {
         if (auto* f = dynamic_cast<const ast::FuncDef*>(stmt.get())) {
+            // Track whether the user defines their own main().
+            if (f->name == "main" && !f->isExtern)
+                hasUserMain_ = true;
+
             // Skip generic functions — they are monomorphized at call sites.
             // Also skip @extern functions — they are declared in codegenExternFuncDef.
             if (!f->typeParams.empty() || f->isExtern) {
@@ -468,13 +606,21 @@ void Codegen::generate(const ast::Program& program) {
             }
             if (!f->params.empty() && f->params.back().isVariadic)
                 variadicFuncs_.insert(f->name);
+
+            // User-defined main(): use C ABI — external linkage, i32 return,
+            // C calling convention — so the linker can find the entry point.
+            bool isMain = (hasUserMain_ && f->name == "main");
+            if (isMain)
+                retTy = llvm::Type::getInt32Ty(*context_);
+
             auto* fnTy = llvm::FunctionType::get(retTy, paramTys, false);
-            auto linkage = moduleMode_
+            auto linkage = moduleMode_ || isMain
                 ? llvm::Function::ExternalLinkage
                 : llvm::Function::InternalLinkage;
             auto* fn = llvm::Function::Create(fnTy, linkage,
                                    f->name, module_.get());
-            fn->setCallingConv(llvm::CallingConv::Fast);
+            fn->setCallingConv(isMain ? llvm::CallingConv::C
+                                      : llvm::CallingConv::Fast);
         }
     }
 
@@ -517,6 +663,52 @@ void Codegen::generate(const ast::Program& program) {
         // If no non-function statements, remove the empty init function.
         if (!hasNonFuncStmts) {
             initFn->eraseFromParent();
+        }
+    } else if (hasUserMain_) {
+        // User defined their own main().  Use a temporary init function as
+        // the builder context so codegenClassDef/codegenFuncDef can
+        // save/restore the insertion point correctly (same as module mode).
+        auto* initType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(*context_), false);
+        auto* initFn = llvm::Function::Create(
+            initType, llvm::Function::InternalLinkage,
+            "__visuall_user_main_setup", module_.get());
+        auto* initEntry = llvm::BasicBlock::Create(
+            *context_, "entry", initFn);
+        builder_->SetInsertPoint(initEntry);
+        currentFunction_ = initFn;
+        pushScope();
+
+        bool hasNonFuncStmts = false;
+        collectBoxedVarsFromStmts(program.statements);
+        for (const auto& stmt : program.statements) {
+            if (dynamic_cast<const ast::FuncDef*>(stmt.get()) ||
+                dynamic_cast<const ast::ClassDef*>(stmt.get()) ||
+                dynamic_cast<const ast::EnumDef*>(stmt.get())) {
+                auto* savedBB = builder_->GetInsertBlock();
+                auto* savedFn = currentFunction_;
+                codegenStmt(*stmt);
+                currentFunction_ = savedFn;
+                if (savedBB) builder_->SetInsertPoint(savedBB);
+            } else {
+                hasNonFuncStmts = true;
+                codegenStmt(*stmt);
+            }
+        }
+
+        if (!builder_->GetInsertBlock()->getTerminator())
+            builder_->CreateRetVoid();
+        popScope();
+
+        // Remove the temporary init function if it only contains a ret void.
+        // Non-function statements were emitted into it but are still needed
+        // if they exist — in that case, call it from the user's main.
+        bool keepInit = hasNonFuncStmts;
+        if (!keepInit) {
+            initFn->eraseFromParent();
+        } else {
+            // Rename to __visuall_init for the GC init code in codegenFuncDef.
+            initFn->setName("__visuall_init");
         }
     } else {
         // Normal mode: create main() and wrap top-level code in it.
@@ -741,6 +933,29 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
         }
     }
 
+    // ── User-defined main(): inject GC init + __visuall_init call ──────
+    if (hasUserMain_ && node.name == "main") {
+        auto* i8Ptr = llvm::PointerType::getUnqual(
+            llvm::Type::getInt8Ty(*context_));
+        auto* anchor = createEntryBlockAlloca(
+            fn, "gc.anchor", llvm::Type::getInt8Ty(*context_));
+        auto* anchorPtr = builder_->CreateBitCast(anchor, i8Ptr, "gc.anchor.ptr");
+
+        auto* gcInitFn = getRequiredFn("__visuall_gc_init");
+        builder_->CreateCall(gcInitFn, {anchorPtr});
+
+        if (gcStatsEnabled_) {
+            auto* enableStatsFn = getRequiredFn("__visuall_gc_enable_stats");
+            builder_->CreateCall(enableStatsFn,
+                {llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_), 1)});
+        }
+
+        // Call __visuall_init for top-level module code (if it was created).
+        auto* initFn = module_->getFunction("__visuall_init");
+        if (initFn)
+            builder_->CreateCall(initFn, {});
+    }
+
     // Emit traceback_push for stack-trace support.
     if (auto* tbPushFn = module_->getFunction("__visuall_traceback_push")) {
         auto* nameStr = builder_->CreateGlobalString(node.name, "fn.name");
@@ -789,6 +1004,13 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
         // Emit traceback_pop before returning.
         if (auto* tbPopFn = module_->getFunction("__visuall_traceback_pop"))
             builder_->CreateCall(tbPopFn, {});
+
+        // ── GC shutdown before returning from user's main() ──────────
+        if (hasUserMain_ && node.name == "main") {
+            auto* gcShutdownFn = module_->getFunction("__visuall_gc_shutdown");
+            if (gcShutdownFn) builder_->CreateCall(gcShutdownFn, {});
+        }
+
         if (isGenerator && generatorList_) {
             builder_->CreateRet(generatorList_);
         } else if (fn->getReturnType()->isVoidTy()) {
@@ -819,6 +1041,9 @@ void Codegen::codegenExternFuncDef(const ast::FuncDef& node) {
         retTy = llvm::Type::getInt32Ty(*context_); // C ABI: bool → int
     } else if (node.returnType == "str" || node.returnType == "string") {
         retTy = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    } else if (node.returnType == "void*" || node.returnType == "char*" ||
+               (node.returnType.size() >= 2 && node.returnType.back() == '*')) {
+        retTy = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
     } else {
         // Default for unknown types (should be caught by typechecker)
         retTy = llvm::Type::getInt64Ty(*context_);
@@ -837,6 +1062,10 @@ void Codegen::codegenExternFuncDef(const ast::FuncDef& node) {
         } else if (ta == "str" || ta == "string") {
             paramTys.push_back(
                 llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+        } else if (ta == "void*" || ta == "char*" ||
+                   (ta.size() >= 2 && ta.back() == '*')) {
+            paramTys.push_back(
+                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
         } else {
             paramTys.push_back(llvm::Type::getInt64Ty(*context_));
         }
@@ -848,9 +1077,30 @@ void Codegen::codegenExternFuncDef(const ast::FuncDef& node) {
         fnTy, llvm::Function::ExternalLinkage, node.name, module_.get());
     fn->setCallingConv(llvm::CallingConv::C);
 
-    // Track library for linker
+    // Track library for linker (with validation to prevent
+    // injection of unexpected linker flags via @extern("libName")).
     if (!node.externLibName.empty()) {
-        linkedLibraries_.insert(node.externLibName);
+        const auto& lib = node.externLibName;
+        // Library names must be alphanumeric identifiers with
+        // optional dots and dashes — never path separators, null
+        // bytes, or leading dashes that could alter linker behaviour.
+        bool valid = !lib.empty();
+        for (size_t i = 0; i < lib.size() && valid; ++i) {
+            char c = lib[i];
+            if (c == '\0' || c == '/' || c == '\\') {
+                valid = false;
+            } else if (i == 0 && c == '-') {
+                valid = false;
+            } else if (!std::isalnum(static_cast<unsigned char>(c)) &&
+                       c != '_' && c != '.' && c != '-') {
+                valid = false;
+            }
+        }
+        if (!valid) {
+            throw CodegenError("Invalid @extern library name '" + lib + "'",
+                               node.line, node.column, sourceFile_);
+        }
+        linkedLibraries_.insert(lib);
     }
 }
 
@@ -903,8 +1153,8 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
                     if (id->name == "static")   { isStatic   = true; }
                     else if (id->name == "property") { isProperty = true; }
                     else {
-                        fprintf(stderr, "Warning: unknown decorator '@%s' on method '%s' — not applied\n",
-                            id->name.c_str(), m->name.c_str());
+                        std::cerr << "Warning: unknown decorator '@" << id->name
+                                  << "' on method '" << m->name << "' — not applied\n";
                     }
                 } else if (auto* mem = dynamic_cast<const ast::MemberExpr*>(dec.get())) {
                     if (mem->member == "setter") {
@@ -1899,6 +2149,14 @@ void Codegen::codegenReturnStmt(const ast::ReturnStmt& node) {
         builder_->CreateRet(generatorList_);
         return;
     }
+
+    // ── GC shutdown before returning from user's main() ──────────────
+    if (hasUserMain_ && currentFunction_ &&
+        currentFunction_->getName() == "main") {
+        auto* gcShutdownFn = module_->getFunction("__visuall_gc_shutdown");
+        if (gcShutdownFn) builder_->CreateCall(gcShutdownFn, {});
+    }
+
     if (node.value) {
         // If the current function returns void, ignore the return value.
         if (currentFunction_->getReturnType()->isVoidTy()) {
@@ -2380,8 +2638,20 @@ void Codegen::codegenThrowStmt(const ast::ThrowStmt& node) {
         } else {
             builder_->CreateCall(cxaThrowFn, throwArgs);
         }
+        builder_->CreateUnreachable();
+    } else {
+        // __cxa_throw is not available (e.g., stripped C++ runtime).
+        // Fall back to abort() instead of unreachable, which would be UB.
+        auto* abortFn = module_->getFunction("abort");
+        if (!abortFn) {
+            auto* voidTy = llvm::Type::getVoidTy(*context_);
+            auto* abortTy = llvm::FunctionType::get(voidTy, {}, false);
+            abortFn = llvm::Function::Create(
+                abortTy, llvm::Function::ExternalLinkage, "abort", module_.get());
+        }
+        builder_->CreateCall(abortFn, {});
+        builder_->CreateUnreachable();
     }
-    builder_->CreateUnreachable();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2635,7 +2905,8 @@ void Codegen::codegenGoExpr(const ast::GoExpr& node) {
     llvm::Value* argsPtr = llvm::ConstantPointerNull::get(i8Ptr);
     if (argCount > 0) {
         auto* allocFn = getOrDeclareVisualAlloc();
-        auto* byteSize = llvm::ConstantInt::get(i64Ty, argCount * 8ULL);
+        uint64_t allocBytes = safeMul8(argCount, "go argument", node.line, node.column, sourceFile_);
+        auto* byteSize = llvm::ConstantInt::get(i64Ty, allocBytes);
         argsPtr = builder_->CreateCall(allocFn,
             {byteSize, llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 10)},
             "go.args");
@@ -2795,6 +3066,15 @@ void Codegen::codegenFromImportStmt(const ast::FromImportStmt& node) {
 }
 
 // ── AssignStmt ─────────────────────────────────────────────────────────────
+void Codegen::codegenConstDecl(const ast::ConstStmt& node) {
+    llvm::Value* val = codegenExpr(*node.value);
+    llvm::Type* allocaTy = !node.typeAnnotation.empty()
+        ? getLLVMType(node.typeAnnotation) : val->getType();
+    auto* alloca = createEntryBlockAlloca(currentFunction_, node.name, allocaTy);
+    builder_->CreateStore(val, alloca);
+    declareVar(node.name, alloca);
+}
+
 void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
     llvm::Value* val = codegenExpr(*node.value);
 
@@ -2871,21 +3151,25 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
             return;
         }
 
+        // If a type annotation is present, use it for the alloca type.
+        llvm::Type* allocaTy = !node.typeAnnotation.empty()
+            ? getLLVMType(node.typeAnnotation) : val->getType();
+
         auto* existing = lookupVar(ident->name);
         if (existing) {
             // If the alloca type matches, store directly.
-            if (existing->getAllocatedType() == val->getType()) {
+            if (existing->getAllocatedType() == allocaTy) {
                 builder_->CreateStore(val, existing);
             } else {
                 // Type changed — create a new alloca.
                 auto* alloca = createEntryBlockAlloca(
-                    currentFunction_, ident->name, val->getType());
+                    currentFunction_, ident->name, allocaTy);
                 builder_->CreateStore(val, alloca);
                 declareVar(ident->name, alloca);
             }
         } else {
             auto* alloca = createEntryBlockAlloca(
-                currentFunction_, ident->name, val->getType());
+                currentFunction_, ident->name, allocaTy);
             builder_->CreateStore(val, alloca);
             declareVar(ident->name, alloca);
         }
@@ -2963,6 +3247,16 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
                 i64Ty, objTyped,
                 llvm::ConstantInt::get(i64Ty, fieldIdx),
                 mem->member + ".ptr");
+
+            // Record the original LLVM type so field reads can reverse
+            // the i64 coercion (ptrtoint/inttoptr, bitcast for double, etc.).
+            if (!objClassName.empty()) {
+                auto& types = classFieldTypes_[objClassName];
+                if (types.size() <= static_cast<size_t>(fieldIdx))
+                    types.resize(fieldIdx + 1, nullptr);
+                if (!types[fieldIdx])
+                    types[fieldIdx] = val->getType();
+            }
 
             // Box value to i64
             val = coerceToI64(val);
@@ -3276,6 +3570,15 @@ llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
                     cmp = builder_->CreateNot(cmp, "str.ne");
                 return cmp;
             }
+        }
+
+        // String concatenation: str + str
+        // Uses isStringExpr() for AST-level validation — NOT just LLVM
+        // pointer types, because list/dict/tuple/void* also map to i8*.
+        if (node.op == ast::BinOp::Add && isStringExpr(node)) {
+            auto* strConcatFn = module_->getFunction("__visuall_str_concat");
+            if (strConcatFn)
+                return builder_->CreateCall(strConcatFn, {L, R}, "str.concat");
         }
     }
 
@@ -4030,7 +4333,22 @@ llvm::Value* Codegen::codegenMemberExpr(const ast::MemberExpr& node) {
             i64Ty, objTyped,
             llvm::ConstantInt::get(i64Ty, fieldIdx),
             node.member + ".ptr");
-        return builder_->CreateLoad(i64Ty, gep, node.member + ".val");
+        auto* loaded = builder_->CreateLoad(i64Ty, gep, node.member + ".val");
+
+        // Reverse i64 coercion if the field's original type is known
+        // (e.g., string pointers, doubles, small integers).
+        if (auto* origTy = lookupFieldType(node.member)) {
+            if (origTy->isPointerTy())
+                return builder_->CreateIntToPtr(
+                    loaded, origTy, node.member + ".ptr");
+            if (origTy->isDoubleTy())
+                return builder_->CreateBitCast(
+                    loaded, origTy, node.member + ".f64");
+            if (origTy != i64Ty && origTy->isIntegerTy())
+                return builder_->CreateTrunc(
+                    loaded, origTy, node.member + ".int");
+        }
+        return loaded;
     }
 
     return llvm::ConstantInt::get(*context_, llvm::APInt(64, 0));
@@ -4118,6 +4436,29 @@ int Codegen::findFieldIndex(const std::string& member) const {
         }
     }
     return -1;
+}
+
+llvm::Type* Codegen::lookupFieldType(const std::string& member) {
+    // Determine the class context for field type resolution.
+    // For 'this.field', use currentClassName_; for 'obj.field',
+    // check varClass_ for the object variable's class.
+    std::string clsName = currentClassName_;
+    if (clsName.empty()) {
+        // Try to find the field in any known class
+        // (fallback: scan all classes for the field name)
+    }
+    // Search all classes for the field; return its type if known.
+    for (auto& [cn, fields] : classFields_) {
+        for (size_t i = 0; i < fields.size(); i++) {
+            if (fields[i] == member) {
+                auto& types = classFieldTypes_[cn];
+                if (i < types.size() && types[i])
+                    return types[i];
+                return nullptr;
+            }
+        }
+    }
+    return nullptr;
 }
 
 llvm::Value* Codegen::coerceToI64(llvm::Value* val) {
@@ -5565,6 +5906,7 @@ void Codegen::emitMonomorphization(const ast::FuncDef* def,
 
 void Codegen::visit(const ast::ExprStmt& n)          { codegenExprStmt(n); }
 void Codegen::visit(const ast::AssignStmt& n)         { codegenAssignStmt(n); }
+void Codegen::visit(const ast::ConstStmt& n)          { codegenConstDecl(n); }
 void Codegen::visit(const ast::TupleUnpackStmt& n)    { codegenTupleUnpackStmt(n); }
 void Codegen::visit(const ast::ReturnStmt& n)         { codegenReturnStmt(n); }
 void Codegen::visit(const ast::FuncDef& n)            { codegenFuncDef(n); }

@@ -89,8 +89,9 @@ public:
     /// Inject escape-analysis results from EscapeAnalyzer.
     /// Map from allocation-site AST node pointer → true if stack-allocatable.
     /// Must be called before generate().
-    void setEscapeInfo(const std::unordered_map<const void*, bool>* info) {
-        escapeInfo_ = info;
+    /// Uses shared_ptr to guarantee the map outlives all consumers.
+    void setEscapeInfo(std::shared_ptr<const std::unordered_map<const void*, bool>> info) {
+        escapeInfo_ = std::move(info);
     }
 
     /// Transfer ownership of the LLVM module out.
@@ -109,9 +110,12 @@ private:
     std::unique_ptr<llvm::IRBuilder<>> builder_;
     bool moduleMode_ = false;
     bool gcStatsEnabled_ = false;
+    bool hasUserMain_ = false;    // true when user defines main()
 
-    // Escape analysis results (set by setEscapeInfo before generate)
-    const std::unordered_map<const void*, bool>* escapeInfo_ = nullptr;
+    // Escape analysis results (set by setEscapeInfo before generate).
+    // shared_ptr guarantees the map outlives Codegen even if the EscapeAnalyzer
+    // that produced it goes out of scope first.
+    std::shared_ptr<const std::unordered_map<const void*, bool>> escapeInfo_;
 
     // External shared libraries to link against (populated by @extern)
     std::unordered_set<std::string> linkedLibraries_;
@@ -143,6 +147,9 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> classExtraBases_;
     // Maps className → ordered list of field names (populated by ClassAnalyzer)
     std::unordered_map<std::string, std::vector<std::string>> classFields_;
+    // Maps className → field LLVM types (parallel to classFields_; populated
+    // at first assignment so pointer/double fields round-trip through i64 slots).
+    std::unordered_map<std::string, std::vector<llvm::Type*>> classFieldTypes_;
     // Maps enumName → ordered list of member names (with assigned int values)
     // enumName.MEMBER → value = index
     std::unordered_map<std::string, std::vector<std::string>> enumMembers_;
@@ -243,12 +250,17 @@ private:
     // Search classFields_ for a field name; returns index >= 0 if found, -1 otherwise.
     int findFieldIndex(const std::string& member) const;
 
+    // Look up the original LLVM type for a class field.
+    // Returns nullptr if the field type is unknown (treated as plain i64).
+    llvm::Type* lookupFieldType(const std::string& member);
+
     // Coerce val to i64: ptr→ptrtoint, double→bitcast, other int→intcast, i64→identity.
     llvm::Value* coerceToI64(llvm::Value* val);
 
     // ── ASTVisitor overrides (statement nodes) ────────────────────────────
     void visit(const ast::ExprStmt& n) override;
     void visit(const ast::AssignStmt& n) override;
+    void visit(const ast::ConstStmt& n) override;
     void visit(const ast::TupleUnpackStmt& n) override;
     void visit(const ast::ReturnStmt& n) override;
     void visit(const ast::BreakStmt& n) override;
@@ -326,6 +338,7 @@ private:
     void codegenImportStmt(const ast::ImportStmt& node);
     void codegenFromImportStmt(const ast::FromImportStmt& node);
     void codegenAssignStmt(const ast::AssignStmt& node);
+    void codegenConstDecl(const ast::ConstStmt& node);
     void codegenExprStmt(const ast::ExprStmt& node);
     void codegenTupleUnpackStmt(const ast::TupleUnpackStmt& node);
     void codegenInterfaceDef(const ast::InterfaceDef& node);

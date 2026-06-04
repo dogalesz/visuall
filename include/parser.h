@@ -72,6 +72,7 @@ private:
     ast::StmtPtr  parseBreakStmt();
     ast::StmtPtr  parseContinueStmt();
     ast::StmtPtr  parseExpressionStatement();
+    ast::StmtPtr  parseConstDecl();
     ast::StmtPtr  parseDecorated();
     ast::StmtPtr  parseInterfaceDef();
 

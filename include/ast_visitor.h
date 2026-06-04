@@ -55,6 +55,7 @@ public:
     // ── Statement nodes ───────────────────────────────────────────────────
     virtual void visit(const ast::ExprStmt&)           = 0;
     virtual void visit(const ast::AssignStmt&)         = 0;
+    virtual void visit(const ast::ConstStmt&)          = 0;
     virtual void visit(const ast::TupleUnpackStmt&)    = 0;
     virtual void visit(const ast::ReturnStmt&)         = 0;
     virtual void visit(const ast::BreakStmt&)          = 0;
@@ -116,6 +117,7 @@ public:
     // Statements
     void visit(const ast::ExprStmt&)          override {}
     void visit(const ast::AssignStmt&)        override {}
+    void visit(const ast::ConstStmt&)         override {}
     void visit(const ast::TupleUnpackStmt&)   override {}
     void visit(const ast::ReturnStmt&)        override {}
     void visit(const ast::BreakStmt&)         override {}
@@ -183,6 +185,7 @@ inline void ChanRecvExpr::accept(ASTVisitor& v)       const { v.visit(*this); }
 // Statements
 inline void ExprStmt::accept(ASTVisitor& v)           const { v.visit(*this); }
 inline void AssignStmt::accept(ASTVisitor& v)         const { v.visit(*this); }
+inline void ConstStmt::accept(ASTVisitor& v)          const { v.visit(*this); }
 inline void TupleUnpackStmt::accept(ASTVisitor& v)    const { v.visit(*this); }
 inline void ReturnStmt::accept(ASTVisitor& v)         const { v.visit(*this); }
 inline void BreakStmt::accept(ASTVisitor& v)          const { v.visit(*this); }

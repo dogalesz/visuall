@@ -275,6 +275,7 @@ public:
     // ── ASTVisitor overrides — statement nodes ───────────────────────────
     void visit(const ast::ExprStmt& n)            override;
     void visit(const ast::AssignStmt& n)          override;
+    void visit(const ast::ConstStmt& n)           override;
     void visit(const ast::TupleUnpackStmt& n)     override;
     void visit(const ast::ReturnStmt& n)          override;
     void visit(const ast::BreakStmt& n)           override;
@@ -308,6 +309,8 @@ private:
     bool insideClass_ = false;
     TypeRef currentReturnType_;        // expected return type of the current function
     bool hasExplicitReturnType_ = false;
+    int functionNestingDepth_ = 0;     // tracks nesting for @extern scope check
+    std::unordered_set<std::string> constVars_;  // names of const-declared variables
     std::string currentClassName_;     // name of the class being checked
 
     // ── Result slot for expression visits ─────────────────────────────────

@@ -97,7 +97,7 @@ int runEscapeTests() {
 
     // ── 1. Non-escaping list (local use only) ────────────────────────────
     runTest(
-        "define f():\n"
+        "define f() -> int:\n"
         "\tx = [1, 2, 3]\n"
         "\treturn x[0]\n",
         "test1.vsl",
@@ -109,7 +109,7 @@ int runEscapeTests() {
 
     // ── 2. Escaping via return ───────────────────────────────────────────
     runTest(
-        "define f():\n"
+        "define f() -> list:\n"
         "\treturn [1, 2, 3]\n",
         "test2.vsl",
         [](const EscapeAnalyzer& ea, const ast::Program& prog) {
@@ -129,7 +129,7 @@ int runEscapeTests() {
 
     // ── 3. Escaping via store into another list ──────────────────────────
     runTest(
-        "define f():\n"
+        "define f() -> list:\n"
         "\touter = []\n"
         "\tinner = [1, 2]\n"
         "\touter[0] = inner\n"
@@ -155,7 +155,7 @@ int runEscapeTests() {
 
     // ── 4. Non-escaping closure env ──────────────────────────────────────
     runTest(
-        "define f():\n"
+        "define f() -> int:\n"
         "\tfn = x -> x * 2\n"
         "\treturn fn(21)\n",
         "test4.vsl",
@@ -171,7 +171,7 @@ int runEscapeTests() {
 
     // ── 5. Escaping closure (returned) ───────────────────────────────────
     runTest(
-        "define f():\n"
+        "define f() -> (int)->int:\n"
         "\tx = 42\n"
         "\treturn n -> n + x\n",
         "test5.vsl",

@@ -334,23 +334,59 @@ TypeRef TypeChecker::resolveTypeName(const std::string& name) const {
         return makeUnion(std::move(members));
     }
 
-    // Generic type args: list[int]
+    // Generic type args: list[int], dict[str,int], tuple[T1,T2,...]
     auto bracketPos = name.find('[');
     if (bracketPos != std::string::npos) {
         std::string base = name.substr(0, bracketPos);
         auto closeBracket = name.rfind(']');
         if (closeBracket != std::string::npos && closeBracket > bracketPos) {
             std::string inner = name.substr(bracketPos + 1, closeBracket - bracketPos - 1);
+
+            // Helper: bracket-depth-aware comma split
+            auto splitAtTopLevelCommas = [](const std::string& s)
+                -> std::vector<std::string> {
+                std::vector<std::string> parts;
+                size_t start = 0;
+                int depth = 0;
+                for (size_t i = 0; i <= s.size(); i++) {
+                    char c = (i < s.size()) ? s[i] : ',';
+                    if (c == '[' || c == '(') depth++;
+                    else if (c == ']' || c == ')') depth--;
+                    else if (c == ',' && depth == 0) {
+                        std::string part = s.substr(start, i - start);
+                        // Trim whitespace
+                        size_t f = part.find_first_not_of(" \t");
+                        size_t l = part.find_last_not_of(" \t");
+                        if (f != std::string::npos)
+                            part = part.substr(f, l - f + 1);
+                        if (!part.empty())
+                            parts.push_back(part);
+                        start = i + 1;
+                    }
+                }
+                return parts;
+            };
+
             if (base == "list") {
+                auto elems = splitAtTopLevelCommas(inner);
+                // list takes a single element type; extra commas would be malformed
                 return makeList(resolveTypeName(inner));
             }
             if (base == "dict") {
-                auto comma = inner.find(',');
-                if (comma != std::string::npos) {
+                auto parts = splitAtTopLevelCommas(inner);
+                if (parts.size() == 2) {
                     return makeDict(
-                        resolveTypeName(inner.substr(0, comma)),
-                        resolveTypeName(inner.substr(comma + 1)));
+                        resolveTypeName(parts[0]),
+                        resolveTypeName(parts[1]));
                 }
+            }
+            if (base == "tuple") {
+                auto parts = splitAtTopLevelCommas(inner);
+                std::vector<TypeRef> elems;
+                elems.reserve(parts.size());
+                for (const auto& p : parts)
+                    elems.push_back(resolveTypeName(p));
+                return makeTuple(std::move(elems));
             }
         }
         return makeClass(base);
@@ -367,6 +403,12 @@ TypeRef TypeChecker::resolveTypeName(const std::string& name) const {
     if (name == "bool")  return makeBool();
     if (name == "void")  return makeVoid();
     if (name == "null")  return makeNull();
+
+    // Bare collection types: resolve as unparameterized generics with
+    // Unknown element type so they accept any parameterized subtype.
+    if (name == "list")  return makeList(makeUnknown());
+    if (name == "dict")  return makeDict(makeUnknown(), makeUnknown());
+    if (name == "tuple") return makeTuple({});
 
     // Check for interface
     if (interfaceTable_.count(name)) {
@@ -463,6 +505,39 @@ bool TypeChecker::isAssignableTo(const TypeRef& from, const TypeRef& to) const {
     // Class subtyping
     if (from->kind == TypeNode::Class && to->kind == TypeNode::Class) {
         return isSubtype(from, to);
+    }
+
+    // List compatibility: list[X] is assignable to list[Y] if X is
+    // assignable to Y, or if either element type is Unknown (wildcard).
+    if (from->kind == TypeNode::List && to->kind == TypeNode::List) {
+        const auto& fl = static_cast<const ListType*>(from.get())->elem;
+        const auto& tl = static_cast<const ListType*>(to.get())->elem;
+        if (tl->isUnknown() || fl->isUnknown()) return true;
+        return isAssignableTo(fl, tl);
+    }
+
+    // Dict compatibility: dict[K1,V1] is assignable to dict[K2,V2] if
+    // both key and value types are assignable (or Unknown).
+    if (from->kind == TypeNode::Dict && to->kind == TypeNode::Dict) {
+        const auto& fd = *static_cast<const DictType*>(from.get());
+        const auto& td = *static_cast<const DictType*>(to.get());
+        if (td.key->isUnknown() && td.value->isUnknown()) return true;
+        if (fd.key->isUnknown() && fd.value->isUnknown()) return true;
+        return isAssignableTo(fd.key, td.key) && isAssignableTo(fd.value, td.value);
+    }
+
+    // Tuple compatibility: tuple with matching arity and assignable elements.
+    if (from->kind == TypeNode::Tuple && to->kind == TypeNode::Tuple) {
+        const auto& ft = *static_cast<const TupleType*>(from.get());
+        const auto& tt = *static_cast<const TupleType*>(to.get());
+        if (tt.elems.empty()) return true; // bare tuple accepts anything
+        if (ft.elems.size() != tt.elems.size()) return false;
+        for (size_t i = 0; i < ft.elems.size(); i++) {
+            if (!tt.elems[i]->isUnknown() && !ft.elems[i]->isUnknown() &&
+                !isAssignableTo(ft.elems[i], tt.elems[i]))
+                return false;
+        }
+        return true;
     }
 
     // Function type compatibility: two Func types are compatible if they have
@@ -637,7 +712,36 @@ void TypeChecker::visit(const ast::ExprStmt& s) {
 }
 
 void TypeChecker::visit(const ast::AssignStmt& s) {
+    // Reject reassignment of const-declared variables.
+    if (auto* id = dynamic_cast<const ast::Identifier*>(s.target.get())) {
+        if (constVars_.count(id->name)) {
+            error("Cannot reassign constant '" + id->name + "'",
+                  s.line, s.column);
+            checkExpr(*s.value);  // still check RHS for cascading errors
+            return;
+        }
+    }
+
     TypeRef rhsType = checkExpr(*s.value);
+
+    // Typed variable declaration: resolve the annotation, validate against RHS.
+    if (!s.typeAnnotation.empty() && dynamic_cast<const ast::Identifier*>(s.target.get())) {
+        auto* id = static_cast<const ast::Identifier*>(s.target.get());
+        TypeRef annType = resolveTypeName(s.typeAnnotation);
+        if (symbols_.isDeclared(id->name)) {
+            error("Variable '" + id->name + "' already declared",
+                  s.line, s.column);
+            return;
+        }
+        if (!rhsType->isUnknown() && !annType->isUnknown() &&
+            !isAssignableTo(rhsType, annType)) {
+            error("Type mismatch: declared as " + annType->toUserString() +
+                  ", got " + rhsType->toUserString(),
+                  s.line, s.column);
+        }
+        declare(id->name, annType, s.line, s.column);
+        return;
+    }
 
     if (auto* id = dynamic_cast<const ast::Identifier*>(s.target.get())) {
         if (symbols_.isDeclared(id->name)) {
@@ -665,13 +769,39 @@ void TypeChecker::visit(const ast::AssignStmt& s) {
     }
 }
 
+void TypeChecker::visit(const ast::ConstStmt& s) {
+    TypeRef rhsType = checkExpr(*s.value);
+
+    if (symbols_.isDeclared(s.name)) {
+        error("Constant '" + s.name + "' already declared",
+              s.line, s.column);
+        return;
+    }
+
+    TypeRef declType = s.typeAnnotation.empty()
+        ? rhsType
+        : resolveTypeName(s.typeAnnotation);
+
+    if (!s.typeAnnotation.empty() && !rhsType->isUnknown() &&
+        !isAssignableTo(rhsType, declType)) {
+        error("Const type mismatch: expected " + declType->toUserString() +
+              ", got " + rhsType->toUserString(),
+              s.line, s.column);
+    }
+
+    declare(s.name, declType, s.line, s.column);
+    constVars_.insert(s.name);
+}
+
 void TypeChecker::visit(const ast::ReturnStmt& s) {
     TypeRef retType = makeVoid();
     if (s.value) {
         retType = checkExpr(*s.value);
     }
     if (hasExplicitReturnType_ && !currentReturnType_->isUnknown()) {
-        if (!typeEquals(retType, currentReturnType_) && !retType->isUnknown()) {
+        // Use isAssignableTo instead of typeEquals so that bare 'list'
+        // (ListType(Unknown)) accepts list[int] (ListType(Int)).
+        if (!isAssignableTo(retType, currentReturnType_) && !retType->isUnknown()) {
             if (retType->isNumeric() && currentReturnType_->isNumeric()) {
                 if (currentReturnType_->kind == TypeNode::Int && retType->kind == TypeNode::Float) {
                     error("Return type mismatch: expected " + currentReturnType_->toUserString() +
@@ -690,6 +820,13 @@ void TypeChecker::visit(const ast::ReturnStmt& s) {
             }
         }
     }
+
+    // Require explicit -> ReturnType annotation when returning a value.
+    if (!hasExplicitReturnType_ && s.value) {
+        error("Function returns a value but has no '-> ReturnType' annotation",
+              s.line, s.column,
+              "add e.g. '-> int' to the function signature");
+    }
 }
 
 void TypeChecker::visit(const ast::FuncDef& s) {
@@ -699,10 +836,22 @@ void TypeChecker::visit(const ast::FuncDef& s) {
     }
 
     if (s.isExtern) {
+        // @extern declarations must be at module scope, not inside functions.
+        if (functionNestingDepth_ > 0) {
+            error("'@extern' declarations must be at module scope, "
+                  "not inside functions",
+                  s.line, s.column);
+            // Continue validation anyway so the user sees all type errors.
+        }
+
         // Validate C-compatible types for extern function declarations.
         auto isCompatible = [&](const std::string& t) -> bool {
             return t.empty() || t == "int" || t == "float" || t == "bool"
-                || t == "str" || t == "string" || t == "void";
+                || t == "str" || t == "string" || t == "void"
+                || t == "int*" || t == "float*" || t == "bool*"
+                || t == "str*" || t == "void*" || t == "string*"
+                || t == "char*"
+                || (t.size() >= 2 && t.back() == '*');
         };
         if (!s.returnType.empty() && !isCompatible(s.returnType)) {
             error("extern function '" + s.name +
@@ -722,6 +871,8 @@ void TypeChecker::visit(const ast::FuncDef& s) {
         // No body type-checking for extern declarations.
         return;
     }
+
+    functionNestingDepth_++;
 
     TypeRef savedRetType = currentReturnType_;
     bool savedHasExplicit = hasExplicitReturnType_;
@@ -767,6 +918,7 @@ void TypeChecker::visit(const ast::FuncDef& s) {
     currentReturnType_ = savedRetType;
     hasExplicitReturnType_ = savedHasExplicit;
     currentTypeParams_ = savedTP;
+    functionNestingDepth_--;
 }
 
 void TypeChecker::visit(const ast::InitDef& s) {
@@ -904,6 +1056,9 @@ void TypeChecker::visit(const ast::IfStmt& s) {
                     for (const auto& m : static_cast<const UnionType*>(varType.get())->members) {
                         if (m->kind != TypeNode::Null) nonNullMembers.push_back(m);
                     }
+                    // nonNullType stays null (falsy) when nonNullMembers is
+                    // empty.  The sentinel value signals "no narrowing possible"
+                    // and is checked before use at lines 1083/1098.
                     TypeRef nonNullType;
                     if (nonNullMembers.size() == 1) {
                         nonNullType = nonNullMembers[0];
@@ -1324,6 +1479,14 @@ void TypeChecker::visit(const ast::CallExpr& e) {
             // Channel element type comes from typeArgs if present, else unknown.
             TypeRef elemType = makeUnknown();
             exprResult_ = makeChan(elemType);
+            return;
+        }
+        // len(collection) -> int
+        if (id->name == "len") {
+            if (e.args.size() != 1)
+                error("len() requires exactly 1 argument", e.line, e.column);
+            for (const auto& a : e.args) checkExpr(*a);
+            exprResult_ = makeInt();
             return;
         }
     }

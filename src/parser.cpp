@@ -190,6 +190,7 @@ const Token& Parser::current() const {
 }
 
 const Token& Parser::previous() const {
+    assert(pos_ > 0 && "previous() called before any token was consumed");
     return tokens_[pos_ - 1];
 }
 
@@ -210,6 +211,7 @@ bool Parser::match(TokenType type) {
 const Token& Parser::expect(TokenType type, const std::string& msg) {
     if (check(type)) return advance();
     error(msg);
+    std::abort(); // unreachable: error() is [[noreturn]]
 }
 
 bool Parser::isAtEnd() const {
@@ -268,7 +270,8 @@ std::unique_ptr<ast::Program> Parser::parse() {
     if (!errors_.empty()) throw errors_.front();
 
     auto program = std::make_unique<ast::Program>(std::move(stmts));
-    if (previous().line > 0) {
+    // Guard: pos_ may be 0 for empty or comment-only source files.
+    if (pos_ > 0 && previous().line > 0) {
         program->endLine = previous().line;
         program->endCol = previous().column + std::max(1, static_cast<int>(previous().lexeme.size()));
     }
@@ -337,6 +340,7 @@ ast::StmtPtr Parser::parseStatement() {
         case TokenType::KW_FROM:     return parseFromImportStmt();
         case TokenType::KW_BREAK:    return parseBreakStmt();
         case TokenType::KW_CONTINUE: return parseContinueStmt();
+        case TokenType::KW_CONST:    return parseConstDecl();
         case TokenType::AT:          return parseDecorated();
         case TokenType::ELLIPSIS: {
             int ln = current().line, col = current().column;
@@ -358,9 +362,13 @@ std::vector<ast::Param> Parser::parseParamList(bool* out_isVariadicC) {
     std::vector<ast::Param> params;
     if (!check(TokenType::RPAREN)) {
         do {
-            // C variadic: ... must be the last "parameter"
+            // C variadic: ... must be the last parameter
             if (match(TokenType::ELLIPSIS)) {
                 if (out_isVariadicC) *out_isVariadicC = true;
+                // Enforce that ... is the final parameter.
+                if (!check(TokenType::RPAREN)) {
+                    error("C variadic '...' must be the last parameter in the list");
+                }
                 break;
             }
             ast::Param p;
@@ -916,6 +924,28 @@ ast::StmtPtr Parser::parseContinueStmt() {
 
 // ════════════════════════════════════════════════════════════════════════════
 // @decorator
+// const NAME [: Type] = expr
+// ════════════════════════════════════════════════════════════════════════════
+ast::StmtPtr Parser::parseConstDecl() {
+    int ln = current().line, col = current().column;
+    advance(); // consume 'const'
+
+    std::string name = expect(TokenType::IDENTIFIER, "Expected constant name").lexeme;
+
+    std::string typeAnn;
+    if (match(TokenType::COLON)) {
+        typeAnn = parseTypeAnnotation();
+    }
+
+    expect(TokenType::ASSIGN, "Expected '=' in const declaration");
+    auto value = parseExpression();
+
+    auto node = std::make_unique<ast::ConstStmt>(name, std::move(value), typeAnn);
+    node->line = ln; node->column = col;
+    node->endLine = previous().line; node->endCol = previous().column;
+    return node;
+}
+
 // define ...
 // ════════════════════════════════════════════════════════════════════════════
 ast::StmtPtr Parser::parseDecorated() {
@@ -946,6 +976,23 @@ ast::StmtPtr Parser::parseExpressionStatement() {
         auto node = std::make_unique<ast::ChanSendStmt>(std::move(expr), std::move(val));
         node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
         return node;
+    }
+
+    // ── Typed variable declaration: ident : Type = expr ────────────────
+    if (auto* id = dynamic_cast<const ast::Identifier*>(expr.get())) {
+        if (match(TokenType::COLON)) {
+            std::string typeAnn = parseTypeAnnotation();
+            if (match(TokenType::ASSIGN)) {
+                auto value = parseExpression();
+                auto node = std::make_unique<ast::AssignStmt>(
+                    std::move(expr), std::move(value), typeAnn);
+                node->line = ln; node->column = col;
+                node->endLine = previous().line; node->endCol = previous().column;
+                return node;
+            }
+            // No '=' after type annotation — just a bare expression with
+            // trailing colon.  Fall through to ExprStmt.
+        }
     }
 
     // ── Tuple unpacking: a, b, c = expr ────────────────────────────────
@@ -1797,6 +1844,11 @@ std::string Parser::parseTypeAnnotation() {
     // Handle postfix nullable: T?
     if (match(TokenType::QUESTION)) {
         result += "|null";
+    }
+
+    // Handle pointer suffix: void*, int*, str*
+    if (match(TokenType::STAR)) {
+        result += "*";
     }
 
     return result;

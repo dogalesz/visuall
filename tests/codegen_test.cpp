@@ -77,6 +77,22 @@ static std::string generateIR(const std::string& src) {
     }
 }
 
+// Like generateIR but lets exceptions propagate so tests can verify error types.
+static std::string generateIRThrows(const std::string& src) {
+    Lexer lexer(src, "test.vsl");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens, "test.vsl");
+    auto program = parser.parse();
+    ClassAnalyzer classAnalyzer;
+    classAnalyzer.analyze(*program);
+    Codegen codegen("test_module");
+    codegen.setClassFields(classAnalyzer.classFields());
+    codegen.generate(*program);
+    std::ostringstream oss;
+    codegen.printIR(oss);
+    return oss.str();
+}
+
 // ── 1. Integer addition produces correct IR ────────────────────────────────
 static void test_intAddition() {
     std::string ir = generateIR("x = 40\ny = x + 2\n");
@@ -746,6 +762,62 @@ static void test_externFFI() {
     }
 }
 
+// ── 29. Invalid @extern library names are rejected (VSL-008) ────────────────
+static void test_externLibNameValidation() {
+    // Path separator in library name must be rejected.
+    {
+        std::string src =
+            "@extern(\"/tmp/evil\")\n"
+            "define bad_func() -> int\n";
+        bool caught = false;
+        try {
+            generateIRThrows(src);
+        } catch (const CodegenError& e) {
+            caught = true;
+            std::string msg = e.what();
+            expect(msg.find("Invalid @extern library name") != std::string::npos,
+                   "externlib-slash: error mentions invalid library name");
+        } catch (const std::exception&) {
+            caught = true; // any Diagnostic error is acceptable
+        }
+        expect(caught, "externlib-slash: / in lib name throws error");
+    }
+
+    // Leading dash must be rejected (could form -L flag injection).
+    {
+        std::string src =
+            "@extern(\"-L/evil/path\")\n"
+            "define bad_func2() -> int\n";
+        bool caught = false;
+        try {
+            generateIRThrows(src);
+        } catch (const CodegenError& e) {
+            caught = true;
+            std::string msg = e.what();
+            expect(msg.find("Invalid @extern library name") != std::string::npos,
+                   "externlib-dash: error mentions invalid library name");
+        } catch (const std::exception&) {
+            caught = true;
+        }
+        expect(caught, "externlib-dash: leading - in lib name throws error");
+    }
+
+    // Normal library name should still work.
+    {
+        std::string src =
+            "@extern(\"m\")\n"
+            "define sqrt(x: float) -> float\n";
+        bool ok = true;
+        try {
+            std::string ir = generateIR(src);
+            ok = !ir.empty() && ir.find("declare") != std::string::npos;
+        } catch (...) {
+            ok = false;
+        }
+        expect(ok, "externlib-ok: normal library name 'm' works fine");
+    }
+}
+
 static void test_concurrency() {
     // 28a. go spawn generates __visuall_go_create
     {
@@ -817,8 +889,9 @@ int runCodegenTests() {
     test_randomModule();
     test_stackTraces();
     test_externFFI();
+    test_externLibNameValidation(); // 29 (VSL-008)
     test_concurrency();
 
-    std::cout << "  " << (123 - failures) << "/123 codegen tests passed.\n";
+    std::cout << "  " << (132 - failures) << "/132 codegen tests passed.\n";
     return failures;
 }
