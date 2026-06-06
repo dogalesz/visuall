@@ -29,22 +29,22 @@ Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best
 
 | Test | C++ (ms) | Visuall (ms) | Python (ms) | Visuall/C++ | Py/C++ |
 |------|----------|--------------|-------------|-------------|--------|
-| Primes (trial div, 100K ×3) | 6.9 | 14.7 | 241.6 | 2.1x | 35x |
-| TreeSum (recursive, depth 22) | 8.2 | 44.8 | 645.9 | 5.5x | 79x |
-| Collatz (1..100K) | 15.5 | 18.1 | 822.8 | 1.2x | 53x |
-| Strings (200K f-strings) | 32.3 | 46.9 | 36.7 | 1.5x | 1.1x |
-| Pi (Leibniz, 10M terms) | 10.7 | 17.7 | 781.0 | 1.7x | 73x |
-| Nested loops (2000×2000) | 3.2 | 10.3 | 236.0 | 3.2x | 74x |
-| Ackermann (3,11) | 851.6 | 1,454.2 | 26,918.0 | 1.7x | 32x |
-| GCD sum (1..2000) | 45.8 | 58.7 | 863.8 | 1.3x | 19x |
-| Fibonacci (fib(35) ×500K) | 5.7 | 7.5 | 728.4 | 1.3x | 128x |
-| Float distance (1M) | 1.8 | 8.9 | 198.2 | 4.9x | 110x |
+| Primes (trial div, 100K ×3) | 6.9 | 12.7 | 241.6 | 1.8x | 35x |
+| TreeSum (recursive, depth 22) | 8.2 | 35.6 | 645.9 | 4.3x | 79x |
+| Collatz (1..100K) | 15.5 | 17.3 | 822.8 | 1.1x | 53x |
+| Strings (200K f-strings) | 32.3 | 66.4 | 36.7 | 2.1x | 1.1x |
+| Pi (Leibniz, 10M terms) | 10.7 | 15.1 | 781.0 | 1.4x | 73x |
+| Nested loops (2000×2000) | 3.2 | 9.1 | 236.0 | 2.8x | 74x |
+| Ackermann (3,11) | 851.6 | 1,192 | 26,918.0 | 1.4x | 32x |
+| GCD sum (1..2000) | 45.8 | 51.1 | 863.8 | 1.1x | 19x |
+| Fibonacci (fib(35) ×500K) | 5.7 | 7.3 | 728.4 | 1.3x | 128x |
+| Float distance (1M) | 1.8 | 7.7 | 198.2 | 4.3x | 110x |
 
-Visuall is within **1.2–2.1x** of C++ on integer compute and loops, and **1.7x** on deeply recursive code (Ackermann). The full benchmark suite runs **1.8x** slower than C++ overall — 20–50x faster than Python on numeric workloads. The escape analysis pass avoids GC heap allocation for non-escaping list, dict, tuple, and closure objects, eliminating GC overhead on allocation-heavy paths.
+Visuall is within **1.1–2.8x** of C++ on integer compute and loops, and **1.4x** on deeply recursive code (Ackermann). The full benchmark suite runs **~1.9x** slower than C++ overall — 20–50x faster than Python on numeric workloads. The escape analysis pass avoids GC heap allocation for non-escaping list, dict, tuple, and closure objects, eliminating GC overhead on allocation-heavy paths.
 
 Recent compiler optimizations in v1.3.1:
 - **Generator lowering** — generator state-machine save/restore now emits direct LLVM `GetElementPtr` field access instead of C runtime function calls, letting the O2 optimizer inline and constant-fold across yield points
-- **GC interior pointer resolution** — replaced the O(N) linear heap-list walk with an O(1) chunk-indexed hash table (4 KB chunks), reducing deep-stack GC pause times by **86–133×** while adding only ~2.5% memory overhead
+- **GC interior pointer resolution** — replaced the O(N) linear heap-list walk with an O(1) chunk-indexed hash table (4 KB chunks) that is built lazily at collection start and freed after sweep, so allocations carry zero bookkeeping overhead. Deep-stack GC pause times down **86–133×**, memory overhead ~2.5% of peak heap
 
 ### Micro-benchmarks
 
