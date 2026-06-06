@@ -44,14 +44,8 @@ Section "Install"
   File /nonfatal "build\tools\visuall-lsp\visuall-lsp.exe"
   File "build\vslpkg.exe"
 
-  ; DLLs (wildcards for CI — names vary across MSYS2 environments)
-  File "build\libLLVM*.dll"
-  File "build\libffi*.dll"
-  File "build\libgcc_s_*.dll"
-  File "build\libstdc++*.dll"
-  File "build\libwinpthread*.dll"
-  File "build\libzstd*.dll"
-  File "build\zlib*.dll"
+  ; DLLs — grab everything CMake copied (names vary across MSYS2 versions)
+  File "build\*.dll"
 
   ; Documentation & examples
   File "README.md"
@@ -115,13 +109,7 @@ Section "Uninstall"
   Delete "$INSTDIR\vslpkg.exe"
 
   ; Remove DLLs
-  Delete "$INSTDIR\libLLVM*.dll"
-  Delete "$INSTDIR\libffi*.dll"
-  Delete "$INSTDIR\libgcc_s_*.dll"
-  Delete "$INSTDIR\libstdc++*.dll"
-  Delete "$INSTDIR\libwinpthread*.dll"
-  Delete "$INSTDIR\libzstd*.dll"
-  Delete "$INSTDIR\zlib*.dll"
+  Delete "$INSTDIR\*.dll"
 
   ; Remove docs
   Delete "$INSTDIR\README.md"
