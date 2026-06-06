@@ -283,6 +283,236 @@ static void ptr_map_rebuild(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Chunk table — O(1) interior pointer resolution
+ *
+ * Replaces the O(N) heap-list walk in find_gc_header with a chunk-indexed
+ * hash table.  The address space is partitioned into 4 KB chunks (matching
+ * the OS page size).  Each GC allocation is inserted into every chunk it
+ * overlaps so that any interior pointer resolves in O(1).
+ *
+ * Hash table of active chunks only (not a flat page array), so 64-bit
+ * address spaces are handled efficiently.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#define CHUNK_SHIFT       12   /* 4 KB chunks */
+#define CHUNK_SIZE        4096
+#define CHUNK_INLINE_MAX  2    /* max allocs per chunk before heap overflow */
+
+typedef struct {
+    void*     base;            /* user_ptr of the allocation */
+    uint32_t  size;            /* payload size (excludes GCHeader) */
+    GCHeader* header;          /* the GC header for this allocation */
+} ChunkAllocEntry;
+
+typedef struct ChunkInfo {
+    uintptr_t          chunk_id;     /* which chunk this record covers */
+    struct ChunkInfo*  next;         /* hash-collision chain */
+    size_t             num_entries;
+    ChunkAllocEntry    entries[CHUNK_INLINE_MAX];
+    ChunkAllocEntry*   extra;        /* malloc'd overflow when > CHUNK_INLINE_MAX */
+    uint32_t           extra_cap;
+} ChunkInfo;
+
+/* Hash table: dynamically grown, separate chaining via ChunkInfo.next. */
+#define CHUNK_TABLE_INIT_LOG2  8      /* 256 buckets initial */
+#define CHUNK_TABLE_GROW_NUM   3
+#define CHUNK_TABLE_GROW_DEN   4      /* grow at 75 % load */
+
+static ChunkInfo** chunk_table       = NULL;
+static uint32_t    chunk_table_log2  = CHUNK_TABLE_INIT_LOG2;
+static uint32_t    chunk_table_mask;
+static size_t      chunk_table_count = 0;
+
+static uint32_t chunk_hash(uintptr_t chunk_id, uint32_t mask) {
+    uintptr_t h = chunk_id;
+    h ^= h >> 16;
+    h *= 0x45d9f3b;
+    h ^= h >> 8;
+    return (uint32_t)(h & mask);
+}
+
+static void chunk_table_init(void) {
+    chunk_table_log2  = CHUNK_TABLE_INIT_LOG2;
+    chunk_table_mask  = (1u << chunk_table_log2) - 1;
+    chunk_table_count = 0;
+    chunk_table = (ChunkInfo**)calloc(1u << chunk_table_log2,
+                                      sizeof(ChunkInfo*));
+}
+
+static void chunk_table_free(void) {
+    if (!chunk_table) return;
+    for (uint32_t i = 0; i < (1u << chunk_table_log2); i++) {
+        ChunkInfo* info = chunk_table[i];
+        while (info) {
+            ChunkInfo* next = info->next;
+            if (info->extra) free(info->extra);
+            free(info);
+            info = next;
+        }
+    }
+    free(chunk_table);
+    chunk_table       = NULL;
+    chunk_table_log2  = CHUNK_TABLE_INIT_LOG2;
+    chunk_table_mask  = (1u << chunk_table_log2) - 1;
+    chunk_table_count = 0;
+}
+
+static void chunk_table_grow(void) {
+    uint32_t    old_log2  = chunk_table_log2;
+    ChunkInfo** old_table = chunk_table;
+
+    chunk_table_log2++;
+    chunk_table_mask  = (1u << chunk_table_log2) - 1;
+    chunk_table_count = 0;
+    chunk_table = (ChunkInfo**)calloc(1u << chunk_table_log2,
+                                      sizeof(ChunkInfo*));
+
+    for (uint32_t i = 0; i < (1u << old_log2); i++) {
+        ChunkInfo* info = old_table[i];
+        while (info) {
+            ChunkInfo* next = info->next;
+            uint32_t idx = chunk_hash(info->chunk_id, chunk_table_mask);
+            info->next = chunk_table[idx];
+            chunk_table[idx] = info;
+            chunk_table_count++;
+            info = next;
+        }
+    }
+    free(old_table);
+}
+
+/* Insert one (user_ptr, size, header) entry for a specific chunk_id.
+   Called by chunk_table_add_range for each chunk an allocation spans. */
+static void chunk_table_insert_entry(uintptr_t chunk_id,
+                                      void* user_ptr, size_t size,
+                                      GCHeader* hdr) {
+    if (chunk_table_count * CHUNK_TABLE_GROW_DEN >=
+        (size_t)(1u << chunk_table_log2) * CHUNK_TABLE_GROW_NUM) {
+        chunk_table_grow();
+    }
+
+    uint32_t idx = chunk_hash(chunk_id, chunk_table_mask);
+    ChunkInfo* info = chunk_table[idx];
+
+    /* Find existing ChunkInfo for this chunk_id. */
+    while (info && info->chunk_id != chunk_id) {
+        info = info->next;
+    }
+
+    if (!info) {
+        info = (ChunkInfo*)malloc(sizeof(ChunkInfo));
+        if (!info) return;
+        memset(info, 0, sizeof(ChunkInfo));
+        info->chunk_id = chunk_id;
+        info->next = chunk_table[idx];
+        chunk_table[idx] = info;
+        chunk_table_count++;
+    }
+
+    /* Add the allocation entry. */
+    if (info->num_entries < CHUNK_INLINE_MAX) {
+        info->entries[info->num_entries].base   = user_ptr;
+        info->entries[info->num_entries].size   = (uint32_t)size;
+        info->entries[info->num_entries].header = hdr;
+        info->num_entries++;
+    } else {
+        /* Overflow path — rarely taken. */
+        uint32_t cap = info->extra_cap;
+        if (info->num_entries - CHUNK_INLINE_MAX >= cap) {
+            uint32_t new_cap = (cap == 0) ? 4 : cap * 2;
+            ChunkAllocEntry* new_extra = (ChunkAllocEntry*)realloc(
+                info->extra, new_cap * sizeof(ChunkAllocEntry));
+            if (!new_extra) return;
+            info->extra = new_extra;
+            info->extra_cap = new_cap;
+        }
+        uint32_t off = (uint32_t)(info->num_entries - CHUNK_INLINE_MAX);
+        info->extra[off].base   = user_ptr;
+        info->extra[off].size   = (uint32_t)size;
+        info->extra[off].header = hdr;
+        info->num_entries++;
+    }
+}
+
+/* Insert an allocation [user_ptr, user_ptr+size) into the chunk table
+   for every 4 KB chunk it overlaps.  Called from __visuall_alloc and
+   __visuall_alloc_object after ptr_map_insert. */
+static void chunk_table_add_range(void* user_ptr, size_t size,
+                                   GCHeader* hdr) {
+    if (!chunk_table || !user_ptr || size == 0) return;
+    uintptr_t start       = (uintptr_t)user_ptr;
+    uintptr_t end         = start + size;
+    uintptr_t chunk_first = start >> CHUNK_SHIFT;
+    uintptr_t chunk_last  = (end - 1) >> CHUNK_SHIFT;
+
+    for (uintptr_t cid = chunk_first; cid <= chunk_last; cid++) {
+        chunk_table_insert_entry(cid, user_ptr, size, hdr);
+    }
+}
+
+/* O(1) interior pointer lookup.  Returns the GCHeader* for the allocation
+   containing `ptr`, or NULL if no allocation covers this address. */
+static GCHeader* chunk_table_lookup(void* ptr) {
+    if (!chunk_table) return NULL;
+    uintptr_t cid = (uintptr_t)ptr >> CHUNK_SHIFT;
+    uint32_t  idx = chunk_hash(cid, chunk_table_mask);
+    ChunkInfo* info = chunk_table[idx];
+
+    while (info && info->chunk_id != cid) {
+        info = info->next;
+    }
+    if (!info) return NULL;
+
+    /* Check inline entries first. */
+    for (size_t i = 0; i < info->num_entries && i < CHUNK_INLINE_MAX; i++) {
+        uintptr_t base = (uintptr_t)info->entries[i].base;
+        uintptr_t end  = base + info->entries[i].size;
+        if ((uintptr_t)ptr >= base && (uintptr_t)ptr < end) {
+            return info->entries[i].header;
+        }
+    }
+    /* Check overflow entries. */
+    if (info->num_entries > CHUNK_INLINE_MAX && info->extra) {
+        uint32_t extra_count = (uint32_t)(info->num_entries - CHUNK_INLINE_MAX);
+        for (uint32_t i = 0; i < extra_count; i++) {
+            uintptr_t base = (uintptr_t)info->extra[i].base;
+            uintptr_t end  = base + info->extra[i].size;
+            if ((uintptr_t)ptr >= base && (uintptr_t)ptr < end) {
+                return info->extra[i].header;
+            }
+        }
+    }
+    return NULL;
+}
+
+/* Rebuild the chunk table from the surviving heap list after sweep.
+   Frees all overflow arrays and re-inserts every live object. */
+static void chunk_table_rebuild(void) {
+    if (!chunk_table) return;
+
+    /* Free overflow arrays. */
+    for (uint32_t i = 0; i < (1u << chunk_table_log2); i++) {
+        ChunkInfo* info = chunk_table[i];
+        while (info) {
+            if (info->extra) {
+                free(info->extra);
+                info->extra     = NULL;
+                info->extra_cap = 0;
+            }
+            info->num_entries = 0;
+            info = info->next;
+        }
+    }
+
+    /* Re-insert from survivors. */
+    for (GCHeader* h = heap_head; h; h = h->next) {
+        void* user    = (char*)h + sizeof(GCHeader);
+        size_t payload = h->size - (uint32_t)sizeof(GCHeader);
+        chunk_table_add_range(user, payload, h);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Helpers
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -334,27 +564,17 @@ static double now_ns(void) {
 
 /* Check whether `ptr` looks like it points into one of our GC objects.
    O(1) average via hash table for exact user_ptr matches.
-   Falls back to linear scan for interior pointers (conservative scanning). */
+   O(1) via chunk table for interior pointers (conservative scanning). */
 static GCHeader* find_gc_header(void* ptr) {
     if (!ptr) return NULL;
     /* Fast path: exact match on the user_ptr (allocation start). */
     GCHeader* h = ptr_map_lookup(ptr);
     if (h) return h;
-    /* Range guard: skip O(n) scan if ptr is outside the heap bounding box. */
+    /* Range guard: skip lookup if ptr is outside the heap bounding box. */
     uintptr_t addr = (uintptr_t)ptr;
     if (addr < heap_lo || addr >= heap_hi) return NULL;
-    /* Slow path for interior pointers (conservative stack scan).
-       Walk the heap list to find if ptr falls within any allocation. */
-    h = heap_head;
-    while (h) {
-        void* obj_start = (char*)h + sizeof(GCHeader);
-        void* obj_end   = (char*)h + h->size;
-        if ((char*)ptr >= (char*)obj_start && (char*)ptr < (char*)obj_end) {
-            return h;
-        }
-        h = h->next;
-    }
-    return NULL;
+    /* O(1) interior pointer: look up via chunk-indexed hash table. */
+    return chunk_table_lookup(ptr);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -384,6 +604,7 @@ void __visuall_gc_init(void* sb) {
     num_global_roots = 0;
     memset(&gc_stats, 0, sizeof(gc_stats));
     ptr_map_init();
+    chunk_table_init();
     GC_UNLOCK();
 }
 
@@ -453,8 +674,10 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
     void* user = (char*)hdr + sizeof(GCHeader);
     memset(user, 0, size);
 
-    /* Insert into the pointer hash table for O(1) lookup. */
+    /* Insert into the pointer hash table for O(1) exact-match lookup. */
     ptr_map_insert(user, hdr);
+    /* Insert into the chunk table for O(1) interior-pointer lookup. */
+    chunk_table_add_range(user, size, hdr);
 
     /* Update heap address range for fast out-of-range rejection. */
     uintptr_t haddr = (uintptr_t)hdr;
@@ -516,6 +739,8 @@ void* __visuall_alloc_object(size_t payload, uint32_t field_count,
     }
 
     ptr_map_insert(user, hdr);
+    /* Insert full payload (including field_offsets tail) into chunk table. */
+    chunk_table_add_range(user, total_payload, hdr);
 
     uintptr_t haddr = (uintptr_t)hdr;
     if (haddr < heap_lo) heap_lo = haddr;
@@ -881,6 +1106,25 @@ static void sweep(void) {
 
     /* Rebuild hash table from survivors (O(survivors) instead of O(dead) removes). */
     ptr_map_rebuild();
+    /* Rebuild chunk table from survivors. */
+    chunk_table_rebuild();
+
+    /* Tighten heap bounds from survivors so the range guard stays effective. */
+    if (heap_head) {
+        uintptr_t lo = UINTPTR_MAX;
+        uintptr_t hi = 0;
+        for (GCHeader* h = heap_head; h; h = h->next) {
+            uintptr_t start = (uintptr_t)h;
+            uintptr_t end   = start + h->size;
+            if (start < lo) lo = start;
+            if (end   > hi) hi   = end;
+        }
+        heap_lo = lo;
+        heap_hi = hi;
+    } else {
+        heap_lo = UINTPTR_MAX;
+        heap_hi = 0;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -938,6 +1182,7 @@ void __visuall_gc_shutdown(void) {
     heap_bytes = 0;
 
     ptr_map_free();
+    chunk_table_free();
 
     fl_free_all();
 
