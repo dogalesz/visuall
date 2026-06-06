@@ -57,7 +57,7 @@ Section "Install"
   File "README.md"
   File "LICENSE"
   File "CHANGELOG.md"
-  File "hello.vsl"
+  File "examples\hello.vsl"
 
   ; Standard library
   SetOutPath "$INSTDIR\stdlib"
