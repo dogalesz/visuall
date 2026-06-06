@@ -1,0 +1,945 @@
+# Visuall Language Compiler (visuallc)
+
+Visuall is a custom programming language with a compiler written in C++17 that targets LLVM IR and produces native binaries via a system linker. It supports Python-style significant whitespace, classes with inheritance/interfaces/generics, goroutines with channels, generators (yield), pattern matching, exception handling, and a Go-style package manager (`vslpkg`).
+
+## Quick Facts
+
+- **Language**: C++17
+- **Backend**: LLVM IR (via `llvm::IRBuilder<>`), then system linker
+- **Build system**: CMake + Ninja
+- **Platform**: Cross-platform (Windows/MinGW, Linux, macOS)
+- **Version**: 1.3.1 (`include/version.h`: `#define VISUALL_VERSION "1.3.1"`)
+- **License**: MIT
+- **Package manager**: `vslpkg` (Go-style MVS, `vsl.toml` / `vsl.lock`)
+- **LSP**: `visuall-lsp` (reuses `visuall_frontend` static lib, no LLVM dependency)
+
+## Architecture Pipeline
+
+```
+Source (.vsl)
+  → Lexer (tokens with INDENT/DEDENT)
+  → Parser (recursive descent → AST)
+  → CaptureAnalyzer (closure capture resolution)
+  → ClassAnalyzer (class field discovery)
+  → EscapeAnalyzer (stack vs heap allocation decisions)
+  → TypeChecker (type inference & checking)
+  → Codegen (LLVM IR generation)
+  → Linker (module merging, optimization, object emission, system linker → native binary)
+```
+
+### Pass-by-pass
+
+1. **Lexer** (`src/lexer.cpp`): Tokenizes source with significant-whitespace handling (off-side rule via INDENT/DEDENT tokens). Supports `\xNN`, `\uNNNN`, `\UNNNNNNNN` hex/unicode escapes, f-strings with embedded expressions, underscores in numeric literals, multi-line `###` comments, single-line `##` comments. 4-space indentation groups are auto-normalized to tabs. Constructor: `Lexer(const string& source, const string& filename)`. Main entry: `tokenize()` returns `vector<Token>` (always ends with END_OF_FILE). Errors recorded as `LexError` (or `IndentationError` subclass) — lexer continues after errors, surfaces them as ERROR tokens.
+
+2. **Parser** (`src/parser.cpp`): Recursive descent. Produces AST defined in `include/ast.h`. Constructor: `Parser(const vector<Token>&, const string& filename)`. Main entry: `parse()` returns `unique_ptr<ast::Program>`. Public `parseExpression()` used by f-string interpolation. Handles all Visuall syntax including: classes with inheritance/interfaces/generics, decorators, list/dict comprehensions, slices, tuple unpacking, spread expressions (`*expr`, `**expr`), walrus operator `:=`, null coalescing `??`, channel send/receive (`<-`), goroutines (`go`), match/case, enumerations, generators (`yield`), with/as, assert, del. Error recovery via `synchronize()`. Errors thrown as `ParseError`.
+
+3. **CaptureAnalyzer** (`src/capture_analyzer.cpp`): Resolves which variables are captured by closures/lambdas. `analyze(Program&)` takes non-const reference — populates `LambdaExpr::captures` in-place. Tracks by-reference candidates (variables assigned ≥2 times in same scope — these get heap-boxed `VSL_TAG_BOXED` cells). Must run BEFORE codegen.
+
+4. **ClassAnalyzer** (`src/class_analyzer.cpp`): Discovers class fields by walking all `this.field = value` assignments across init bodies and method bodies (including conditionally-set fields). Handles inheritance (base-class fields prepended). Output: `classFields()` returns `unordered_map<className, vector<fieldName>>`. Must run AFTER CaptureAnalyzer and BEFORE TypeChecker/Codegen. Inject result into Codegen via `codegen.setClassFields(ca.classFields())`. Does NOT validate interface conformance or method overrides — that's the TypeChecker's job.
+
+5. **EscapeAnalyzer** (`src/escape_analyzer.cpp`): Determines whether heap objects (lists, dicts, tuples, closures) escape their allocating scope. Inherits `ASTVisitorBase`. Key rules: return-escape, store-into-another-escape, loop-nesting forces heap (stack-overflow prevention), yielding functions (goroutines with channel ops) always heap, unknown-call argument forces heap, top-level always heap. Output: `stackAllocatable()` returns `unordered_map<const void*, bool>`. Inject via `codegen.setEscapeInfo(&ea.stackAllocatable())`.
+
+6. **TypeChecker** (`src/typechecker.cpp`): Full type checker inheriting `ASTVisitor`. Constructor: `TypeChecker(const string& filename, bool throwOnFirstError = true)` — LSP mode uses `false`. Main entry: `check(const Program&)`. Handles generics (monomorphization), union types (`int|null`, `?str` shorthand), null narrowing after `if x != null` checks, subtyping via `isAssignableTo()`. Validates return types, assignment compatibility, function call arguments, const reassignment rejection, nested `@extern` rejection. Maintains `classTable_`, `interfaceTable_`, `funcTypeParams_`, `funcBounds_`, `funcMinArgs_` maps. `SymbolTable` uses Historical Registry Pattern: scopes never popped, only `active_stack_` — enables LSP cursor queries after `check()` completes.
+
+7. **Codegen** (`src/codegen.cpp`): LLVM IR generation (~5000 lines). Inherits `ASTVisitor`. Constructor: `Codegen(const string& moduleName)`. Main entry: `generate(const Program&)`. Key patterns below in "Key Design Patterns" section.
+
+8. **Linker** (`src/linker.cpp`): All methods are static. `link()` merges multiple LLVM modules via `llvm::Linker`. `optimize()` runs O2 passes. `writeIR()` dumps .ll. `emitObjectFile()` produces native .o. `linkToBinary()` invokes system linker (MinGW `g++` on Windows, `cc` elsewhere). Maps `"c"` library → `"msvcrt"` on Windows/MinGW. `compileAndLink()` is the full pipeline. All accept `TargetSpec` for cross-compilation.
+
+## Exception Hierarchy
+
+All compiler errors inherit from `Diagnostic` (`include/diagnostic.h`), which inherits `std::exception`. A single `catch (const Diagnostic& d)` in `main.cpp` handles every error with clang-style formatting:
+
+```
+filename:line:col: error: message
+ source_line
+ ^
+hint: suggestion
+```
+
+| Exception | Parent | Thrown By | Notes |
+|-----------|--------|-----------|-------|
+| `Diagnostic` | `std::exception` | (base class) | `Severity::Error \| Warning`, fields: `message, hint, filename, line, col, endLine, endCol, source_line`. `format()` produces clang-style output. `what()` returns `format()`. |
+| `LexError` | `Diagnostic` | Lexer | Unterminated strings/comments, malformed escapes |
+| `IndentationError` | `LexError` | Lexer | Space indentation rejection (spaces not divisible by 4) |
+| `ParseError` | `Diagnostic` | Parser | Unexpected tokens, malformed syntax |
+| `TypeError` | `Diagnostic` | TypeChecker | Type mismatches, const reassignment |
+| `CodegenError` | `Diagnostic` | Codegen | LLVM errors, missing functions |
+| `ImportError` | `Diagnostic` | ModuleLoader | Module not found, circular import |
+| `PackageError` | `Diagnostic` | vslpkg, compiler driver | Missing lockfile, version conflicts |
+
+## AST Reference (`include/ast.h`)
+
+All nodes inherit from `Node` (fields: `line, column, endLine, endCol`). Expressions inherit `Expr : Node`; statements inherit `Stmt : Node`. Both have pure virtual `accept(ASTVisitor& v) const`. Smart pointer aliases: `ExprPtr = unique_ptr<Expr>`, `StmtPtr = unique_ptr<Stmt>`.
+
+### Expressions
+
+| Node | Fields | Notes |
+|------|--------|-------|
+| `IntLiteral` | `int64_t value` | |
+| `FloatLiteral` | `double value` | |
+| `StringLiteral` | `string value` | Escape sequences already processed |
+| `FStringLiteral` | `string raw` | Raw f"..." text for later lowering |
+| `FStringExpr` | `vector<FStringPart> parts` | Each part: `bool isExpr` + `string literal` or `ExprPtr expr` |
+| `BoolLiteral` | `bool value` | |
+| `NullLiteral` | (none) | |
+| `Identifier` | `string name` | |
+| `ThisExpr` | (none) | `this` keyword |
+| `SuperExpr` | (none) | `super` keyword |
+| `BinaryExpr` | `BinOp op, ExprPtr left, ExprPtr right` | BinOp enum below |
+| `UnaryExpr` | `UnaryOp op, ExprPtr operand` | UnaryOp: `Neg, Not, BitNot` |
+| `CallExpr` | `ExprPtr callee, ExprList args, vector<string> typeArgs` | typeArgs for `identity<int>(42)` |
+| `MemberExpr` | `ExprPtr object, string member` | `obj.field` |
+| `IndexExpr` | `ExprPtr object, ExprPtr index` | `obj[idx]` |
+| `LambdaExpr` | `vector<string> params, ExprPtr body, vector<CaptureInfo> captures` | captures populated by CaptureAnalyzer. `CaptureInfo`: `name`, `byReference` |
+| `ListExpr` | `ExprList elements` | `[1, 2, 3]` |
+| `DictExpr` | `vector<pair<ExprPtr, ExprPtr>> entries` | `{"k": v}` |
+| `TupleExpr` | `ExprList elements` | `(1, 2, 3)` |
+| `TernaryExpr` | `ExprPtr condition, thenExpr, elseExpr` | `a if b else c` |
+| `SliceExpr` | `ExprPtr object, start, stop, step` | All three may be nullptr |
+| `ListComprehension` | `ExprPtr body, iterable, condition; string variable` | condition may be nullptr |
+| `DictComprehension` | `ExprPtr key, value, iterable, condition; string variable` | condition may be nullptr |
+| `SpreadExpr` | `ExprPtr operand` | `*expr` |
+| `DictSpreadExpr` | `ExprPtr operand` | `**expr` |
+| `WalrusExpr` | `string target; ExprPtr value` | `name := expr` |
+| `GoExpr` | `ExprPtr callee; ExprList args` | `go func(args)` |
+| `ChanRecvExpr` | `ExprPtr channel` | `<-chanExpr` |
+
+### Statements
+
+| Node | Fields | Notes |
+|------|--------|-------|
+| `ExprStmt` | `ExprPtr expr` | Expression used as statement |
+| `AssignStmt` | `ExprPtr target, value; vector<ExprPtr> extraTargets; string typeAnnotation` | Chained `a = b = 1`, typed `x: int = 5` |
+| `ConstStmt` | `string name; ExprPtr value; string typeAnnotation` | `const X: int = 42` |
+| `TupleUnpackStmt` | `vector<string> targets; ExprPtr value` | `a, b, c = (1, 2, 3)` |
+| `ReturnStmt` | `ExprPtr value` (nullable) | `return expr` or bare `return` |
+| `BreakStmt` | (none) | |
+| `ContinueStmt` | (none) | |
+| `PassStmt` | (none) | |
+| `FuncDef` | `string name, returnType; vector<string> typeParams; unordered_map<string,string> typeParamBounds; vector<Param> params; StmtList body; vector<ExprPtr> decorators; bool isExtern, isVariadicCFunc; string externLibName` | Param: `name, typeAnnotation, defaultValue, isVariadic, isKwargs` |
+| `ClassDef` | `string name; optional<string> baseClass; vector<string> extraBases, interfaces, typeParams; unordered_map<string,string> typeParamBounds; StmtList body` | Multiple inheritance via extraBases |
+| `InitDef` | `vector<Param> params; StmtList body` | Constructor (separate from FuncDef) |
+| `EnumDef` | `string name; vector<string> members` | `enum Color: RED, GREEN, BLUE` |
+| `InterfaceDef` | `string name; vector<MethodSignature> methods` | MethodSignature: `name, params, returnType` |
+| `IfStmt` | `ExprPtr condition; StmtList thenBranch; vector<pair<ExprPtr, StmtList>> elsifBranches; StmtList elseBranch` | |
+| `ForStmt` | `string variable; vector<string> variables; ExprPtr iterable; StmtList body, elseBranch` | for...else support |
+| `WhileStmt` | `ExprPtr condition; StmtList body, elseBranch` | while...else support |
+| `ThrowStmt` | `optional<ExprPtr> expr` | nullopt = bare re-raise |
+| `AssertStmt` | `ExprPtr condition, message` (message nullable) | |
+| `DelStmt` | `ExprPtr target` | `del x` or `del x[idx]` |
+| `WithStmt` | `ExprPtr expr; string asName; StmtList body` | `with expr as name: body` |
+| `TryStmt` | `StmtList tryBody; vector<CatchClause> catchClauses; StmtList finallyBody` | CatchClause: `exceptionType, varName, body` |
+| `ImportStmt` | `string module` | `import foo` |
+| `FromImportStmt` | `string module; vector<string> names` | `from foo import bar, baz` |
+| `MatchStmt` | `ExprPtr subject; vector<MatchCase> cases` | MatchCase: `pattern (nullable=wildcard), guard (nullable), body` |
+| `YieldStmt` | `ExprPtr value` | Generator yield |
+| `ChanSendStmt` | `ExprPtr channel, value` | `ch <- val` |
+
+### Binary Operators (BinOp enum)
+
+`Add, Sub, Mul, Div, IntDiv, Mod, Pow, Eq, Neq, Lt, Gt, Lte, Gte, And, Or, In, NotIn, BitAnd, BitOr, BitXor, Shl, Shr, NullCoalesce`
+
+Note: `NullCoalesce` (`??`) is a BinOp inside `BinaryExpr`, not a separate node type.
+
+## Token Reference (`include/token.h`)
+
+`Token` struct: `TokenType type, string lexeme, int line, int column`. Methods: `toString()`, `operator<<`. Helper functions: `tokenTypeToString()`, `tokenTypeName()` (alias).
+
+### Complete TokenType Enum
+
+**Literals**: `INT_LITERAL, FLOAT_LITERAL, STRING_LITERAL, FSTRING_LITERAL, BOOL_LITERAL, NULL_LITERAL`
+
+**Identifiers**: `IDENTIFIER, ERROR` (lexer error placeholder)
+
+**Keywords** (42 total): `KW_DEFINE, KW_INIT, KW_CLASS, KW_IF, KW_ELSIF, KW_ELSE, KW_FOR, KW_WHILE, KW_IN, KW_RETURN, KW_BREAK, KW_CONTINUE, KW_PASS, KW_AND, KW_OR, KW_NOT, KW_TRUE, KW_FALSE, KW_NULL, KW_IMPORT, KW_FROM, KW_TRY, KW_CATCH, KW_FINALLY, KW_THROW, KW_THIS, KW_LAMBDA, KW_EXTENDS, KW_IMPLEMENTS, KW_INTERFACE, KW_SUPER, KW_ASSERT, KW_DEL, KW_WITH, KW_AS, KW_MATCH, KW_CASE, KW_ENUM, KW_YIELD, KW_GO, KW_CHAN, KW_CONST`
+
+Note: `true`/`false` are lexed as `BOOL_LITERAL`, `null` as `NULL_LITERAL`. The `KW_TRUE`/`KW_FALSE`/`KW_NULL` enum values exist but are not the primary token type produced.
+
+**Operators** (14): `PLUS, MINUS, STAR, SLASH, DOUBLE_SLASH, PERCENT, DOUBLE_STAR, ASSIGN, EQ, NEQ, LT, GT, LTE, GTE, ARROW, DOT`
+
+**Channel**: `KW_SEND` (`<-`)
+
+**Augmented assignment** (12): `PLUS_EQ, MINUS_EQ, STAR_EQ, SLASH_EQ, DOUBLE_SLASH_EQ, PERCENT_EQ, DOUBLE_STAR_EQ, AMP_EQ, PIPE_EQ, CARET_EQ, LSHIFT_EQ, RSHIFT_EQ`
+
+**Bitwise** (6): `AMP, PIPE, CARET, TILDE, LSHIFT, RSHIFT`
+
+**Delimiters** (12): `LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE, COMMA, COLON, ELLIPSIS, AT, QUESTION, DOUBLE_QUESTION, WALRUS`
+
+**Structural**: `NEWLINE, INDENT, DEDENT, END_OF_FILE`
+
+## Type System (`include/typechecker.h`)
+
+`TypeRef = shared_ptr<TypeNode>`. `TypeNode::Kind` enum: `Int, Float, Str, Bool, Void, Null, List, Dict, Tuple, Func, Class, Unknown, Union, Interface, TypeVar, Nullable, Chan`
+
+### TypeNode Subclasses
+
+| Type | Factory | Key Fields | Notes |
+|------|---------|------------|-------|
+| `PrimitiveType` | `makeInt()`, `makeFloat()`, `makeStr()`, `makeBool()`, `makeVoid()`, `makeNull()` | `Kind kind` | Primitive scalar types |
+| `ListType` | `makeList(TypeRef elem)` | `TypeRef elem` | |
+| `DictType` | `makeDict(TypeRef key, TypeRef val)` | `TypeRef key, value` | |
+| `TupleType` | `makeTuple(vector<TypeRef>)` | `vector<TypeRef> elems` | |
+| `FuncType` | `makeFunc(name, ret, params)` | `string name; TypeRef retType; vector<TypeRef> paramTypes` | `toUserString()` overridden for diagnostics |
+| `ClassType` | `makeClass(string)` | `string name` | |
+| `InterfaceTypeNode` | `makeInterface(string)` | `string name` | |
+| `TypeVarNode` | `makeTypeVar(string)` | `string name` | Generic type variables |
+| `UnionType` | `makeUnion(vector<TypeRef>)` | `vector<TypeRef> members` | `int \| null` |
+| `NullableType` | (none — `?T` desugars to union) | `TypeRef inner` | Shorthand for `T \| null` |
+| `ChanType` | `makeChan(TypeRef elem)` | `TypeRef elem` | `chan[T]` |
+
+Key methods: `toString()`, `toUserString()`, `equals()`, `isAssignableTo()`, `isUnknown()`, `isNumeric()`, `typeName()`. Free function: `typeEquals(TypeRef, TypeRef)` — strict structural equality.
+
+### Key Type Functions
+
+- **`typeEquals(a, b)`**: Strict structural comparison. `ListType(Int) ≠ ListType(Unknown)`.
+- **`isAssignableTo(from, to)`**: Allows Unknown/wildcard compatibility. Used for return types, assignments, parameter passing.
+- **`resolveTypeName(name)`**: Parses type expressions including parameterized types (`list[int]`), union types (`int|null`), nullable shorthand (`?str`), function types (`(int)->str`), pointer types (`void*`).
+- **`unify(a, b)`**: Unifies two types, resolving generics.
+- **`promoteNumeric(a, b)`**: Numeric promotion (int→float).
+- **`isSubtype(sub, super)`**: Inheritance/interface subtyping check.
+
+## Compiler Passes — Complete API
+
+### Lexer (`include/lexer.h`)
+
+```cpp
+class Lexer {
+public:
+    Lexer(const std::string& source, const std::string& filename);
+    std::vector<Token> tokenize();     // main entry, always ends with END_OF_FILE
+    const std::vector<LexError>& errors() const;  // collected errors
+private:
+    // Character helpers: peek(), peekNext(), advance(), isAtEnd(), match(char)
+    // Token lexers: lexString(), lexFString(), lexNumber(), lexIdentifierOrKeyword(), lexOperator()
+    // Indentation: handleIndentation(), normalizeIndentation() (static)
+    // Comments: skipSingleLineComment(), skipMultiLineComment()
+    // Helpers: makeToken(), error(), errorAt()
+    // State: source_, filename_, pos_, line_, column_, atLineStart_, indentStack_, errors_
+};
+```
+
+### Parser (`include/parser.h`)
+
+```cpp
+class Parser {
+public:
+    Parser(const std::vector<Token>& tokens, const std::string& filename);
+    std::unique_ptr<ast::Program> parse();   // main entry
+    std::unique_ptr<ast::Expr> parseExpression();  // public, used by f-string interpolation
+    const std::vector<ParseError>& errors() const;
+private:
+    // Token navigation: current(), previous(), advance(), check(), match(), expect(), isAtEnd(), skipNewlines()
+    // Error recovery: synchronize()
+    // Statement parsers (21 total): parseStatement(), parseExpressionStatement(),
+    //   parseFuncDef(), parseClassDef(), parseInterfaceDef(), parseEnumDef(),
+    //   parseIfStmt(), parseForStmt(), parseWhileStmt(), parseReturnStmt(),
+    //   parseTryStmt(), parseThrowStmt(), parseImportStmt(), parseFromImportStmt(),
+    //   parseConstDecl(), parseDecorated(), parseMatchStmt(), parseYieldStmt(),
+    //   parseGoStmt(), parseAssertStmt(), parseDelStmt(), parseWithStmt()
+    // Expression parsers (precedence climbing): parseExpression() → parseTernary() →
+    //   ... → parsePrimary() (16 levels)
+    // Helpers: parseParamList(), parseTypeAnnotation(), error(), errorAt()
+    // State: tokens_, filename_, pos_, errors_
+};
+```
+
+### TypeChecker (`include/typechecker.h`)
+
+```cpp
+class TypeChecker : public ASTVisitor {
+public:
+    TypeChecker(const std::string& filename, bool throwOnFirstError = true);
+    void check(const ast::Program& program);
+    const std::vector<TypeError>& errors() const;
+    const std::vector<SymbolTable::Scope>& getScopes() const;  // LSP cursor walk
+private:
+    // SymbolTable: enterScope(), exitScope(), declare(), lookup(), isDeclared(),
+    //   lookupInCurrentScope(), allNames(), getAllScopes()
+    // Scope helpers: enterScope(), exitScope(), declare(name, type, line, col),
+    //   lookup(name, line, col)
+    // Type resolution: resolveTypeName(), unify(), promoteNumeric(), isSubtype(),
+    //   isAssignableTo(), classImplementsInterface()
+    // Traversal: checkStmt(), checkStmtList(), checkExpr() (returns TypeRef)
+    // Result slot: exprResult_ (TypeRef, set by visit() overrides)
+    // State: throwOnFirstError_, insideClass_, currentReturnType_, hasExplicitReturnType_,
+    //   functionNestingDepth_, constVars_, currentClassName_, currentTypeParams_,
+    //   classTable_, interfaceTable_, funcTypeParams_, funcBounds_, funcMinArgs_, errors_
+};
+```
+
+### Codegen (`include/codegen.h`)
+
+```cpp
+class Codegen : public ASTVisitor {
+public:
+    explicit Codegen(const std::string& moduleName);
+    void generate(const ast::Program& program);
+    void optimize();
+    void printIR(std::ostream& os) const;
+    void writeIRToFile(const std::string& path) const;
+
+    // Injection points (call before generate())
+    void setModuleLoader(ModuleLoader* loader);
+    void setSourceFile(const std::string& path);
+    void setModuleMode(bool mode);
+    void setGCStats(bool enabled);
+    void setClassFields(const std::unordered_map<std::string, std::vector<std::string>>& fields);
+    void setEscapeInfo(const std::unordered_map<const void*, bool>* info);
+
+    // Output
+    const std::unordered_set<std::string>& linkedLibraries() const;
+    const std::unordered_set<std::string>& loadedUserModules() const;
+    std::unique_ptr<llvm::Module> takeModule();
+    std::unique_ptr<llvm::LLVMContext> takeContext();
+    llvm::Module& getModule() const;       // test accessor
+    llvm::LLVMContext& getContext() const; // test accessor
+
+private:
+    // Core: context_, module_, builder_, moduleMode_, gcStatsEnabled_, hasUserMain_
+    // Scope: scopes_, pushScope(), popScope(), declareVar(), lookupVar()
+    // Loop control: loopStack_ (break/continue BB pairs), loopElseAllocas_ (for...else)
+    // Class context: currentClassName_, currentClassBase_, classBaseMap_,
+    //   classExtraBases_, classFields_, classFieldTypes_, enumMembers_, enumNames_,
+    //   classStaticMethods_, classProperties_, classSetters_
+    // Generics: genericFuncDefs_, emittedMonomorphizations_
+    // Default params: funcDefMap_, classInitParamsMap_
+    // Variadic: variadicFuncs_
+    // Closures: closureVars_ (fat pointers), getClosureType() → {i8* env, i8* fn_ptr}
+    // Boxed vars: boxedVars_, collectBoxedVarsFromStmts(), allocBox()
+    // Strings: stringVars_, isStringExpr()
+    // Instance tracking: varClass_ (for with-stmt resolution)
+    // Exception handling: personalityFnName_, landingpadStack_, lastExceptionVal_,
+    //   setPersonalityFn(), emitCallOrInvoke()
+    // Generator support: generatorList_, genContext_, genSlotCount_, genYieldCount_,
+    //   genTrackedVars_, codegenGeneratorFuncLowering(),
+    //   codegenGeneratorWrapper(), emitGenSaveVars(), emitGenRestoreVars()
+    // Module system: importedModules_, moduleLoader_, sourceFile_,
+    //   loadedUserModules_, importedSymbols_
+    // Helpers: createEntryBlockAlloca(), getLLVMType(), getRequiredFn(),
+    //   promoteToDouble(), toBool(), coerceToI64(), lookupFieldType(),
+    //   findFieldIndex(), emitIntPow()
+    // Builtins: declarePrintfAndBuiltins(), emitPrintCall(), emitBuiltinCall(),
+    //   emitModuleCall(), getOrDeclareMalloc(), getOrDeclareVisualAlloc(),
+    //   getOrDeclareAllocObject()
+    // Monomorphization: emitMonomorphization()
+    // Result slot: valueResult_ (llvm::Value*, set by visit() overrides)
+};
+```
+
+### CaptureAnalyzer (`include/capture_analyzer.h`)
+
+```cpp
+class CaptureAnalyzer {
+public:
+    void analyze(ast::Program& program);  // non-const — populates LambdaExpr::captures
+private:
+    vector<unordered_set<string>> scopes_;            // scope stack
+    vector<unordered_set<string>> byRefCandidatesStack_;  // vars assigned ≥2x
+    void pushScope(), popScope(), define(name), isDefined(name), isByRefCandidate(name);
+    void analyzeStmt(Stmt&), analyzeStmtList(StmtList&);
+    void analyzeExpr(Expr&, unordered_set<string>& freeVars);
+    void collectAssignedNames(const Expr&, unordered_set<string>& assigned);
+};
+```
+
+### ClassAnalyzer (`include/class_analyzer.h`)
+
+```cpp
+class ClassAnalyzer {
+public:
+    void analyze(const ast::Program& program);
+    const unordered_map<string, vector<string>>& classFields() const;
+private:
+    unordered_map<string, vector<string>> classFields_;  // className → field names
+    unordered_map<string, string> baseClasses_;
+    void processClass(name, classDefs, processed);
+    void collectFields(className, stmts);
+    void collectFieldsFromStmt(className, stmt);  // recurses into control flow
+    void addField(className, fieldName);
+};
+```
+
+### EscapeAnalyzer (`include/escape_analyzer.h`)
+
+```cpp
+class EscapeAnalyzer : public ASTVisitorBase {
+public:
+    void analyze(const ast::Program& program);
+    const unordered_map<const void*, bool>& stackAllocatable() const;
+private:
+    unordered_map<const void*, bool> stackAllocatable_;  // alloc site → stackable?
+    int loopDepth_;           // >0 inside for/while body
+    bool isYieldingFunction_; // goroutines with channel ops
+    struct VarInfo { const ast::Expr* sourceSite; bool escaped; };
+    unordered_map<string, VarInfo> varMap_;
+    unordered_set<string> escapedVars_;
+    void analyzeStmt(), analyzeStmtList(), analyzeExpr();
+    void registerAlloc(site, varName), markEscaped(varName);
+};
+```
+
+### Linker (`include/linker.h`)
+
+```cpp
+class Linker {
+public:
+    static unique_ptr<llvm::Module> link(unique_ptr<llvm::Module> main, vector<unique_ptr<llvm::Module>> others);
+    static void optimize(llvm::Module&, const TargetSpec& = {});
+    static void writeIR(const llvm::Module&, const string& path);
+    static void emitObjectFile(llvm::Module&, const string& path, const TargetSpec& = {});
+    static int linkToBinary(const string& objPath, const string& outPath,
+                            const string& exeDir = ".", const vector<string>& extraLibs = {},
+                            const TargetSpec& = {});
+    static int compileAndLink(unique_ptr<llvm::Module> main, vector<unique_ptr<llvm::Module>> others,
+                               const string& outputPath, const string& exeDir = ".",
+                               bool emitIR = false, ostream* irStream = nullptr,
+                               const vector<string>& extraLibs = {}, const TargetSpec& = {});
+};
+```
+
+## Module & Package System
+
+### ModuleLoader (`include/module_loader.h`)
+
+File-based module system. Every `.vsl` file is a module; its name is the filename without extension. The loader resolves, caches, and compiles modules on demand.
+
+```cpp
+class ModuleLoader {
+    ModuleLoader(const string& stdlibDir, const vector<string>& extraPaths = {}, bool verbose = false);
+    Module& load(const string& moduleName, const string& importFromFile);
+    vector<unique_ptr<llvm::Module>> takeAllLLVMModules();
+    bool isCached(const string& moduleName) const;
+    Module& getCached(const string& moduleName);
+    void setContext(llvm::LLVMContext* ctx);
+    const vector<string>& searchPaths() const;
+    void registerAlias(const string& alias, const string& dir);  // from vsl.lock
+    const unordered_map<string, string>& aliases() const;
+};
+```
+
+`Module` struct: `name, filepath, exports (map<string, Symbol>), ast, llvmContext, llvmModule`. `Symbol` struct: `kind (Function|Variable), name, mangledName`. `loadingStack_` prevents circular imports.
+
+Resolution order: alias registry → search paths (--module-path, VISUALL_PATH) → stdlib directory.
+
+### Package Management (`include/vsl_manifest.h`, `vsl_paths.h`, `vsl_resolver.h`)
+
+**vsl.toml** (package manifest, v1 schema):
+```toml
+[package]
+name = "my-pkg"
+version = "1.2.3"
+description = "..."
+license = "MIT"
+authors = ["Alice <a@x>"]
+keywords = ["math", "util"]   # max 5
+entry = "my_pkg.vsl"          # default: <name>.vsl
+
+[dependencies]
+json = { git = "https://github.com/alice/visuall-json", version = "0.1.0" }
+mylib = { path = "../mylib" }
+```
+
+**vsl.lock** (generated, do not edit):
+```toml
+[[package]]
+alias = "json"
+url = "https://github.com/alice/visuall-json"
+version = "0.1.0"
+dir = "C:/Users/alice/.visuall/packages/json@0.1.0"
+```
+
+Key types: `VslManifest` (package + dependencies), `VslLock` (vector of `LockEntry`). `Dependency = variant<GitDep, PathDep>`. Functions: `parseManifest(path)`, `parseLock(path)`, `writeLock(lock, path)`.
+
+**Dependency resolution** (Go-style MVS): `resolveDeps(rootManifest, manifestDir, fetcher)` walks dependency graph breadth-first, tracks `maxMinVersion[gitUrl]`, errors on MAJOR version conflicts. Path deps bypass the resolver. Callbacks via `ManifestFetcher` function type.
+
+**Paths**: `getVisuallDataDir()` → `%APPDATA%\visuall` (Windows) or `$HOME/.visuall` (POSIX). `getPackageCacheDir()` → dataDir/cache. `getPackageStoreDir()` → dataDir/packages. `sanitizeUrlForCache(url)` converts git URLs to safe filesystem keys.
+
+**vslpkg**: Separate binary in `tools/vslpkg/`. Uses `visuall_frontend` static lib (no LLVM). Handles package install, update, and lockfile management.
+
+## Cross-Compilation (`include/target_spec.h`)
+
+```cpp
+struct TargetSpec {
+    string triple;         // LLVM target triple (empty = native)
+    string cpu;            // "cortex-a72" or empty (auto: host for native, "generic" for cross)
+    string features;       // "+neon,+fp-armv8"
+    string linker;         // explicit linker path (takes priority)
+    string linkerPrefix;   // "aarch64-linux-gnu-" → "aarch64-linux-gnu-gcc"
+    string sysroot;        // --sysroot
+    string runtimeLibDir;  // cross-compiled runtime libs directory
+
+    bool isNative() const;           // triple.empty()
+    string effectiveTriple() const;  // user triple or host default
+    string normalizedTriple() const; // canonical form (for filesystem paths)
+    string effectiveCPU() const;     // explicit > host CPU > "generic"
+    string linkerExe() const;        // --linker > prefix+gcc > "gcc"
+};
+```
+
+## Runtime & Stdlib (`stdlib/`)
+
+The runtime directory is **`stdlib/`** (not `runtime/`).
+
+### C Runtime Libraries (compiled once, linked into every binary)
+
+| File | Size | Role |
+|------|------|------|
+| `runtime.c` | 65 KB | Print dispatch, string operations, type introspection |
+| `gc.c` | 35 KB | GC allocator (`__visuall_alloc`), tag system, `__visuall_gc_init/shutdown` |
+| `scheduler.c` | 8 KB | Goroutine/channel scheduler |
+| `exception_support.cpp` | 4 KB | C++ exception interop (SEH on Windows, DWARF on POSIX) |
+| `gc.h` | 7 KB | GC public API |
+| `scheduler.h` | 4 KB | Scheduler public API |
+
+Key runtime functions: `__visuall_alloc(size, tag)` — allocates `(size+1)*8` bytes, stores tag at offset 0, returns pointer to tag slot (data at offset 8). `__visuall_get_tag(ptr)` — runtime type inspection. `__visuall_list_get/set`, `__visuall_dict_get/set`, `__visuall_string_index`. `VSL_TAG_LIST=2`, `VSL_TAG_DICT=3`, `VSL_TAG_TUPLE=6`, `VSL_TAG_BOXED` (for by-reference captures).
+
+### Stdlib Visuall Modules (importable .vsl files)
+
+`collections.vsl`, `datetime.vsl`, `io.vsl`, `json.vsl`, `math.vsl`, `network.vsl`, `random.vsl`, `string.vsl`, `sys.vsl`
+
+Module-qualified calls mapped via `getModuleRuntimeName(mod, func)` → `__visuall_<mod>_<func>`.
+
+### Builtin Functions (`include/builtins.h`)
+
+22 builtins recognized by `isBuiltinFunction(name)`: `print, println, input, len, range, type, isinstance, int, float, str, bool, abs, min, max, round, sorted, reversed, enumerate, zip, map, filter, make_chan`
+
+6 stdlib modules recognized by `isStdlibModule(name)`: `string, math, io, sys, collections, random`
+
+`declareRuntimeFunctions(Module&, Context&)` declares all C runtime function prototypes in LLVM.
+
+## Build System (`CMakeLists.txt`)
+
+### External Dependencies (FetchContent)
+
+- **toml11** v4.2.0 — TOML parser (for vsl.toml manifest parsing)
+- **yyjson** 0.9.0 — JSON library (for runtime + tests)
+- **nlohmann/json** v3.11.3 — JSON for LSP
+
+### LLVM Components Linked
+
+`core, support, irreader, passes, native, linker`
+
+### Build Targets
+
+| Target | Type | Dependencies | Notes |
+|--------|------|-------------|-------|
+| `visuall_frontend` | Static lib | toml11 | No LLVM! Sources: lexer, parser, ast_printer, typechecker, capture_analyzer, class_analyzer, escape_analyzer, vsl_manifest, vsl_paths, vsl_resolver |
+| `visuall_runtime` | Static lib | yyjson, ws2_32 | C runtime (gc, scheduler, etc.) |
+| `visuallc` | Executable | visuall_frontend, LLVM libs | The compiler |
+| `vslpkg` | Executable | visuall_frontend, pthread | Package manager (no LLVM) |
+| `visuall_tests` | Executable | visuall_frontend, LLVM, yyjson, ws2_32 | Test suite |
+| `visuall-lsp` | Executable (optional) | visuall_frontend, nlohmann/json | Language server (no LLVM) |
+
+### Platform-specific
+
+- **Personality function**: `__gxx_personality_seh0` (Win32), `__gxx_personality_v0` (POSIX)
+- **Windows DLLs**: MSYS2 runtime DLLs and LLVM DLLs copied to build dir
+- **Integration tests**: `pkg_path_dep_compile`, `ffi_extern_compile`, `concurrency_basic`
+
+## CLI Reference (`src/main.cpp`)
+
+```
+Usage: visuallc [options] <file.vsl>
+
+Options:
+  --tokens             Dump the token stream and exit
+  --ast                Dump the AST and exit
+  -o <file>            Output binary path (default: a.out)
+  --emit-ir            Emit LLVM IR to stdout instead of compiling
+  --module-path <d>    Add directory to module search path
+  --dump-modules       Print resolved module paths during compilation
+  --gc-stats           Print GC statistics to stderr at program exit
+  -h, --help           Show this message
+  -v, --version        Print compiler version and exit
+
+Cross-compilation:
+  --target <triple>     LLVM target triple (e.g. aarch64-linux-gnu)
+  --cpu <cpu>           Target CPU model (e.g. cortex-a72)
+  --linker <path>       Full path to linker executable
+  --linker-prefix <p>   Shorthand: prepends to gcc
+  --runtime-lib-dir <d> Directory with cross-compiled runtime libs
+  --sysroot <path>      Sysroot for cross-compilation
+  --features <f>        Target CPU features (e.g. +neon)
+```
+
+### Full Pipeline (main.cpp orchestration)
+
+1. Read source file
+2. Lexer → `vector<Token>`
+3. If `--tokens`: print tokens and exit
+4. Parser → `unique_ptr<Program>`
+5. If `--ast`: print AST and exit
+6. `CaptureAnalyzer::analyze()` — populates lambda captures
+7. `ClassAnalyzer::analyze()` — discovers class fields
+8. `EscapeAnalyzer::analyze()` — determines stack-allocatable objects
+9. `TypeChecker::check()` — type verification
+10. `ModuleLoader` setup (stdlib dir, extra paths, vsl.lock loading)
+11. Codegen: `setModuleLoader()`, `setSourceFile()`, `setGCStats()`, `setClassFields()`, `setEscapeInfo()`, `moduleLoader.setContext()`, `generate()`
+12. If `--emit-ir`: link modules, optimize, print IR
+13. Otherwise: link all modules → optimize → writeIR → emitObjectFile → linkToBinary
+
+All errors caught via single `catch (const Diagnostic& d)` handler.
+
+## Key Design Patterns
+
+### Visitor Pattern & Result-Slot Convention
+
+All passes implement `ASTVisitor` (TypeChecker, Codegen) or `ASTVisitorBase` (EscapeAnalyzer). The `visit()` methods are always `void`. Passes that produce values use a **result-slot convention**: TypeChecker stores results in `exprResult_` (TypeRef), Codegen stores in `valueResult_` (llvm::Value*). The caller reads the slot after `node.accept(*this)`.
+
+`accept()` definitions are inline at the bottom of `ast_visitor.h` — no separate `ast.cpp` needed. Each node's `accept()` simply calls `v.visit(*this)` with its static type.
+
+### isAssignableTo() vs typeEquals()
+
+- **`typeEquals(a, b)`**: Strict structural comparison. `ListType(Int) ≠ ListType(Unknown)`.
+- **`isAssignableTo(from, to)`**: Allows Unknown/wildcard compatibility. Used for return types, assignments, parameter passing. Location: `src/typechecker.cpp`.
+
+### Class Field I64 Coercion
+
+Classes are represented as flat `i64[]` arrays in LLVM (one i64 per field). The coercion pipeline:
+1. **Store**: `val → coerceToI64()` (ptrtoint for pointers, bitcast for doubles, zext for smaller ints) → `CreateStore` into GEP'd field slot
+2. **Load**: `CreateLoad(i64Ty)` from GEP → `lookupFieldType()` checks `classFieldTypes_[className][fieldIdx]` → apply reverse conversion (inttoptr/bitcast/trunc)
+3. **Type recording**: `classFieldTypes_[className][fieldIdx] = origTy` is set on first field assignment
+
+### Entry Point Handling
+
+When `define main()` is present in user code:
+- `hasUserMain_ = true` in codegen
+- First pass: creates main with **ExternalLinkage + i32 return + C calling convention** (not InternalLinkage + void + Fast)
+- Second pass: creates `__visuall_init` that calls `__visuall_gc_init()` → user's main wrapper → `__visuall_gc_shutdown()`
+- GC shutdown injected before all return paths (explicit returns + implicit fall-through)
+- Module mode (`-c` flag): functions get InternalLinkage, no main generated
+
+### Boxed Variables
+
+Local variables that hold pointers or non-i64 values have their original LLVM type recorded in `boxedVars_`. On read, the i64-loaded value is reversed. Same pattern as `classFieldTypes_` but for local variables. By-reference captures (variables assigned ≥2x in same scope) get `VSL_TAG_BOXED` heap allocations via `allocBox()`.
+
+### Generic Monomorphization
+
+`emitMonomorphization()` instantiates generic functions per concrete type with mangled names (e.g., `identity__int`, `identity__str`). `emittedMonomorphizations_` set prevents duplicate instantiation. Generic function defs stored in `genericFuncDefs_`.
+
+### Generator Lowering
+
+`codegenGeneratorFuncLowering()` transforms yield-based functions into state machines. `codegenGeneratorWrapper()` creates the outer function. Tracked state: `genSlotCount_`, `genYieldCount_`, `genTrackedVars_`. `emitGenSaveVars()` / `emitGenRestoreVars()` serialize/deserialize across yield points.
+
+### Native Exception Handling
+
+Platform-specific personality function: `__gxx_personality_seh0` (Win32) or `__gxx_personality_v0` (POSIX). `landingpadStack_` tracks active try-block landing pads. `emitCallOrInvoke()` chooses between `call` (outside try) and `invoke` (inside try) instructions. `lastExceptionVal_` enables bare `throw` re-raise.
+
+### SymbolTable Historical Registry Pattern
+
+TypeChecker's `SymbolTable` never pops from `all_scopes_` — only `active_stack_` is modified. This preserves the complete lexical geography for LSP queries (`getAllScopes()`) after `check()` completes.
+
+### Print Dispatch
+
+`emitPrintCall()` dispatches based on expression type:
+- Strings (`i8*`): calls `puts` directly (guarded by `isStringExpr()` to avoid calling `__visuall_get_tag` on raw C strings)
+- Integers/known types: calls `printf` with appropriate format
+- Heap objects (list/dict/tuple): calls `__visuall_get_tag` → specialized print function
+- Unknown runtime types: calls `__visuall_get_tag` for runtime inspection
+
+## Visuall Language Syntax
+
+### Significant Whitespace
+
+Python-style indentation for blocks. Tabs are canonical. Four-space groups auto-normalized to tabs by lexer.
+
+### Comments
+
+```
+## Single-line comment
+### Multi-line
+    comment block ###
+```
+
+### Variables and Constants
+
+```
+x = 42                       # inferred type
+name: str = "Visuall"        # typed declaration
+const MAX: int = 100         # constant (cannot be reassigned)
+const DEFAULT = "world"      # const with type inference
+```
+
+### Functions
+
+```
+define greet(name: str) -> str:
+    return "Hello, " + name
+
+define add(x: int, y: int = 0) -> int:   # default parameter
+    return x + y
+
+define sum_all(*args):                    # variadic (*args)
+    total = 0
+    for item in args:
+        total = total + item
+    return total
+
+define process(**opts):                   # keyword args (**kwargs)
+    return opts
+
+@extern("c")                              # C FFI
+define puts(s: str) -> int;
+
+@extern("c", variadic)                    # variadic C FFI (printf-style)
+define printf(fmt: str, ...) -> int;
+```
+
+### Control Flow
+
+```
+if x > 0:
+    print("positive")
+elsif x < 0:
+    print("negative")
+else:
+    print("zero")
+
+for i in range(10):           # for loop with range
+    print(i)
+
+for i in items:               # for loop over collection
+    print(i)
+
+for k, v in dict:             # for loop with unpacking
+    print(k, v)
+
+while condition:              # while loop
+    do_something()
+
+for item in items:            # for...else
+    if item == target: break
+else:
+    print("not found")
+
+match subject:
+    pattern:
+        handle()
+    pattern if guard:
+        handle_guarded()
+    _:
+        default_case()
+
+try:
+    risky()
+catch SpecificError as e:
+    handle(e)
+catch:
+    handle_any()
+finally:
+    cleanup()
+```
+
+### Classes
+
+```
+class Animal:
+    init(name: str):           # constructor
+        this.name = name
+
+    define speak() -> str:     # method
+        return "..."
+
+class Dog extends Animal implements Pettable:
+    init(name: str, breed: str):
+        super.init(name)       # base class constructor
+        this.breed = breed
+
+    define speak() -> str:
+        return "woof"
+```
+
+### Interfaces
+
+```
+interface Drawable:
+    define draw() -> str       # method signature (no body)
+
+class Circle implements Drawable:
+    define draw() -> str:
+        return "o"
+```
+
+### Generics
+
+```
+define identity<T>(x: T) -> T:
+    return x
+
+class Box<T>:
+    init(value: T):
+        this.value = value
+    define get() -> T:
+        return this.value
+
+a = identity<int>(42)          # explicit type arg
+b = identity("hi")             # type inference
+```
+
+### Enumerations
+
+```
+enum Color:
+    RED, GREEN, BLUE
+
+c = Color.RED
+```
+
+### Data Structures
+
+```
+list = [1, 2, 3]
+list[0] = 99
+sublist = items[1:5]
+sublist = items[1:10:2]
+
+dict = {"key": "value"}
+dict["new_key"] = 42
+
+tuple = (1, "two", 3.0)
+a, b, c = (1, 2, 3)            # tuple unpacking
+
+squares = [x ** 2 for x in range]              # list comprehension
+evens = [x for x in nums if x % 2 == 0]        # with filter
+d = {k: k * 2 for k in items}                  # dict comprehension
+```
+
+### Strings
+
+```
+"double quoted"
+'single quoted'
+"\n\t\r"                        # standard escapes
+"\x1b[31mred\x1b[0m"            # hex byte escapes
+"☃"                        # unicode BMP (snowman ☃)
+"\U0001F600"                    # unicode full range (😀)
+"\a\b\f\v\e"                    # alert, backspace, form feed, vertical tab, escape
+f"Hello {name}"                 # f-string with interpolation
+f"value is {x + 1}"             # f-string with expression
+```
+
+### Other Features
+
+```
+x -> x * 2                      # lambda expression
+result = x ?? default           # null coalescing
+y = (x := 10)                   # walrus operator
+items = *source                 # spread expression
+merged = {**base, **overlay}    # dict spread
+@decorator                      # decorator
+go worker(args)                 # goroutine spawn
+ch = make_chan()                # channel creation
+ch <- value                     # channel send
+value = <-ch                    # channel receive
+int|null                        # union type
+?str                            # shorthand for str|null
+assert x > 0                    # assertion
+assert x > 0, "custom msg"     # assertion with message
+del items[0]                    # deletion
+with open("f.txt") as f: ...    # context manager
+```
+
+## LLVM IR Patterns
+
+### GC Heap Object Layout
+
+```
+[ i64 TAG_VALUE, i64 field0_or_length, i64 field1, ... ]
+```
+
+`__visuall_alloc(size, tag)` allocates `(size+1)*8` bytes, stores tag at offset 0, returns pointer to tag slot. Data at offset 8.
+
+### Stack vs Heap
+
+- Escapes or loop-nested: `call __visuall_alloc` → GC-tracked heap
+- Non-escaping, non-loop: `alloca [N x i64]` on stack, no GC tag
+
+### Closure Representation
+
+Fat pointer struct: `{ i8* env, i8* fn_ptr }`. `getClosureType()` returns this `StructType`. Closure vars tracked in `closureVars_` set.
+
+## File Organization
+
+```
+visuall/
+├── include/
+│   ├── ast.h              # All AST nodes, TypeNode hierarchy, smart pointer aliases
+│   ├── ast_visitor.h      # ASTVisitor (pure virtual), ASTVisitorBase (no-op), inline accept()
+│   ├── token.h            # Complete TokenType enum, Token struct
+│   ├── diagnostic.h       # Diagnostic base class, PackageError
+│   ├── lexer.h            # Lexer class
+│   ├── parser.h           # Parser class
+│   ├── typechecker.h      # TypeChecker, SymbolTable, all TypeNode subclasses, factory functions
+│   ├── codegen.h          # Codegen class
+│   ├── capture_analyzer.h # CaptureAnalyzer
+│   ├── class_analyzer.h   # ClassAnalyzer
+│   ├── escape_analyzer.h  # EscapeAnalyzer
+│   ├── builtins.h         # Builtin function registry, stdlib module names
+│   ├── module_loader.h    # ModuleLoader, Module, Symbol, ImportError
+│   ├── linker.h           # Linker (all static methods)
+│   ├── target_spec.h      # TargetSpec for cross-compilation
+│   ├── vsl_manifest.h     # VslManifest, VslLock, Dependency, parsing functions
+│   ├── vsl_paths.h        # Package store path helpers
+│   ├── vsl_resolver.h     # MVS dependency resolver
+│   ├── ast_printer.h      # AST debug pretty-printer
+│   └── version.h          # VISUALL_VERSION macro
+├── src/
+│   ├── main.cpp           # CLI entry, pipeline orchestration, error handling
+│   ├── lexer.cpp          # Tokenization, escape sequences, indent handling
+│   ├── parser.cpp         # Recursive descent parser (~2000 lines)
+│   ├── typechecker.cpp    # Type checker: generics, unions, null narrowing, const
+│   ├── codegen.cpp         # LLVM IR codegen (~5000 lines)
+│   ├── capture_analyzer.cpp
+│   ├── class_analyzer.cpp
+│   ├── escape_analyzer.cpp
+│   ├── builtins.cpp       # declareRuntimeFunctions implementation
+│   ├── module_loader.cpp
+│   ├── linker.cpp
+│   ├── ast_printer.cpp
+│   ├── vsl_manifest.cpp
+│   ├── vsl_paths.cpp
+│   └── vsl_resolver.cpp
+├── tests/
+│   ├── test_main.cpp      # Test runner
+│   ├── test_lexer.cpp     # 17 lexer tests
+│   ├── syntax_test.cpp    # 14 syntax tests
+│   ├── typesystem_test.cpp # 22 type system tests
+│   └── escape_test.cpp    # 9 escape analysis tests
+├── tools/
+│   └── vslpkg/            # Package manager binary (separate CMakeLists)
+├── stdlib/                # C runtime library + Visuall stdlib modules
+│   ├── runtime.c          # Print, string ops, type dispatch (65 KB)
+│   ├── gc.c               # GC allocator (35 KB)
+│   ├── scheduler.c        # Goroutine/channel scheduler (8 KB)
+│   ├── exception_support.cpp  # C++ exception interop (4 KB)
+│   ├── gc.h, scheduler.h  # Headers
+│   └── *.vsl              # Stdlib Visuall modules (collections, io, math, etc.)
+├── examples/              # Example .vsl programs
+├── CMakeLists.txt         # Build configuration
+├── CHANGELOG.md
+├── README.md
+└── llms.txt               # This file
+```
+
+## Known Limitations
+
+1. **Class-before-main ordering bug**: When `class` definitions appear before `define main()`, builder state from class codegen corrupts init function context. Field access inside `main()` may silently return 0. Workaround: define `main()` before class definitions, or use top-level code.
+2. **For loop hang**: Rare, intermittent (non-reproducible, deferred investigation).
+3. **No destructuring in for-loop headers**: `for a, b in pairs` is parsed but may have incomplete codegen support.
+4. **Limited compile-time evaluation**: No `constexpr`-style CTFE.
+5. **`@extern` only at top level**: Nested `@extern` declarations rejected by type checker (`functionNestingDepth_ > 0`).
+6. **`match` statement**: AST support exists but codegen may be incomplete.
+7. **`getpwuid(3)` POSIX blocking**: `getVisuallDataDir()` may block on LDAP/NIS-backed passwd DBs.
+
+## Naming Conventions
+
+- `TypeRef` = `std::shared_ptr<TypeNode>`
+- `StmtPtr` = `std::unique_ptr<Stmt>`
+- `ExprPtr` = `std::unique_ptr<Expr>`
+- `ExprList` = `std::vector<ExprPtr>`
+- `StmtList` = `std::vector<StmtPtr>`
+- LLVM helper members: `builder_`, `context_`, `module_`
+- All member variables: `trailing_underscore_` suffix
+- Type factory functions: `makeXxx()` (e.g., `makeInt()`, `makeList()`, `makeUnknown()`)
+- Visitor pattern: `virtual void visit(const ast::NodeType&) = 0` in base; `void accept(ASTVisitor& v) const { v.visit(*this); }` on each node (inline in `ast_visitor.h`)
+- Pass output via injection setters: `setClassFields()`, `setEscapeInfo()`, `setModuleLoader()`, `setSourceFile()`

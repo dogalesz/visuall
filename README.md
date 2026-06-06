@@ -12,8 +12,8 @@ Source (.vsl) → Lexer → Parser → Type Checker → LLVM IR → O2 Optimizat
 ## Features
 
 - **Native compilation** via LLVM (O2 optimization, targets host CPU)
-- **Garbage collection** — thread-safe mark-and-sweep GC with conservative stack scanning, free-list pooling, and O(1) pointer lookup
-- **Rich syntax** — classes, closures/lambdas, f-strings, list/dict/tuple literals, list comprehensions, slicing, tuple unpacking, chained comparisons, match statements, generators, enums, decorators, walrus operator, nullable types, generics, isinstance
+- **Garbage collection** — thread-safe mark-and-sweep GC with conservative stack scanning, free-list pooling, and O(1) interior pointer resolution via chunk-indexed hash table
+- **Rich syntax** — classes, closures/lambdas, f-strings, list/dict/tuple literals, list comprehensions, slicing, tuple unpacking, chained comparisons, match statements, generators, enums, decorators, walrus operator, `const` declarations, typed variable declarations (`x: int = 42`), collection generics (`list[int]`, `dict[str, float]`), pointer types in `@extern` (`int*`, `void*`), nullable types, generics, isinstance
 - **Concurrency** — goroutines (`go`), channels (`chan`), `make_chan`, send (`<-`) and receive (`<-`) with continuation-passing semantics
 - **Zero-overhead C FFI** — `@extern("libname")` decorator for calling C libraries directly via C calling convention
 - **Escape analysis** — stack allocation for non-escaping lists, dicts, tuples, and lambda environments, bringing recursive data structure performance closer to C++
@@ -41,6 +41,10 @@ Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best
 | Float distance (1M) | 1.8 | 8.9 | 198.2 | 4.9x | 110x |
 
 Visuall is within **1.2–2.1x** of C++ on integer compute and loops, and **1.7x** on deeply recursive code (Ackermann). The full benchmark suite runs **1.8x** slower than C++ overall — 20–50x faster than Python on numeric workloads. The escape analysis pass avoids GC heap allocation for non-escaping list, dict, tuple, and closure objects, eliminating GC overhead on allocation-heavy paths.
+
+Recent compiler optimizations in v1.3.1:
+- **Generator lowering** — generator state-machine save/restore now emits direct LLVM `GetElementPtr` field access instead of C runtime function calls, letting the O2 optimizer inline and constant-fold across yield points
+- **GC interior pointer resolution** — replaced the O(N) linear heap-list walk with an O(1) chunk-indexed hash table (4 KB chunks), reducing deep-stack GC pause times by **86–133×** while adding only ~2.5% memory overhead
 
 ### Micro-benchmarks
 
@@ -360,11 +364,21 @@ from string import upper, split
 ### Variables and types
 
 ```python
+## Regular variables
 name = "Visuall"
 age = 25
 pi = 3.14159
 active = true
 nothing = null
+
+## Typed declarations (type annotation checked at compile time)
+count: int = 0
+ratio: float = 0.5
+prefix: str = ">>"
+
+## Compile-time constants
+const MAX_SIZE = 1024
+const TIMEOUT: int = 30
 ```
 
 ### Functions and lambdas
@@ -646,10 +660,17 @@ define sqrt(x: float) -> float
 @extern("c")
 define printf(fmt: str) -> void
 
+## Pointer types for C functions that take/return pointers
+@extern("c")
+define fopen(path: str, mode: str) -> void*
+
+@extern("c")
+define fclose(fp: void*) -> int
+
 result = sqrt(16.0)
 ```
 
-`@extern("libname")` declares an external C function — the compiler emits a native C calling-convention call with no marshaling overhead.
+`@extern("libname")` declares an external C function — the compiler emits a native C calling-convention call with no marshaling overhead. Supported pointer types include `int*`, `float*`, `void*`, `char*`, and arbitrary pointer suffixes (`int**`, `my_struct*`, etc.).
 
 ---
 
