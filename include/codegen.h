@@ -353,6 +353,10 @@ private:
                                   llvm::Function* resumeFn);
     void emitGenSaveVars();
     void emitGenRestoreVars();
+    // Returns the LLVM struct type matching the C VisualGenerator layout:
+    //   { i32 state, i32 num_slots, i64 value, i8* resume_fn, [0 x i64] slots }
+    // The [0 x i64] trailing array enables GEP-based access without C calls.
+    llvm::StructType* getGenContextType();
     // Generator state-machine support.
     llvm::Value* generatorList_ = nullptr; // non-null inside a generator function
     llvm::Value* genContext_    = nullptr; // GenContext* (i8*) inside resume function
@@ -360,6 +364,8 @@ private:
     int          genYieldCount_ = 0;       // yield point counter for state IDs
     // Allocas to save/restore across yield/resume boundaries.
     std::vector<llvm::AllocaInst*> genTrackedVars_;
+    // Cached LLVM struct type for VisualGenerator (lazy-initialized by getGenContextType).
+    llvm::StructType* genContextStructTy_ = nullptr;
 
     // ── Codegen methods for expressions ─────────────────────────────────
     llvm::Value* codegenExpr(const ast::Expr& expr);

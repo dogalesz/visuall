@@ -2064,17 +2064,24 @@ void Codegen::codegenYieldStmt(const ast::YieldStmt& node) {
         // Save all tracked variables to context slots.
         emitGenSaveVars();
 
-        // Set next state.
+        // Set next state and store yielded value via GEP.
         int nextState = genYieldCount_ + 1;
-        auto* setStateFn = module_->getFunction("__visuall_gen_set_state");
-        builder_->CreateCall(setStateFn, {
-            genContext_,
-            llvm::ConstantInt::get(i32Ty, static_cast<uint64_t>(nextState))
-        });
-
-        // Store yielded value.
-        auto* setValFn = module_->getFunction("__visuall_gen_set_value");
-        if (setValFn) builder_->CreateCall(setValFn, {genContext_, asInt});
+        {
+            auto* yldGenTy = getGenContextType();
+            auto* yldGenPtr = builder_->CreateBitCast(
+                genContext_, llvm::PointerType::getUnqual(yldGenTy),
+                "gen.ctx.typed");
+            // Field 0: state
+            auto* yldStatePtr = builder_->CreateStructGEP(
+                yldGenTy, yldGenPtr, 0, "state.ptr");
+            builder_->CreateStore(
+                llvm::ConstantInt::get(i32Ty, static_cast<uint64_t>(nextState)),
+                yldStatePtr);
+            // Field 2: value
+            auto* yldValuePtr = builder_->CreateStructGEP(
+                yldGenTy, yldGenPtr, 2, "value.ptr");
+            builder_->CreateStore(asInt, yldValuePtr);
+        }
 
         // Branch to a return block.
         auto* retBB = llvm::BasicBlock::Create(
@@ -2133,11 +2140,15 @@ void Codegen::codegenReturnStmt(const ast::ReturnStmt& node) {
     // Inside a generator resume function: mark exhausted, return sentinel.
     if (genContext_) {
         auto* i32Ty = llvm::Type::getInt32Ty(*context_);
-        auto* setStateFn = module_->getFunction("__visuall_gen_set_state");
-        builder_->CreateCall(setStateFn, {
-            genContext_,
-            llvm::ConstantInt::get(i32Ty, 0xFFFFFFFF, true)  // -1
-        });
+        // GEP into field 0 (state) and store -1 to mark generator exhausted.
+        auto* retGenTy = getGenContextType();
+        auto* retGenPtr = builder_->CreateBitCast(
+            genContext_, llvm::PointerType::getUnqual(retGenTy),
+            "gen.ctx.typed");
+        auto* retStatePtr = builder_->CreateStructGEP(
+            retGenTy, retGenPtr, 0, "state.ptr");
+        builder_->CreateStore(
+            llvm::ConstantInt::get(i32Ty, 0xFFFFFFFF, true), retStatePtr);
         builder_->CreateRet(llvm::ConstantInt::get(
             llvm::Type::getInt64Ty(*context_),
             static_cast<uint64_t>(std::numeric_limits<int64_t>::min())));
@@ -6017,12 +6028,40 @@ void Codegen::visit(const ast::SuperExpr&) {
 // ════════════════════════════════════════════════════════════════════════════
 // Generator state-machine lowering
 // ════════════════════════════════════════════════════════════════════════════
+// Generator context struct type — mirrors the C VisualGenerator layout in
+// runtime.c so that the compiler can GEP into fields directly instead of
+// calling through C accessor functions.
+// Layout: { i32 state, i32 num_slots, i64 value, i8* resume_fn, [0 x i64] slots }
+// ════════════════════════════════════════════════════════════════════════════
+
+llvm::StructType* Codegen::getGenContextType() {
+    if (genContextStructTy_) return genContextStructTy_;
+    auto* i32Ty  = llvm::Type::getInt32Ty(*context_);
+    auto* i64Ty  = llvm::Type::getInt64Ty(*context_);
+    auto* i8Ptr  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    // [0 x i64] is LLVM's idiom for a variable-length trailing array.
+    // GEP into element i of a zero-length array is legal and produces
+    // the correct byte-offset pointer at runtime.
+    auto* slotArrTy = llvm::ArrayType::get(i64Ty, 0);
+    genContextStructTy_ = llvm::StructType::get(*context_, {
+        i32Ty,      // field 0: state
+        i32Ty,      // field 1: num_slots
+        i64Ty,      // field 2: value
+        i8Ptr,      // field 3: resume_fn
+        slotArrTy   // field 4: slots[]
+    }, /*isPacked=*/false);
+    return genContextStructTy_;
+}
 
 void Codegen::emitGenSaveVars() {
-    if (!genContext_) return;
+    if (!genContext_ || genTrackedVars_.empty()) return;
+    auto* genTy  = getGenContextType();
+    auto* genPtr = builder_->CreateBitCast(
+        genContext_,
+        llvm::PointerType::getUnqual(genTy), "gen.ctx.typed");
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-    auto* setSlotFn = module_->getFunction("__visuall_gen_set_slot");
-    if (!setSlotFn) return;
+    auto* i32Ty = llvm::Type::getInt32Ty(*context_);
+
     for (size_t i = 0; i < genTrackedVars_.size(); i++) {
         llvm::Value* val = builder_->CreateLoad(
             genTrackedVars_[i]->getAllocatedType(),
@@ -6035,25 +6074,34 @@ void Codegen::emitGenSaveVars() {
             else if (!val->getType()->isIntegerTy(64))
                 val = builder_->CreateZExt(val, i64Ty, "gen.save.ext");
         }
-        builder_->CreateCall(setSlotFn, {
-            genContext_,
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_),
-                                   static_cast<uint64_t>(i)),
-            val
-        });
+        // GEP: struct index 0, field 4 (slots[]), array index i
+        auto* slotPtr = builder_->CreateInBoundsGEP(
+            genTy, genPtr,
+            {llvm::ConstantInt::get(i32Ty, 0),
+             llvm::ConstantInt::get(i32Ty, 4),
+             llvm::ConstantInt::get(i32Ty, static_cast<uint64_t>(i))},
+            "gen.slot." + std::to_string(i));
+        builder_->CreateStore(val, slotPtr);
     }
 }
 
 void Codegen::emitGenRestoreVars() {
-    if (!genContext_) return;
-    auto* getSlotFn = module_->getFunction("__visuall_gen_get_slot");
-    if (!getSlotFn) return;
+    if (!genContext_ || genTrackedVars_.empty()) return;
+    auto* genTy  = getGenContextType();
+    auto* genPtr = builder_->CreateBitCast(
+        genContext_,
+        llvm::PointerType::getUnqual(genTy), "gen.ctx.typed");
+    auto* i64Ty = llvm::Type::getInt64Ty(*context_);
+    auto* i32Ty = llvm::Type::getInt32Ty(*context_);
+
     for (size_t i = 0; i < genTrackedVars_.size(); i++) {
-        llvm::Value* raw = builder_->CreateCall(getSlotFn, {
-            genContext_,
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context_),
-                                   static_cast<uint64_t>(i))
-        });
+        auto* slotPtr = builder_->CreateInBoundsGEP(
+            genTy, genPtr,
+            {llvm::ConstantInt::get(i32Ty, 0),
+             llvm::ConstantInt::get(i32Ty, 4),
+             llvm::ConstantInt::get(i32Ty, static_cast<uint64_t>(i))},
+            "gen.slot." + std::to_string(i));
+        llvm::Value* raw = builder_->CreateLoad(i64Ty, slotPtr, "gen.restore");
         // Coerce back to the alloca's type.
         llvm::Type* allocTy = genTrackedVars_[i]->getAllocatedType();
         llvm::Value* val = raw;
@@ -6109,8 +6157,12 @@ llvm::Function* Codegen::codegenGeneratorFuncLowering(
     builder_->CreateBr(dispatchBB);
     builder_->SetInsertPoint(dispatchBB);
 
-    auto* getStateFn = module_->getFunction("__visuall_gen_get_state");
-    llvm::Value* state = builder_->CreateCall(getStateFn, {genContext_}, "state");
+    // GEP into field 0 (state) instead of calling __visuall_gen_get_state.
+    auto* genTy = getGenContextType();
+    auto* genPtr = builder_->CreateBitCast(
+        genContext_, llvm::PointerType::getUnqual(genTy), "gen.ctx.typed");
+    auto* statePtr = builder_->CreateStructGEP(genTy, genPtr, 0, "state.ptr");
+    llvm::Value* state = builder_->CreateLoad(i32Ty, statePtr, "state");
     auto* doneBB = llvm::BasicBlock::Create(*context_, "gen.done", resumeFn);
     auto* switchInst = builder_->CreateSwitch(state, doneBB, 4); // estimate
 
@@ -6138,11 +6190,16 @@ llvm::Function* Codegen::codegenGeneratorFuncLowering(
 
     // Done block: mark generator exhausted.
     builder_->SetInsertPoint(doneBB);
-    auto* setStateFn = module_->getFunction("__visuall_gen_set_state");
-    builder_->CreateCall(setStateFn, {
-        genContext_,
-        llvm::ConstantInt::get(i32Ty, 0xFFFFFFFF, true)  // -1 as u32
-    });
+    // GEP into field 0 (state) and store -1 instead of calling __visuall_gen_set_state.
+    {
+        auto* doneGenTy = getGenContextType();
+        auto* doneGenPtr = builder_->CreateBitCast(
+            genContext_, llvm::PointerType::getUnqual(doneGenTy), "gen.ctx.typed");
+        auto* doneStatePtr = builder_->CreateStructGEP(
+            doneGenTy, doneGenPtr, 0, "state.ptr");
+        builder_->CreateStore(
+            llvm::ConstantInt::get(i32Ty, 0xFFFFFFFF, true), doneStatePtr);
+    }
     builder_->CreateRet(llvm::ConstantInt::get(
         i64Ty, static_cast<uint64_t>(std::numeric_limits<int64_t>::min())));
 
@@ -6196,27 +6253,33 @@ void Codegen::codegenGeneratorWrapper(const ast::FuncDef& node,
     };
     llvm::Value* ctx = builder_->CreateCall(genCreateFn, genArgs, "gen.ctx");
 
-    // Store parameter values into context slots.
-    auto* setSlotFn = module_->getFunction("__visuall_gen_set_slot");
-    int numParams = (int)paramInfo.size();
-    for (int i = 0; i < numParams; i++) {
-        llvm::Value* val = builder_->CreateLoad(
-            paramInfo[i].first->getAllocatedType(),
-            paramInfo[i].first, "param.val");
-        if (val->getType() != i64Ty) {
-            if (val->getType()->isPointerTy())
-                val = builder_->CreatePtrToInt(val, i64Ty, "param.ptoi");
-            else if (val->getType()->isDoubleTy())
-                val = builder_->CreateBitCast(val, i64Ty, "param.bitcast");
-            else if (!val->getType()->isIntegerTy(64))
-                val = builder_->CreateZExt(val, i64Ty, "param.ext");
+    // Store parameter values into context slots via GEP.
+    {
+        auto* wrapGenTy = getGenContextType();
+        auto* wrapGenPtr = builder_->CreateBitCast(
+            ctx, llvm::PointerType::getUnqual(wrapGenTy), "gen.ctx.typed");
+        int numParams = (int)paramInfo.size();
+        for (int i = 0; i < numParams; i++) {
+            llvm::Value* val = builder_->CreateLoad(
+                paramInfo[i].first->getAllocatedType(),
+                paramInfo[i].first, "param.val");
+            if (val->getType() != i64Ty) {
+                if (val->getType()->isPointerTy())
+                    val = builder_->CreatePtrToInt(val, i64Ty, "param.ptoi");
+                else if (val->getType()->isDoubleTy())
+                    val = builder_->CreateBitCast(val, i64Ty, "param.bitcast");
+                else if (!val->getType()->isIntegerTy(64))
+                    val = builder_->CreateZExt(val, i64Ty, "param.ext");
+            }
+            // GEP: struct index 0, field 4 (slots[]), array index i
+            auto* slotPtr = builder_->CreateInBoundsGEP(
+                wrapGenTy, wrapGenPtr,
+                {llvm::ConstantInt::get(i32Ty, 0),
+                 llvm::ConstantInt::get(i32Ty, 4),
+                 llvm::ConstantInt::get(i32Ty, static_cast<uint64_t>(i))},
+                "param.slot." + std::to_string(i));
+            builder_->CreateStore(val, slotPtr);
         }
-        llvm::Value* setArgs[] = {
-            ctx,
-            llvm::ConstantInt::get(i32Ty, static_cast<uint64_t>(i)),
-            val
-        };
-        builder_->CreateCall(setSlotFn, setArgs);
     }
 
     // Return the context pointer.
