@@ -14,3 +14,6 @@ cmake_install.cmake
 compile_commands.json
 CTestTestfile.cmake
 install_manifest.txt
+
+# LLM context file (auto-generated)
+llms.txt
