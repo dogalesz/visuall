@@ -1,0 +1,18 @@
+# Benchmark: GC allocation pressure with interior pointer resolution.
+# Stress-tests the O(1) chunk table in find_gc_header (Optimization 2).
+# Allocates 200,000 strings, keeping every 1000th alive.
+# Triggers multiple GC cycles with deep allocation lists.
+
+define make_strings(n: int) -> str:
+    kept = []
+    k = 0
+    while k < n:
+        s = "xxxxxxxxxxxxxxxxxxxx"  # 20-char string, ~44 bytes per alloc
+        if k % 1000 == 0:
+            kept.push(s)
+        k = k + 1
+    return kept[0]  # prevent dead-code elimination
+
+define main() -> void:
+    s = make_strings(200000)
+    println("gc benchmark done: " + s)
