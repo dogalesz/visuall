@@ -64,14 +64,34 @@ Go to the [Releases page](../../releases) and grab the asset for your platform.
 
 ### Windows (x86-64)
 
-Download the latest version and extract it anywhere (e.g. `C:\visuall\`).
+#### Recommended: One-click Installer
+
+Download `visuallc-v*-installer.exe` and run it. The installer:
+
+- Extracts the compiler, LSP server, package manager, stdlib, and all DLLs to `C:\Program Files\visuall\`
+- Adds the install directory to your system **PATH** automatically
+- Registers in Add/Remove Programs for clean uninstall
+
+```powershell
+# After install — works from any terminal
+visuallc hello.vsl -o hello
+.\hello.exe
+```
+
+#### Manual: Zip Archive
+
+Prefer to manage things yourself? Download `visuallc-v*-windows-x86_64.zip` and extract it anywhere (e.g. `C:\visuall\`).
 
 | File / Folder | Purpose |
 |---------------|---------|
 | `visuallc.exe` | The Visuall compiler |
+| `visuall-lsp.exe` | LSP language server (editor integration) |
+| `vslpkg.exe` | Package manager |
 | `stdlib/` | Standard library `.vsl` modules (math, string, io, sys, collections) |
 | `hello.vsl` | Example program |
 | `README.md` | This documentation |
+
+Then add the folder to your system **PATH** manually.
 
 **Install a C linker (MinGW)**
 

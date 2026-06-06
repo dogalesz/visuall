@@ -48,6 +48,7 @@ jobs:
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-llvm
+            mingw-w64-x86_64-nsis
 
       - name: Configure
         run: |
@@ -62,3 +63,12 @@ jobs:
         run: |
           export PATH="/mingw64/bin:$PATH"
           ctest --test-dir build --output-on-failure
+
+      - name: Build NSIS installer
+        run: makensis installer.nsi
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: visuallc-installer
+          path: visuallc-v*-windows-x86_64-installer.exe
