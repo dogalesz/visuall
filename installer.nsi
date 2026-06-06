@@ -45,8 +45,8 @@ Section "Install"
   File "build\vslpkg.exe"
 
   ; DLLs
-  File "build\libLLVM.dll"
-  File "build\libffi-8.dll"
+  File "build\libLLVM*.dll"
+  File "build\libffi*.dll"
   File "build\libgcc_s_seh-1.dll"
   File "build\libstdc++-6.dll"
   File "build\libwinpthread-1.dll"
@@ -115,8 +115,8 @@ Section "Uninstall"
   Delete "$INSTDIR\vslpkg.exe"
 
   ; Remove DLLs
-  Delete "$INSTDIR\libLLVM.dll"
-  Delete "$INSTDIR\libffi-8.dll"
+  Delete "$INSTDIR\libLLVM*.dll"
+  Delete "$INSTDIR\libffi*.dll"
   Delete "$INSTDIR\libgcc_s_seh-1.dll"
   Delete "$INSTDIR\libstdc++-6.dll"
   Delete "$INSTDIR\libwinpthread-1.dll"
