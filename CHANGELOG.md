@@ -5,6 +5,14 @@ All notable changes to the Visuall language are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-06-06
+
+### Changed
+- Lazy chunk table build: the GC interior-pointer chunk table is now built from the
+  heap-linked list at collection start instead of eagerly on every allocation,
+  eliminating ~16% allocation-time overhead and recovering full string-benchmark
+  performance while keeping O(1) interior pointer resolution.
+
 ## [1.3.1] - 2026-06-04
 
 ### Added
