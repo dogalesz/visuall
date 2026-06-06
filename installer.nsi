@@ -44,14 +44,14 @@ Section "Install"
   File /nonfatal "build\tools\visuall-lsp\visuall-lsp.exe"
   File "build\vslpkg.exe"
 
-  ; DLLs
+  ; DLLs (wildcards for CI — names vary across MSYS2 environments)
   File "build\libLLVM*.dll"
   File "build\libffi*.dll"
-  File "build\libgcc_s_seh-1.dll"
-  File "build\libstdc++-6.dll"
-  File "build\libwinpthread-1.dll"
-  File "build\libzstd.dll"
-  File "build\zlib1.dll"
+  File "build\libgcc_s_*.dll"
+  File "build\libstdc++*.dll"
+  File "build\libwinpthread*.dll"
+  File "build\libzstd*.dll"
+  File "build\zlib*.dll"
 
   ; Documentation & examples
   File "README.md"
@@ -117,11 +117,11 @@ Section "Uninstall"
   ; Remove DLLs
   Delete "$INSTDIR\libLLVM*.dll"
   Delete "$INSTDIR\libffi*.dll"
-  Delete "$INSTDIR\libgcc_s_seh-1.dll"
-  Delete "$INSTDIR\libstdc++-6.dll"
-  Delete "$INSTDIR\libwinpthread-1.dll"
-  Delete "$INSTDIR\libzstd.dll"
-  Delete "$INSTDIR\zlib1.dll"
+  Delete "$INSTDIR\libgcc_s_*.dll"
+  Delete "$INSTDIR\libstdc++*.dll"
+  Delete "$INSTDIR\libwinpthread*.dll"
+  Delete "$INSTDIR\libzstd*.dll"
+  Delete "$INSTDIR\zlib*.dll"
 
   ; Remove docs
   Delete "$INSTDIR\README.md"
