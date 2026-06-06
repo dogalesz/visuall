@@ -485,33 +485,6 @@ static GCHeader* chunk_table_lookup(void* ptr) {
     return NULL;
 }
 
-/* Rebuild the chunk table from the surviving heap list after sweep.
-   Frees all overflow arrays and re-inserts every live object. */
-static void chunk_table_rebuild(void) {
-    if (!chunk_table) return;
-
-    /* Free overflow arrays. */
-    for (uint32_t i = 0; i < (1u << chunk_table_log2); i++) {
-        ChunkInfo* info = chunk_table[i];
-        while (info) {
-            if (info->extra) {
-                free(info->extra);
-                info->extra     = NULL;
-                info->extra_cap = 0;
-            }
-            info->num_entries = 0;
-            info = info->next;
-        }
-    }
-
-    /* Re-insert from survivors. */
-    for (GCHeader* h = heap_head; h; h = h->next) {
-        void* user    = (char*)h + sizeof(GCHeader);
-        size_t payload = h->size - (uint32_t)sizeof(GCHeader);
-        chunk_table_add_range(user, payload, h);
-    }
-}
-
 /* ═══════════════════════════════════════════════════════════════════════════
  * Helpers
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -604,7 +577,6 @@ void __visuall_gc_init(void* sb) {
     num_global_roots = 0;
     memset(&gc_stats, 0, sizeof(gc_stats));
     ptr_map_init();
-    chunk_table_init();
     GC_UNLOCK();
 }
 
@@ -676,8 +648,6 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
 
     /* Insert into the pointer hash table for O(1) exact-match lookup. */
     ptr_map_insert(user, hdr);
-    /* Insert into the chunk table for O(1) interior-pointer lookup. */
-    chunk_table_add_range(user, size, hdr);
 
     /* Update heap address range for fast out-of-range rejection. */
     uintptr_t haddr = (uintptr_t)hdr;
@@ -739,8 +709,6 @@ void* __visuall_alloc_object(size_t payload, uint32_t field_count,
     }
 
     ptr_map_insert(user, hdr);
-    /* Insert full payload (including field_offsets tail) into chunk table. */
-    chunk_table_add_range(user, total_payload, hdr);
 
     uintptr_t haddr = (uintptr_t)hdr;
     if (haddr < heap_lo) heap_lo = haddr;
@@ -1106,8 +1074,8 @@ static void sweep(void) {
 
     /* Rebuild hash table from survivors (O(survivors) instead of O(dead) removes). */
     ptr_map_rebuild();
-    /* Rebuild chunk table from survivors. */
-    chunk_table_rebuild();
+    /* Discard chunk table — will be rebuilt lazily on next collection. */
+    chunk_table_free();
 
     /* Tighten heap bounds from survivors so the range guard stays effective. */
     if (heap_head) {
@@ -1135,6 +1103,17 @@ void __visuall_collect(void) {
     GC_LOCK();
     double t0 = 0;
     if (gc_stats_enabled) t0 = now_ns();
+
+    /* Build chunk table lazily — only needed during mark for interior
+       pointer resolution.  Freed after sweep, so allocations carry zero
+       chunk-table overhead. */
+    chunk_table_free();    /* safety no-op on first call (table is NULL) */
+    chunk_table_init();
+    for (GCHeader* h = heap_head; h; h = h->next) {
+        void* user    = (char*)h + sizeof(GCHeader);
+        size_t payload = h->size - (uint32_t)sizeof(GCHeader);
+        chunk_table_add_range(user, payload, h);
+    }
 
     mark_roots();
     sweep();
