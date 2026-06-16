@@ -47,6 +47,19 @@ Section "Install"
   ; DLLs — grab everything CMake copied (names vary across MSYS2 versions)
   File "build\*.dll"
 
+  ; Bundled linker — ld.lld (LLVM) so users don't need MinGW installed
+  File /nonfatal "build\ld.lld.exe"
+  File /nonfatal "build\lld.exe"
+
+  ; MinGW CRT startup objects + import libraries for the bundled linker
+  SetOutPath "$INSTDIR\mingw_libs"
+  File /nonfatal "build\mingw_libs\crt2.o"
+  File /nonfatal "build\mingw_libs\crtbegin.o"
+  File /nonfatal "build\mingw_libs\crtend.o"
+  File /nonfatal "build\mingw_libs\*.a"
+
+  SetOutPath "$INSTDIR"
+
   ; Documentation & examples
   File "README.md"
   File "LICENSE"
@@ -110,6 +123,17 @@ Section "Uninstall"
 
   ; Remove DLLs
   Delete "$INSTDIR\*.dll"
+
+  ; Remove bundled linker
+  Delete "$INSTDIR\ld.lld.exe"
+  Delete "$INSTDIR\lld.exe"
+
+  ; Remove bundled MinGW libraries
+  Delete "$INSTDIR\mingw_libs\crt2.o"
+  Delete "$INSTDIR\mingw_libs\crtbegin.o"
+  Delete "$INSTDIR\mingw_libs\crtend.o"
+  Delete "$INSTDIR\mingw_libs\*.a"
+  RMDir  "$INSTDIR\mingw_libs"
 
   ; Remove docs
   Delete "$INSTDIR\README.md"

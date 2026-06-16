@@ -137,6 +137,11 @@ endif()
 if(VISUALL_PERSONALITY_DEF)
     target_compile_definitions(visuallc PRIVATE ${VISUALL_PERSONALITY_DEF})
 endif()
+# Static-link MinGW runtimes so visuallc.exe has no DLL deps on end-user machines.
+# Users only need the bundled linker — no MSYS2/MinGW installation required.
+if(WIN32 AND NOT MSVC)
+    target_link_options(visuallc PRIVATE -static-libgcc -static-libstdc++ -static)
+endif()
 
 # ── vslpkg binary ────────────────────────────────────────────────────────
 add_executable(vslpkg
@@ -147,6 +152,9 @@ target_include_directories(vslpkg PRIVATE include tools/vslpkg)
 target_link_libraries(vslpkg PRIVATE visuall_frontend)
 if(UNIX)
     target_link_libraries(vslpkg PRIVATE pthread)
+endif()
+if(WIN32 AND NOT MSVC)
+    target_link_options(vslpkg PRIVATE -static-libgcc -static-libstdc++ -static)
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────
@@ -217,6 +225,70 @@ if(WIN32)
         file(COPY ${_runtime_dlls} DESTINATION "${CMAKE_BINARY_DIR}")
         message(STATUS "Copied MSYS2 runtime DLLs to ${CMAKE_BINARY_DIR}")
     endif()
+
+    # ── Bundle linker toolchain for end users ──────────────────────────────
+    # Ship ld.lld (LLVM's linker) + MinGW CRT objects so that users don't
+    # need to install MSYS2/MinGW just to compile .vsl files.  ld.lld in
+    # MinGW mode is a mature drop-in replacement for GNU ld on Windows.
+    #
+    # 1. ld.lld.exe from the LLVM installation
+    if(VISUALL_LLVM_BIN AND EXISTS "${VISUALL_LLVM_BIN}/ld.lld.exe")
+        file(COPY "${VISUALL_LLVM_BIN}/ld.lld.exe"
+             DESTINATION "${CMAKE_BINARY_DIR}")
+        message(STATUS "Copied ld.lld linker to build directory")
+    elseif(VISUALL_LLVM_BIN)
+        # Some LLVM builds place lld under a versioned name.
+        file(GLOB _lld_candidates "${VISUALL_LLVM_BIN}/ld.lld*.exe"
+                                  "${VISUALL_LLVM_BIN}/lld.exe")
+        if(_lld_candidates)
+            file(COPY ${_lld_candidates} DESTINATION "${CMAKE_BINARY_DIR}")
+            message(STATUS "Copied lld linker to build directory")
+        endif()
+    endif()
+
+    # 2. MinGW CRT startup objects + import libraries for lld to link against
+    if(VISUALL_MSYS2_BIN)
+        get_filename_component(_msys2_prefix "${VISUALL_MSYS2_BIN}" DIRECTORY)
+        # MSYS2 layout:  /mingw64/lib/  holds crt*.o and lib*.a
+        set(_mingw_lib "${_msys2_prefix}/lib")
+        # Also check the per-target subdir (e.g. x86_64-w64-mingw32/lib)
+        set(_mingw_target_lib "${_msys2_prefix}/x86_64-w64-mingw32/lib")
+
+        foreach(_libdir "${_mingw_lib}" "${_mingw_target_lib}")
+            if(EXISTS "${_libdir}/crt2.o")
+                set(MINGW_CRT_DIR "${_libdir}")
+                break()
+            endif()
+        endforeach()
+
+        if(MINGW_CRT_DIR)
+            file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/mingw_libs")
+            # CRT startup objects (must be linked in a specific order)
+            foreach(_crt crt2.o crtbegin.o crtend.o)
+                if(EXISTS "${MINGW_CRT_DIR}/${_crt}")
+                    file(COPY "${MINGW_CRT_DIR}/${_crt}"
+                         DESTINATION "${CMAKE_BINARY_DIR}/mingw_libs")
+                endif()
+            endforeach()
+            # System import libraries needed for a minimal Windows .exe
+            set(_sys_libs
+                libmingw32.a libmingwex.a libmoldname.a
+                libgcc.a libgcc_eh.a libgcc_s.a
+                libmsvcrt.a libkernel32.a libntdll.a
+                libadvapi32.a libshell32.a libuser32.a
+                libws2_32.a libm.a
+            )
+            foreach(_lib ${_sys_libs})
+                if(EXISTS "${MINGW_CRT_DIR}/${_lib}")
+                    file(COPY "${MINGW_CRT_DIR}/${_lib}"
+                         DESTINATION "${CMAKE_BINARY_DIR}/mingw_libs")
+                endif()
+            endforeach()
+            message(STATUS "Copied MinGW CRT + import libs to build/mingw_libs/")
+        else()
+            message(WARNING "MinGW CRT directory not found — bundled linker may not work")
+        endif()
+    endif()
 endif()
 
 add_executable(visuall_tests
@@ -255,6 +327,9 @@ endif()
 
 if(VISUALL_PERSONALITY_DEF)
     target_compile_definitions(visuall_tests PRIVATE ${VISUALL_PERSONALITY_DEF})
+endif()
+if(WIN32 AND NOT MSVC)
+    target_link_options(visuall_tests PRIVATE -static-libgcc -static-libstdc++ -static)
 endif()
 
 add_test(NAME visuall_tests COMMAND visuall_tests)

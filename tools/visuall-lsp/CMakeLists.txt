@@ -30,6 +30,9 @@ add_executable(visuall-lsp ${LSP_SOURCES})
 target_include_directories(visuall-lsp PRIVATE include)
 target_link_libraries(visuall-lsp PRIVATE visuall_frontend nlohmann_json::nlohmann_json)
 target_compile_features(visuall-lsp PRIVATE cxx_std_17)
+if(WIN32 AND NOT MSVC)
+    target_link_options(visuall-lsp PRIVATE -static-libgcc -static-libstdc++ -static)
+endif()
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 enable_testing()

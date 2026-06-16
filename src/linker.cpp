@@ -288,10 +288,52 @@ int Linker::linkToBinary(const std::string& objPath,
     // NOTE: Every concatenated string is stored in a named local variable.
     // Do NOT push temporary "-L" + libDir directly — StringRef is non-owning
     // and the temporary would dangle, causing garbage arguments or a crash.
+
+    // ── Resolve linker executable ──────────────────────────────────────────
     std::string linker = spec.linkerExe();
-    llvm::SmallVector<llvm::StringRef, 16> args;
+    bool usingBundledLld = false;
+    std::string mingwLibDir;   // only relevant when usingBundledLld
+
+    // On native Windows with the default linker (gcc), check whether a
+    // bundled ld.lld is present next to the compiler.  If so, use it instead
+    // so that end users don't need to install MSYS2 or MinGW.
+    if (spec.isNative() && linker == "gcc") {
+        std::string bundledLld = exeDir + "/ld.lld.exe";
+        if (llvm::sys::fs::exists(bundledLld)) {
+            std::string bundledMingw = exeDir + "/mingw_libs";
+            if (llvm::sys::fs::exists(bundledMingw + "/crt2.o")) {
+                linker = bundledLld;
+                mingwLibDir = bundledMingw;
+                usingBundledLld = true;
+            }
+        }
+    }
+
+    llvm::SmallVector<llvm::StringRef, 32> args;
     args.push_back(linker);
+
+    // ── ld.lld MinGW-mode arguments ────────────────────────────────────────
+    // CRT startup objects (order matters: crtbegin before user objects,
+    // crtend after), followed by the .o, then system libraries.
+    if (usingBundledLld) {
+        std::string mFlag = "-m";
+        args.push_back(mFlag);
+        std::string archFlag = "i386pep";   // x86_64 Windows PE/COFF
+        args.push_back(archFlag);
+
+        std::string crt2Path     = mingwLibDir + "/crt2.o";
+        std::string crtbeginPath = mingwLibDir + "/crtbegin.o";
+        args.push_back(crt2Path);
+        args.push_back(crtbeginPath);
+    }
+
     args.push_back(objPath);
+
+    if (usingBundledLld) {
+        std::string crtendPath = mingwLibDir + "/crtend.o";
+        args.push_back(crtendPath);
+    }
+
     args.push_back("-o");
     args.push_back(outPath);
 
@@ -303,12 +345,36 @@ int Linker::linkToBinary(const std::string& objPath,
     args.push_back(yyjsonFlag);
     args.push_back("-lyyjson");
 
-    // Platform-conditional: -lws2_32 only when targeting Windows
+    // ── System libraries ───────────────────────────────────────────────────
     llvm::Triple triple(spec.effectiveTriple());
+
+    if (usingBundledLld) {
+        // ld.lld needs explicit -L for the bundled MinGW import libs.
+        std::string mingwLFlag = "-L" + mingwLibDir;
+        args.push_back(mingwLFlag);
+
+        // Standard MinGW system library order for a working PE executable.
+        args.push_back("-lmingw32");
+        args.push_back("-lgcc");
+        args.push_back("-lgcc_eh");
+        args.push_back("-lmoldname");
+        args.push_back("-lmingwex");
+        args.push_back("-lmsvcrt");
+        args.push_back("-lkernel32");
+        args.push_back("-ladvapi32");
+        args.push_back("-lshell32");
+        args.push_back("-luser32");
+        args.push_back("-lkernel32");
+        args.push_back("-lntdll");
+        // ws2_32 (networking) — always linked on Windows
+    }
     if (triple.isOSWindows()) {
         args.push_back("-lws2_32");
-        // MinGW uses msvcrt.dll; GCC's implicit -lc maps to a nonexistent
-        // libc.a.  Adding -lmsvcrt provides the C runtime symbols.
+    }
+
+    // On the gcc path, MinGW needs -lmsvcrt (no libc.a); on the bundled-lld
+    // path this is already included in the system library list above.
+    if (triple.isOSWindows() && !usingBundledLld) {
         args.push_back("-lmsvcrt");
     }
     args.push_back("-lm");
