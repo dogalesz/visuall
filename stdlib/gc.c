@@ -163,13 +163,23 @@ static void ptr_map_init(void) {
     ptr_map_cap  = PTR_MAP_INIT_CAP;
     ptr_map_size = 0;
     ptr_map = (PtrMapEntry*)calloc(ptr_map_cap, sizeof(PtrMapEntry));
+    if (!ptr_map) {
+        fprintf(stderr, "GC: out of memory initializing pointer map\n");
+        exit(1);
+    }
 }
 
 static void ptr_map_grow(void) {
     size_t old_cap = ptr_map_cap;
     PtrMapEntry* old = ptr_map;
     ptr_map_cap *= 2;
-    ptr_map = (PtrMapEntry*)calloc(ptr_map_cap, sizeof(PtrMapEntry));
+    /* V12 fix: allocate into temporary first, then swap on success. */
+    PtrMapEntry* new_map = (PtrMapEntry*)calloc(ptr_map_cap, sizeof(PtrMapEntry));
+    if (!new_map) {
+        fprintf(stderr, "GC: out of memory growing pointer map\n");
+        exit(1);
+    }
+    ptr_map = new_map;
     ptr_map_size = 0;
     size_t mask = ptr_map_cap - 1;
     for (size_t i = 0; i < old_cap; i++) {
@@ -604,6 +614,12 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
         __visuall_collect();
     }
 
+    /* V08 fix: guard against size_t overflow in total computation. */
+    if (size > SIZE_MAX - sizeof(GCHeader)) {
+        fprintf(stderr, "GC: allocation size overflow (%zu bytes)\n", size);
+        GC_UNLOCK();
+        exit(1);
+    }
     size_t total = sizeof(GCHeader) + size;
 
     /* Round up to size-class boundary so free-list blocks are interchangeable. */
@@ -624,6 +640,14 @@ void* __visuall_alloc(size_t size, uint8_t type_tag) {
                 exit(1);
             }
         }
+    }
+
+    /* V08 fix: reject allocations that exceed the GC header's size field. */
+    if (total > UINT32_MAX) {
+        fprintf(stderr, "GC: allocation too large: %zu bytes (max %u)\n",
+                total, UINT32_MAX);
+        GC_UNLOCK();
+        exit(1);
     }
 
     hdr->type_tag   = type_tag;
@@ -671,7 +695,19 @@ void* __visuall_alloc_object(size_t payload, uint32_t field_count,
         __visuall_collect();
     }
 
+    /* V08 fix: guard against size_t overflow and >4GB truncation. */
+    if (total_payload > SIZE_MAX - sizeof(GCHeader)) {
+        fprintf(stderr, "GC: allocation size overflow (%zu payload)\n", total_payload);
+        GC_UNLOCK();
+        exit(1);
+    }
     size_t total = sizeof(GCHeader) + total_payload;
+    if (total > UINT32_MAX) {
+        fprintf(stderr, "GC: allocation too large: %zu bytes (max %u)\n",
+                total, UINT32_MAX);
+        GC_UNLOCK();
+        exit(1);
+    }
     GCHeader* hdr = (GCHeader*)malloc(total);
     if (!hdr) {
         __visuall_collect();
