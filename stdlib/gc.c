@@ -37,15 +37,42 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 static CRITICAL_SECTION gc_lock;
-#define GC_LOCK()   EnterCriticalSection(&gc_lock)
+static int gc_lock_initialized = 0;
+/* Lazy-init the GC lock — __visuall_alloc may be called before
+   __visuall_gc_init (e.g. from channel tests), and after
+   __visuall_gc_shutdown (which frees the heap but no longer
+   deletes the lock).  EnterCriticalSection on an uninitialised
+   CRITICAL_SECTION is UB on Windows and causes an exit-time
+   segfault (CI: MSYS2/MinGW). */
+static void gc_ensure_lock_init(void) {
+    if (!gc_lock_initialized) {
+        InitializeCriticalSection(&gc_lock);
+        gc_lock_initialized = 1;
+    }
+}
+#define GC_LOCK()   do { gc_ensure_lock_init(); EnterCriticalSection(&gc_lock); } while(0)
 #define GC_UNLOCK() LeaveCriticalSection(&gc_lock)
 #else
 #include <pthread.h>
 static pthread_mutex_t gc_lock;
-#define GC_LOCK()   pthread_mutex_lock(&gc_lock)
+static int gc_lock_initialized = 0;
+/* Recursive mutex: __visuall_collect() calls GC_LOCK() while the
+   caller (__visuall_alloc / __visuall_alloc_object) already holds
+   it.  PTHREAD_MUTEX_INITIALIZER gives a non-recursive mutex, so
+   we lazy-init with the RECURSIVE attribute instead. */
+static void gc_ensure_lock_init(void) {
+    if (!gc_lock_initialized) {
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&gc_lock, &attr);
+        pthread_mutexattr_destroy(&attr);
+        gc_lock_initialized = 1;
+    }
+}
+#define GC_LOCK()   do { gc_ensure_lock_init(); pthread_mutex_lock(&gc_lock); } while(0)
 #define GC_UNLOCK() pthread_mutex_unlock(&gc_lock)
 #endif
-static int gc_lock_initialized = 0;
 
 /* Global lock API */
 void __visuall_gc_lock(void) { GC_LOCK(); }
@@ -565,19 +592,7 @@ static GCHeader* find_gc_header(void* ptr) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 void __visuall_gc_init(void* sb) {
-    if (!gc_lock_initialized) {
-#ifdef _WIN32
-        InitializeCriticalSection(&gc_lock);
-#else
-        pthread_mutexattr_t attr;
-        pthread_mutexattr_init(&attr);
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-        pthread_mutex_init(&gc_lock, &attr);
-        pthread_mutexattr_destroy(&attr);
-#endif
-        gc_lock_initialized = 1;
-    }
-    GC_LOCK();
+    GC_LOCK();  /* gc_ensure_lock_init is called inside the macro */
     stack_bottom = sb;
     heap_head = NULL;
     heap_bytes = 0;
@@ -1220,13 +1235,10 @@ void __visuall_gc_shutdown(void) {
     }
     GC_UNLOCK();
 
-    /* Delete the lock if initialized. */
-    if (gc_lock_initialized) {
-#ifdef _WIN32
-        DeleteCriticalSection(&gc_lock);
-#else
-        pthread_mutex_destroy(&gc_lock);
-#endif
-        gc_lock_initialized = 0;
-    }
+    /* The lock is never deleted — it may be re-entered by
+       __visuall_alloc called after shutdown (e.g. between GC test
+       fixtures and channel tests in security_test.cpp).  The heap
+       and all subsidiary structures are reset above; future
+       allocations start a fresh heap list.  GC_LOCK() lazy-inits
+       on first use and never needs explicit teardown. */
 }
