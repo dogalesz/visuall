@@ -18,5 +18,8 @@ install_manifest.txt
 llms.txt
 DEEPSEEK.md
 
+# Bug bounty hunting
+bughunting/
+
 # IDE
 .vscode/
