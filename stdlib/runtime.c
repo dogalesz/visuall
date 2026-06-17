@@ -84,7 +84,17 @@ VisualList* __visuall_list_new(void) {
 void __visuall_list_push(VisualList* list, int64_t value) {
     if (!list) return;
     if (list->length >= list->capacity) {
+        /* V04 fix: guard against int64_t overflow on capacity doubling. */
+        if (list->capacity > INT64_MAX / 2) {
+            fprintf(stderr, "list capacity overflow\n");
+            exit(1);
+        }
         list->capacity *= 2;
+        /* Guard allocation size overflow. */
+        if ((size_t)list->capacity > SIZE_MAX / sizeof(int64_t)) {
+            fprintf(stderr, "list allocation size overflow\n");
+            exit(1);
+        }
         list->data = (int64_t*)realloc(list->data, sizeof(int64_t) * (size_t)list->capacity);
         if (!list->data) { fprintf(stderr, "out of memory\n"); exit(1); }
     }
@@ -249,6 +259,11 @@ static void dict_resize(VisualDict* d, int64_t new_cap) {
 void __visuall_dict_set(VisualDict* d, const char* key, int64_t value) {
     if (!d || !key) return;
     if ((double)(d->length + 1) > (double)d->capacity * DICT_LOAD_MAX) {
+        /* V04 fix: guard against int64_t overflow on capacity doubling. */
+        if (d->capacity > INT64_MAX / 2) {
+            fprintf(stderr, "dict capacity overflow\n");
+            exit(1);
+        }
         dict_resize(d, d->capacity * 2);
     }
     int64_t slot = dict_find_slot(d->entries, d->capacity, key);
@@ -911,6 +926,12 @@ int64_t __visuall_string_find(const char* s, const char* sub) {
 char* __visuall_string_repeat(const char* s, int64_t n) {
     if (!s || n <= 0) return vsl_strdup("");
     size_t len = strlen(s);
+    /* V05 fix: guard against integer overflow in len * n.
+       Must leave room for the null terminator (total + 1). */
+    if (len > 0 && (size_t)n > (SIZE_MAX - 1) / len) {
+        fprintf(stderr, "string repeat overflow\n");
+        exit(1);
+    }
     size_t total = len * (size_t)n;
     char* out = (char*)__visuall_alloc(total + 1, VSL_TAG_STRING);
     for (int64_t i = 0; i < n; i++)
@@ -1252,7 +1273,16 @@ void __visuall_set_add(VisualSet* s, int64_t val) {
     if (!s) return;
     if (set_find_idx(s, val) >= 0) return; /* already present */
     if (s->length >= s->capacity) {
+        /* V04 fix: guard against int64_t overflow on capacity doubling. */
+        if (s->capacity > INT64_MAX / 2) {
+            fprintf(stderr, "set capacity overflow\n");
+            exit(1);
+        }
         s->capacity *= 2;
+        if ((size_t)s->capacity > SIZE_MAX / sizeof(int64_t)) {
+            fprintf(stderr, "set allocation size overflow\n");
+            exit(1);
+        }
         s->data = (int64_t*)realloc(s->data, sizeof(int64_t) * (size_t)s->capacity);
         if (!s->data) { fprintf(stderr, "out of memory\n"); exit(1); }
     }
