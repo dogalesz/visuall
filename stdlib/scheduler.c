@@ -1,8 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * Visuall Scheduler — M:N goroutine runtime implementation
  *
- * v1: single-threaded cooperative scheduler with continuation-passing channels.
- * Multi-threaded work-stealing is deferred to v2.
+ * v1: multi-threaded cooperative scheduler with continuation-passing channels.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 #include "scheduler.h"
@@ -20,7 +19,7 @@
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Scheduler state (v1: single ready queue)
+ * Scheduler state
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 VisuallTask* ready_head = NULL;
@@ -30,11 +29,33 @@ static bool sched_running = true;
 
 #define WORKER_COUNT 2
 
+/* ── Scheduler mutex (V02 fix) ─────────────────────────────────────────── */
+#ifdef _WIN32
+/* SRWLOCK supports static initialization (unlike CRITICAL_SECTION),
+   so it's always safe to acquire even before __visuall_sched_init(). */
+static SRWLOCK sched_lock = SRWLOCK_INIT;
+#define SCHED_LOCK()   AcquireSRWLockExclusive(&sched_lock)
+#define SCHED_UNLOCK() ReleaseSRWLockExclusive(&sched_lock)
+#else
+static pthread_mutex_t sched_lock = PTHREAD_MUTEX_INITIALIZER;
+#define SCHED_LOCK()   pthread_mutex_lock(&sched_lock)
+#define SCHED_UNLOCK() pthread_mutex_unlock(&sched_lock)
+#endif
+
+/* ── Channel lock helpers (V03 fix) ────────────────────────────────────── */
+#ifdef _WIN32
+#define CHAN_LOCK(ch)   EnterCriticalSection((CRITICAL_SECTION*)(ch)->lock)
+#define CHAN_UNLOCK(ch) LeaveCriticalSection((CRITICAL_SECTION*)(ch)->lock)
+#else
+#define CHAN_LOCK(ch)   pthread_mutex_lock((pthread_mutex_t*)(ch)->lock)
+#define CHAN_UNLOCK(ch) pthread_mutex_unlock((pthread_mutex_t*)(ch)->lock)
+#endif
+
 static void sched_enqueue(VisuallTask* task);
 static VisuallTask* sched_dequeue(void);
 
-/* Enqueue a task at the tail of the ready queue. */
-static void sched_enqueue(VisuallTask* task) {
+/* Enqueue a task at the tail of the ready queue.  Caller must hold sched_lock. */
+static void sched_enqueue_locked(VisuallTask* task) {
     task->next = NULL;
     if (!ready_head) {
         ready_head = ready_tail = task;
@@ -44,12 +65,50 @@ static void sched_enqueue(VisuallTask* task) {
     }
 }
 
-/* Dequeue a task from the head of the ready queue.  Returns NULL if empty. */
-static VisuallTask* sched_dequeue(void) {
+/* Dequeue a task from the head of the ready queue.  Caller must hold sched_lock. */
+static VisuallTask* sched_dequeue_locked(void) {
     if (!ready_head) return NULL;
     VisuallTask* t = ready_head;
     ready_head = t->next;
     if (!ready_head) ready_tail = NULL;
+    t->next = NULL;
+    return t;
+}
+
+/* ── Public wrappers that take the lock ────────────────────────────────── */
+
+static void sched_enqueue(VisuallTask* task) {
+    SCHED_LOCK();
+    sched_enqueue_locked(task);
+    SCHED_UNLOCK();
+}
+
+static VisuallTask* sched_dequeue(void) {
+    SCHED_LOCK();
+    VisuallTask* t = sched_dequeue_locked();
+    SCHED_UNLOCK();
+    return t;
+}
+
+/* ── Channel helpers (caller must hold channel lock) ───────────────────── */
+
+/* Enqueue a task on a blocked queue. */
+static void blocked_enqueue(VisuallTask** head, VisuallTask* task) {
+    task->next = NULL;
+    if (!*head) {
+        *head = task;
+    } else {
+        VisuallTask* cur = *head;
+        while (cur->next) cur = cur->next;
+        cur->next = task;
+    }
+}
+
+/* Dequeue from a blocked queue. */
+static VisuallTask* blocked_dequeue(VisuallTask** head) {
+    if (!*head) return NULL;
+    VisuallTask* t = *head;
+    *head = t->next;
     t->next = NULL;
     return t;
 }
@@ -113,12 +172,14 @@ void __visuall_go_create(VisuallTask* task) {
     if (!task) return;
     if (!sched_initialised) __visuall_sched_init();
     task->state = 0;
+    task->has_recv = false;
+    task->recv_value = 0;
     task->next = NULL;
     sched_enqueue(task);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Channel implementation (continuation-passing, v1 cooperative)
+ * Channel implementation (V03/V09/V10 fixes applied)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 VisuallChannel* __visuall_chan_create(int64_t capacity) {
@@ -129,7 +190,8 @@ VisuallChannel* __visuall_chan_create(int64_t capacity) {
 
     if (capacity > 0) {
         ch->buffer = (int64_t*)malloc((size_t)(capacity * sizeof(int64_t)));
-        memset(ch->buffer, 0, (size_t)(capacity * sizeof(int64_t)));
+        if (ch->buffer)
+            memset(ch->buffer, 0, (size_t)(capacity * sizeof(int64_t)));
     }
     ch->capacity = capacity;
     ch->closed   = false;
@@ -138,46 +200,35 @@ VisuallChannel* __visuall_chan_create(int64_t capacity) {
 
 #ifdef _WIN32
     CRITICAL_SECTION* cs = (CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
-    InitializeCriticalSection(cs);
+    if (cs) InitializeCriticalSection(cs);
     ch->lock = cs;
 #else
     pthread_mutex_t* mtx = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
-    pthread_mutex_init(mtx, NULL);
+    if (mtx) pthread_mutex_init(mtx, NULL);
     ch->lock = mtx;
 #endif
     return ch;
 }
 
-/* Helper: enqueue a task on a blocked queue. */
-static void blocked_enqueue(VisuallTask** head, VisuallTask* task) {
-    task->next = NULL;
-    if (!*head) {
-        *head = task;
-    } else {
-        VisuallTask* cur = *head;
-        while (cur->next) cur = cur->next;
-        cur->next = task;
-    }
-}
-
-/* Helper: dequeue from a blocked queue. */
-static VisuallTask* blocked_dequeue(VisuallTask** head) {
-    if (!*head) return NULL;
-    VisuallTask* t = *head;
-    *head = t->next;
-    t->next = NULL;
-    return t;
-}
-
 void __visuall_chan_send(VisuallChannel* ch, int64_t value,
                           void* cont, void* cont_env) {
-    if (!ch || ch->closed) return;
+    if (!ch) return;
 
-    /* Try to pair with a waiting receiver. */
+    CHAN_LOCK(ch);
+
+    if (ch->closed) {
+        CHAN_UNLOCK(ch);
+        return;
+    }
+
+    /* Try to pair with a waiting receiver — direct handoff (V09 fix). */
     VisuallTask* receiver = blocked_dequeue(&ch->blocked_receivers_head);
     if (receiver) {
-        /* Direct handoff: store value in receiver's env slot and wake it. */
-        /* For v1: resume the receiver immediately (single-threaded). */
+        /* Direct handoff: store value in receiver and wake it. */
+        receiver->recv_value = value;
+        receiver->has_recv   = true;
+        CHAN_UNLOCK(ch);
+        /* Enqueue OUTSIDE channel lock to avoid deadlock with sched_lock. */
         sched_enqueue(receiver);
         return;
     }
@@ -188,42 +239,67 @@ void __visuall_chan_send(VisuallChannel* ch, int64_t value,
             ch->buffer[ch->tail] = value;
             ch->tail = (ch->tail + 1) % ch->capacity;
             ch->count++;
+            CHAN_UNLOCK(ch);
             return;
         }
     }
 
-    /* Block: register continuation and yield (v1: just enqueue self). */
+    /* Block: register continuation. */
     if (cont) {
         VisuallTask* self = (VisuallTask*)cont_env;
         if (self) {
             blocked_enqueue(&ch->blocked_senders_head, self);
         }
     }
+
+    CHAN_UNLOCK(ch);
 }
 
 int64_t __visuall_chan_recv(VisuallChannel* ch,
                              void* cont, void* cont_env) {
     if (!ch) return 0;
 
+    CHAN_LOCK(ch);
+
+    /* Check for value from direct handoff (V09 fix). */
+    /* The caller's task may have been woken by a sender that stored a value. */
+    if (cont_env) {
+        VisuallTask* self = (VisuallTask*)cont_env;
+        if (self && self->has_recv) {
+            int64_t val = self->recv_value;
+            self->has_recv = false;
+            self->recv_value = 0;
+            CHAN_UNLOCK(ch);
+            return val;
+        }
+    }
+
     /* Try to pair with a waiting sender. */
     VisuallTask* sender = blocked_dequeue(&ch->blocked_senders_head);
     if (sender) {
-        /* Wake the sender. */
-        sched_enqueue(sender);
         if (ch->count > 0) {
-            /* Buffered: read from buffer */
+            /* Buffered: read from buffer, wake sender so it can enqueue more. */
             int64_t val = ch->buffer[ch->head];
             ch->head = (ch->head + 1) % ch->capacity;
             ch->count--;
+            CHAN_UNLOCK(ch);
+            sched_enqueue(sender);
             return val;
         }
-        return 0;
+        /* Unbuffered: no value available yet, wake sender to retry.
+           The sender will retry chan_send and find this receiver gone,
+           and a new receiver may pick up the value. */
+        CHAN_UNLOCK(ch);
+        sched_enqueue(sender);
+        /* Fall through to check buffer in case sender wrote meanwhile. */
+        CHAN_LOCK(ch);
     }
 
     if (ch->count > 0) {
         int64_t val = ch->buffer[ch->head];
         ch->head = (ch->head + 1) % ch->capacity;
         ch->count--;
+        CHAN_UNLOCK(ch);
         return val;
     }
 
@@ -232,13 +308,25 @@ int64_t __visuall_chan_recv(VisuallChannel* ch,
         VisuallTask* self = (VisuallTask*)cont_env;
         blocked_enqueue(&ch->blocked_receivers_head, self);
     }
+
+    CHAN_UNLOCK(ch);
     return 0;
 }
 
 void __visuall_chan_close(VisuallChannel* ch) {
     if (!ch) return;
+
+    CHAN_LOCK(ch);
     ch->closed = true;
-    /* Wake all blocked tasks — they will see closed flag on resume. */
-    while (blocked_dequeue(&ch->blocked_receivers_head)) {}
-    while (blocked_dequeue(&ch->blocked_senders_head)) {}
+
+    /* Wake all blocked tasks — re-enqueue so they can observe closed (V10 fix). */
+    VisuallTask* t;
+    while ((t = blocked_dequeue(&ch->blocked_receivers_head))) {
+        sched_enqueue(t);
+    }
+    while ((t = blocked_dequeue(&ch->blocked_senders_head))) {
+        sched_enqueue(t);
+    }
+
+    CHAN_UNLOCK(ch);
 }

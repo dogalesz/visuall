@@ -18,10 +18,12 @@ extern "C" {
 
 /* ── Task descriptor (GC-managed, VSL_TAG_TASK) ───────────────────────── */
 typedef struct VisuallTask {
-    void*             fn_ptr;  /* goroutine entry / resume function        */
-    void*             env;     /* environment (closure + saved variables)  */
-    int64_t           state;   /* state-machine position (0 = start)       */
-    struct VisuallTask* next;  /* intrusive linked-list for scheduler queues */
+    void*             fn_ptr;       /* goroutine entry / resume function        */
+    void*             env;          /* environment (closure + saved variables)  */
+    int64_t           state;        /* state-machine position (0 = start)       */
+    int64_t           recv_value;   /* value delivered by direct channel handoff */
+    bool              has_recv;     /* true when recv_value is valid             */
+    struct VisuallTask* next;       /* intrusive linked-list for scheduler queues */
 } VisuallTask;
 
 /* ── Channel (GC-managed, VSL_TAG_CHANNEL) ────────────────────────────── */
