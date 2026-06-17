@@ -40,8 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error instead of having their size silently truncated in the header.
 - GC: `calloc` return value checked in `ptr_map` init/grow/rebuild to prevent
   null-pointer dereference under memory pressure.
-- CI: removed blanket `-static` flag from the test binary that caused a
-  duplicate-C++-runtime SIGSEGV during Manifest and Escape tests.
+- GC: lazy-init the GC lock so `__visuall_alloc` is safe to call after
+  `__visuall_gc_shutdown`.  Previously the lock was deleted during shutdown but
+  re-entered by later allocations (e.g. between GC test fixtures and channel
+  tests), corrupting internal CRITICAL_SECTION state and causing an exit-time
+  segfault on Windows.
 
 ### Changed
 - Windows install guide updated to reflect self-contained toolchain — the
