@@ -6,6 +6,7 @@ build/
 *.a
 *.exe
 *.out
+*.nsi
 
 # CMake generated files
 CMakeCache.txt
@@ -23,3 +24,4 @@ bughunting/
 
 # IDE
 .vscode/
+
