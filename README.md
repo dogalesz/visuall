@@ -68,9 +68,10 @@ Go to the [Releases page](../../releases) and grab the asset for your platform.
 
 Download `visuallc-v*-installer.exe` and run it. The installer:
 
-- Extracts the compiler, LSP server, package manager, stdlib, and all DLLs to `C:\Program Files\visuall\`
+- Extracts the compiler, LSP server, package manager, stdlib, bundled linker (ld.lld), MinGW CRT libraries, and all DLLs to `C:\Program Files\visuall\`
 - Adds the install directory to your system **PATH** automatically
 - Registers in Add/Remove Programs for clean uninstall
+- **No MinGW or MSYS2 installation required** — the bundled LLVM linker handles compilation end-to-end
 
 ```powershell
 # After install — works from any terminal
@@ -87,21 +88,15 @@ Prefer to manage things yourself? Download `visuallc-v*-windows-x86_64.zip` and 
 | `visuallc.exe` | The Visuall compiler |
 | `visuall-lsp.exe` | LSP language server (editor integration) |
 | `vslpkg.exe` | Package manager |
+| `ld.lld.exe` | Bundled LLVM linker (no MinGW needed) |
+| `mingw_libs/` | MinGW CRT startup objects and import libraries |
 | `stdlib/` | Standard library `.vsl` modules (math, string, io, sys, collections) |
 | `hello.vsl` | Example program |
 | `README.md` | This documentation |
 
 Then add the folder to your system **PATH** manually.
 
-**Install a C linker (MinGW)**
-
-`visuallc` emits object files and calls `gcc` to link the final binary. You need **MinGW-W64**:
-
-1. Download [WinLibs MinGW-W64](https://winlibs.com/) (UCRT or MSVCRT build, x86-64, POSIX threads)
-2. Extract it (e.g. `C:\mingw64\`)
-3. Add `C:\mingw64\bin` to your system **PATH**
-
-Verify: open PowerShell and run `gcc --version`.
+**No MinGW installation required.** The zip includes `ld.lld` (LLVM's linker) and the necessary MinGW CRT objects and system import libraries. `visuallc` auto-detects the bundled linker next to itself and uses it to produce the final `.exe` — no separate GCC or MSYS2 installation needed.
 
 **Use the compiler**
 
