@@ -329,22 +329,18 @@ endif()
 if(VISUALL_PERSONALITY_DEF)
     target_compile_definitions(visuall_tests PRIVATE ${VISUALL_PERSONALITY_DEF})
 endif()
-# The blanket -static flag is deliberately NOT applied to visuall_tests.
-# The test binary links LLVM via ${LLVM_LIBS} which may resolve differently
-# than the explicit .a paths used by the redistributable binaries.  -static
-# forces the linker to pick up static versions of every library, and when
-# those don't exist for LLVM on this platform it falls back to DLL import
-# libs — creating two copies of the C++ runtime in the process (one static
-# from -static-libstdc++, one via the LLVM DLLs).  The duplicate runtimes
-# corrupt vtables, exception tables, and heap state, producing a reliable
-# SIGSEGV during the Manifest/Escape tests in CI.
+# visuall_tests deliberately has NO static-linking flags.
+# The test binary links LLVM via ${LLVM_LIBS} which may resolve to DLL
+# import libraries (libLLVM*.dll.a) rather than static archives.  Any
+# combination of -static, -static-libgcc, or -static-libstdc++ that
+# creates a split between static and dynamic C++ runtimes in one process
+# produces duplicate vtables, exception tables, and heap state — causing
+# a reliable SIGSEGV during the std::variant / std::get calls in the
+# Manifest tests (toml11 dependency parsing).
 #
-# -static-libgcc and -static-libstdc++ alone are fine — they only affect
-# the GCC/C++ support libraries, which are always available as static .a
-# files in MSYS2.
-if(WIN32 AND NOT MSVC)
-    target_link_options(visuall_tests PRIVATE -static-libgcc -static-libstdc++)
-endif()
+# The redistributable binaries (visuallc, vslpkg, visuall-lsp) are
+# unaffected: they link LLVM via explicit .a static paths and are
+# fully self-contained with -static-libgcc -static-libstdc++ -static.
 add_test(NAME visuall_tests COMMAND visuall_tests)
 
 # ── Copy stdlib .vsl files to build directory ──────────────────────────────
