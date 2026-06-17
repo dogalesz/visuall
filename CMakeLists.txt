@@ -307,6 +307,7 @@ add_executable(visuall_tests
     tests/class_analyzer_test.cpp
     tests/diagnostic_test.cpp
     tests/escape_test.cpp
+    tests/security_test.cpp
     src/codegen.cpp
     src/builtins.cpp
     src/module_loader.cpp
