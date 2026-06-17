@@ -5,6 +5,53 @@ All notable changes to the Visuall language are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-06-17
+
+### Added
+- Self-contained Windows toolchain: the installer and zip archive now include
+  `ld.lld` (LLVM linker) and MinGW CRT startup objects plus system import
+  libraries in a `mingw_libs/` directory.  `visuallc` auto-detects the bundled
+  linker next to itself at runtime — end users need no MSYS2 or MinGW
+  installation to compile `.vsl` programs.
+- Regression test suite (`tests/security_test.cpp`) for runtime security and
+  correctness fixes.
+
+### Fixed
+- Shell injection in package manager: `vslpkg` now uses platform-native process
+  execution (CreateProcess / fork+exec) with argument arrays instead of
+  `popen()` with shell string interpolation.  Git URLs and tags from `vsl.toml`
+  can no longer inject shell commands.
+- Data races in goroutine scheduler: the ready queue is now protected by a
+  mutex (SRWLOCK on Windows, pthread_mutex_t on POSIX).  Per-channel mutexes
+  (already allocated) are now acquired in `chan_send`/`chan_recv`/`chan_close`,
+  fixing races on the ring buffer and blocked-task queues.
+- Channel direct-handoff: when a sender pairs with a waiting receiver, the
+  value is now correctly delivered via a `recv_value` field — previously the
+  receiver woke up with a stale or zero value.
+- Channel close: blocked senders and receivers are now re-enqueued onto the
+  ready queue so they can observe the closed flag and clean up, instead of
+  being silently discarded (goroutine leak).
+- Integer overflow guards in runtime collections (`list_push`, `dict_set`,
+  `set_add`) — capacity doubling now checks against `INT64_MAX / 2`.
+- Integer overflow guard in `string_repeat` — `len * n` multiplication now
+  checks against `(SIZE_MAX - 1) / len` before the multiply, preventing
+  undersized allocation followed by heap buffer overflow.
+- GC: allocations exceeding `UINT32_MAX` bytes are now rejected with a clear
+  error instead of having their size silently truncated in the header.
+- GC: `calloc` return value checked in `ptr_map` init/grow/rebuild to prevent
+  null-pointer dereference under memory pressure.
+- CI: removed blanket `-static` flag from the test binary that caused a
+  duplicate-C++-runtime SIGSEGV during Manifest and Escape tests.
+
+### Changed
+- Windows install guide updated to reflect self-contained toolchain — the
+  "Install a C linker (MinGW)" section has been removed.
+- CONTRIBUTING.md updated: fixed a filename typo, added LLVM to Windows build
+  dependencies, and clarified code style for C++ vs `.vsl` indentation.
+- Stop tracking `.vscode/` in git (was already in `.gitignore` but remained
+  indexed).
+- Add `DEEPSEEK.md` and `bughunting/` to `.gitignore`.
+
 ## [1.3.2] - 2026-06-06
 
 ### Changed

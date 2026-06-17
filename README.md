@@ -42,9 +42,18 @@ Benchmarked against equivalent C++ compiled with `g++ -O2` and Python 3.14 (best
 
 Visuall is within **1.1–2.8x** of C++ on integer compute and loops, and **1.4x** on deeply recursive code (Ackermann). The full benchmark suite runs **~1.9x** slower than C++ overall — 20–50x faster than Python on numeric workloads. The escape analysis pass avoids GC heap allocation for non-escaping list, dict, tuple, and closure objects, eliminating GC overhead on allocation-heavy paths.
 
-Recent compiler optimizations in v1.3.2:
-- **Generator lowering** — generator state-machine save/restore now emits direct LLVM `GetElementPtr` field access instead of C runtime function calls, letting the O2 optimizer inline and constant-fold across yield points
-- **GC interior pointer resolution** — replaced the O(N) linear heap-list walk with an O(1) chunk-indexed hash table (4 KB chunks) that is built lazily at collection start and freed after sweep, so allocations carry zero bookkeeping overhead. Deep-stack GC pause times down **86–133×**, memory overhead ~2.5% of peak heap
+Recent compiler and toolchain improvements:
+- **Self-contained Windows toolchain** — `visuallc` ships with `ld.lld` and
+  MinGW CRT objects bundled in the installer and zip archive.  End users
+  need no MSYS2 or MinGW installation to compile `.vsl` programs.
+- **Generator lowering** — generator state-machine save/restore now emits
+  direct LLVM `GetElementPtr` field access instead of C runtime function calls,
+  letting the O2 optimizer inline and constant-fold across yield points
+- **GC interior pointer resolution** — replaced the O(N) linear heap-list walk
+  with an O(1) chunk-indexed hash table (4 KB chunks) built lazily at
+  collection start and freed after sweep, so allocations carry zero bookkeeping
+  overhead. Deep-stack GC pause times down **86–133×**, memory overhead ~2.5%
+  of peak heap
 
 ### Micro-benchmarks
 

@@ -8,7 +8,7 @@
 ; ═══════════════════════════════════════════════════════════════════════════════
 
 !define PRODUCT_NAME    "Visuall"
-!define PRODUCT_VERSION "1.3.2"
+!define PRODUCT_VERSION "1.3.3"
 !define PRODUCT_PUB     "Visuall"
 !define OUTFILE         "visuallc-v${PRODUCT_VERSION}-windows-x86_64-installer.exe"
 

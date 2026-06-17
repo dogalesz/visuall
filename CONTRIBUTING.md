@@ -36,7 +36,7 @@ cmake --build build --parallel
 
 ```bash
 # Install dependencies
-pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-gcc
+pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-gcc mingw-w64-x86_64-llvm
 
 # Build
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -104,8 +104,8 @@ Important: Always include a clear description of what changed and why in your co
 
 ## Code Style
 
-- **C++17** standard, so no C++20 features
-- **4-space indentation** (no tabs)
+- **C++17** standard (no C++20 features).  C++ source uses **4-space indentation**;
+  `.vsl` files use tabs (as enforced by the lexer's indentation normalizer).
 - **LF line endings**, UTF-8 encoding
 - **Warning flags**: `/W4` on MSVC, `-Wall -Wextra -Wpedantic` on GCC/Clang
 - Include order: own header first, then standard library, then project headers
@@ -132,7 +132,7 @@ The core compilation pipeline is: **Lexer → Parser → Capture Analyzer → Cl
 
 Key architectural notes:
 - `include/ast.h` - The AST node hierarchy. Every expression and statement type is defined here.
-- `include/ast_visi0tor.h` - The visitor interface. Codegen and type checking both use this pattern.
+- `include/ast_visitor.h` - The visitor interface. Codegen and type checking both use this pattern.
 - `include/diagnostic.h` - All compiler errors/warnings use clang-style source range formatting.
 - `src/main.cpp` - CLI entry point. Loads `vsl.lock`, registers package aliases, orchestrates compilation.
 - The type checker preserves scope history for LSP queries (symbol table uses a "Historical Registry Pattern").
