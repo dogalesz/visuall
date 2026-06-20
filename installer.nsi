@@ -51,6 +51,13 @@ Section "Install"
   File /nonfatal "build\ld.lld.exe"
   File /nonfatal "build\lld.exe"
 
+  ; Runtime library — required by the linker for native compilation
+  File "build\libvisuall_runtime.a"
+  SetOutPath "$INSTDIR\_deps\yyjson-build"
+  File "build\_deps\yyjson-build\libyyjson.a"
+
+  SetOutPath "$INSTDIR"
+
   ; MinGW CRT startup objects + import libraries for the bundled linker
   SetOutPath "$INSTDIR\mingw_libs"
   File /nonfatal "build\mingw_libs\crt2.o"
@@ -127,6 +134,12 @@ Section "Uninstall"
   ; Remove bundled linker
   Delete "$INSTDIR\ld.lld.exe"
   Delete "$INSTDIR\lld.exe"
+
+  ; Remove runtime library
+  Delete "$INSTDIR\libvisuall_runtime.a"
+  Delete "$INSTDIR\_deps\yyjson-build\libyyjson.a"
+  RMDir  "$INSTDIR\_deps\yyjson-build"
+  RMDir  "$INSTDIR\_deps"
 
   ; Remove bundled MinGW libraries
   Delete "$INSTDIR\mingw_libs\crt2.o"
