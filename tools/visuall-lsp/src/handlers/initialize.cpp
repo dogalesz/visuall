@@ -11,7 +11,7 @@ json LspServer::handleInitialize(const json& /*params*/) {
         {"capabilities", buildServerCapabilities()},
         {"serverInfo", {
             {"name",    "visuall-lsp"},
-            {"version", "1.3.0"}
+            {"version", "1.3.4"}
         }}
     };
 

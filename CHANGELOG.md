@@ -5,6 +5,19 @@ All notable changes to the Visuall language are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [1.3.4] - 2026-06-20
+
+### Fixed
+- Include runtime lib and yyjson in Windows installer (NSIS packaging fix
+  ensuring the installer delivers all required runtime components).
+- Remove `-static-libgcc -static-libstdc++` from `visuall_tests` link flags to
+  prevent CI segfault (follow-up to the same fix applied to `visuallc`).
+
+### Changed
+- LSP server version string updated from `1.3.0` to `1.3.4` to match the
+  compiler version.
+
 ## [1.3.3] - 2026-06-17
 
 ### Added
