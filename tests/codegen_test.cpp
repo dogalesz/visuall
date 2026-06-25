@@ -19,6 +19,8 @@
 // 18. collections Stack/Queue/Set accept non-int values (str, pointer)
 // 19. match statement: int/str/bool cases and wildcard lowered to if/else chain
 // 20. magic methods: __str__, __len__, __contains__, __iter__/__next__ dispatch
+// 30. Module-level variable read inside a function (cross-function access)
+// 31. Module-level variable written inside a function (cross-function access)
 // ════════════════════════════════════════════════════════════════════════════
 
 #include "lexer.h"
@@ -858,6 +860,68 @@ static void test_concurrency() {
     }
 }
 
+// ── 30. Cross-function variable read: module-level var read inside function ──
+static void test_crossFunctionRead() {
+    // Bug #2: assigning a module-level variable and reading it from inside
+    // a user-defined function used to crash the LLVM verifier with
+    // "Referring to an instruction in another function!"
+    std::string src =
+        "x = 42\n"
+        "define getX() -> int:\n"
+        "\treturn x\n"
+        "y = getX()\n";
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "30a. cross-function read generates IR without crash");
+    // The GlobalVariable promotion should create a global for x
+    expect(ir.find("@x") != std::string::npos ||
+           ir.find("@module_var_x") != std::string::npos ||
+           ir.find("global") != std::string::npos,
+           "30b. module-level variable promoted to GlobalVariable");
+    // Should be able to call getX() from module level
+    expect(ir.find("call") != std::string::npos &&
+           ir.find("getX") != std::string::npos,
+           "30c. getX() is called at module level");
+}
+
+// ── 31. Cross-function variable write: module-level var written inside function
+static void test_crossFunctionWrite() {
+    // Assigning to a module-level variable from inside a function
+    // also used to crash the LLVM verifier.
+    std::string src =
+        "counter = 0\n"
+        "define increment() -> void:\n"
+        "\tcounter = counter + 1\n"
+        "increment()\n";
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "31a. cross-function write generates IR without crash");
+    // The function increment should be defined
+    expect(ir.find("increment") != std::string::npos,
+           "31b. increment function defined");
+    // increment() should be called
+    expect(ir.find("call") != std::string::npos,
+           "31c. increment() is called");
+}
+
+// ── 32. Multiple functions accessing same module-level variable ──────────────
+static void test_crossFunctionMultipleAccess() {
+    // Multiple functions reading and writing the same module variable.
+    std::string src =
+        "total = 0\n"
+        "define add(n: int) -> void:\n"
+        "\ttotal = total + n\n"
+        "define get_total() -> int:\n"
+        "\treturn total\n"
+        "add(5)\n"
+        "add(3)\n"
+        "result = get_total()\n";
+    std::string ir = generateIR(src);
+    expect(!ir.empty(), "32a. multiple cross-function access generates IR");
+    expect(ir.find("add") != std::string::npos,
+           "32b. add function defined");
+    expect(ir.find("get_total") != std::string::npos,
+           "32c. get_total function defined");
+}
+
 int runCodegenTests() {
     failures = 0;
 
@@ -891,7 +955,10 @@ int runCodegenTests() {
     test_externFFI();
     test_externLibNameValidation(); // 29 (VSL-008)
     test_concurrency();
+    test_crossFunctionRead();
+    test_crossFunctionWrite();
+    test_crossFunctionMultipleAccess();
 
-    std::cout << "  " << (132 - failures) << "/132 codegen tests passed.\n";
+    std::cout << "  " << (141 - failures) << "/141 codegen tests passed.\n";
     return failures;
 }

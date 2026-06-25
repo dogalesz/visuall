@@ -22,6 +22,19 @@ DEEPSEEK.md
 # Bug bounty hunting
 bughunting/
 
+# Fuzzing artifacts (crashes, findings, corpus mutations)
+tests/fuzzing/artifacts/
+tests/fuzzing/findings/
+
+# Python cache
+__pycache__/
+
+# Release archives (too large for git)
+*.zip
+
+# Temp files
+**/AppData/**
+
 # IDE
 .vscode/
 

@@ -167,6 +167,66 @@ static void test_useBeforeDeclaration() {
            "10b. Error names the undeclared variable");
 }
 
+// ── 11. == / != type validation: reject incompatible types ──────────────────
+static void test_equalityIncompatibleTypes() {
+    // int vs str comparison should be rejected
+    std::string src =
+        "x = 42\n"
+        "y = x == \"hello\"\n";
+    std::string err = typecheck(src);
+    expect(!err.empty(), "11a. int == str comparison rejected");
+    expect(err.find("Cannot compare") != std::string::npos,
+           "11b. Error says Cannot compare");
+
+    // int vs str with != should also be rejected
+    std::string src2 =
+        "x = 42\n"
+        "y = x != \"world\"\n";
+    std::string err2 = typecheck(src2);
+    expect(!err2.empty(), "11c. int != str comparison rejected");
+
+    // int vs bool should be rejected
+    std::string src3 =
+        "x = 42\n"
+        "y = x == true\n";
+    std::string err3 = typecheck(src3);
+    expect(!err3.empty(), "11d. int == bool comparison rejected");
+}
+
+// ── 12. == / != valid comparisons pass ──────────────────────────────────────
+static void test_equalityValidComparisons() {
+    // Same type: int vs int
+    std::string src1 = "x = 42\ny = x == 10\n";
+    expect(typecheck(src1).empty(), "12a. int == int passes");
+
+    // Same type: str vs str
+    std::string src2 = "a = \"hi\"\nb = a == \"hello\"\n";
+    expect(typecheck(src2).empty(), "12b. str == str passes");
+
+    // Same type: bool vs bool
+    std::string src3 = "a = true\nb = a == false\n";
+    expect(typecheck(src3).empty(), "12c. bool == bool passes");
+
+    // Numeric cross-type: int vs float
+    std::string src4 = "x = 42\ny = x == 3.14\n";
+    expect(typecheck(src4).empty(), "12d. int == float passes (numeric)");
+
+    // Numeric cross-type: float vs int with !=
+    std::string src5 = "x = 2.5\ny = x != 10\n";
+    expect(typecheck(src5).empty(), "12e. float != int passes (numeric)");
+
+    // null comparable with anything
+    std::string src6 = "x = 42\ny = x == null\n";
+    expect(typecheck(src6).empty(), "12f. int == null passes");
+
+    std::string src7 = "x = \"hi\"\ny = x != null\n";
+    expect(typecheck(src7).empty(), "12g. str != null passes");
+
+    // Same-type lists
+    std::string src8 = "a = [1, 2]\nb = a == [3, 4]\n";
+    expect(typecheck(src8).empty(), "12h. list == list passes");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Test runner
 // ════════════════════════════════════════════════════════════════════════════
@@ -184,7 +244,9 @@ int runTypeCheckerTests() {
     test_lambdaTypeInference();
     test_nestedScopeShadowing();
     test_useBeforeDeclaration();
+    test_equalityIncompatibleTypes();
+    test_equalityValidComparisons();
 
-    std::cout << "  " << (10 - failures) << "/10 typechecker tests passed.\n";
+    std::cout << "  " << (23 - failures) << "/23 typechecker tests passed.\n";
     return failures;
 }

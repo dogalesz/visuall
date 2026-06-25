@@ -75,6 +75,7 @@ set(VISUALL_FRONTEND_SOURCES
     src/vsl_manifest.cpp
     src/vsl_paths.cpp
     src/vsl_resolver.cpp
+    src/visuall_compile.cpp
 )
 add_library(visuall_frontend STATIC ${VISUALL_FRONTEND_SOURCES})
 target_include_directories(visuall_frontend PUBLIC include)
@@ -412,6 +413,84 @@ add_test(
             -o "${CMAKE_BINARY_DIR}/tests/concurrency/basic_out"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Fuzzing targets
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── libFuzzer (requires Clang) ────────────────────────────────────────────
+option(VISUALL_BUILD_FUZZER "Build libFuzzer-based fuzz targets (requires Clang)" OFF)
+
+if(VISUALL_BUILD_FUZZER)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(STATUS "Fuzzing: Clang detected, enabling libFuzzer targets")
+
+        # Shallow fuzzer: lexer + parser only, no LLVM dependency.
+        # Very fast — thousands of iterations/second.
+        add_executable(visuall-fuzzer-frontend
+            tests/fuzzing/compiler_fuzzer.cpp
+        )
+        target_include_directories(visuall-fuzzer-frontend PRIVATE include)
+        target_link_libraries(visuall-fuzzer-frontend PRIVATE visuall_frontend)
+        target_compile_options(visuall-fuzzer-frontend PRIVATE
+            -fsanitize=fuzzer,address,undefined
+            -g -O1
+        )
+        target_link_options(visuall-fuzzer-frontend PRIVATE
+            -fsanitize=fuzzer,address,undefined
+        )
+
+        # Deep fuzzer: full frontend pipeline (through typechecker).
+        # Uses compileFrontend() — still no LLVM dependency.
+        # Slower but catches typechecker and analysis bugs.
+        add_executable(visuall-fuzzer-full
+            tests/fuzzing/compiler_fuzzer_full.cpp
+        )
+        target_include_directories(visuall-fuzzer-full PRIVATE include)
+        target_link_libraries(visuall-fuzzer-full PRIVATE visuall_frontend)
+        target_compile_options(visuall-fuzzer-full PRIVATE
+            -fsanitize=fuzzer,address,undefined
+            -g -O1
+        )
+        target_link_options(visuall-fuzzer-full PRIVATE
+            -fsanitize=fuzzer,address,undefined
+        )
+
+        # Copy seed corpus to build directory for convenient fuzzer invocation.
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tests/fuzzing/corpus")
+        file(GLOB FUZZ_CORPUS_FILES "${CMAKE_SOURCE_DIR}/tests/fuzzing/corpus/*")
+        foreach(f ${FUZZ_CORPUS_FILES})
+            get_filename_component(fname ${f} NAME)
+            configure_file(${f} "${CMAKE_BINARY_DIR}/tests/fuzzing/corpus/${fname}" COPYONLY)
+        endforeach()
+
+        message(STATUS "  visuall-fuzzer-frontend — lexer + parser (fast)")
+        message(STATUS "  visuall-fuzzer-full      — full frontend pipeline")
+        message(STATUS "  Run: ./visuall-fuzzer-frontend -max_total_time=60 build/tests/fuzzing/corpus/")
+    else()
+        message(STATUS "Fuzzing: VISUALL_BUILD_FUZZER=ON requires Clang "
+                       "(detected ${CMAKE_CXX_COMPILER_ID}). "
+                       "Install clang-17 and re-configure with "
+                       "-DCMAKE_C_COMPILER=clang-17 -DCMAKE_CXX_COMPILER=clang++-17")
+    endif()
+endif()
+
+# ── AFL++ (works with GCC or Clang) ───────────────────────────────────────
+option(VISUALL_BUILD_AFL "Build AFL++-instrumented fuzz targets" OFF)
+
+if(VISUALL_BUILD_AFL)
+    message(STATUS "AFL++: Building instrumented fuzzer target")
+    message(STATUS "  Ensure compiler is afl-clang-fast++ or afl-g++")
+
+    # AFL++ injects its own instrumentation — no -fsanitize=fuzzer needed.
+    add_executable(visuall-fuzzer-afl
+        tests/fuzzing/compiler_fuzzer_afl.cpp
+    )
+    target_include_directories(visuall-fuzzer-afl PRIVATE include)
+    target_link_libraries(visuall-fuzzer-afl PRIVATE visuall_frontend)
+    target_compile_options(visuall-fuzzer-afl PRIVATE -g -O2)
+    target_link_options(visuall-fuzzer-afl PRIVATE -g -O2)
+endif()
 
 # ── visuall-lsp (optional) ──────────────────────────────────────────────────
 option(BUILD_LSP "Build the Visuall Language Server" ON)

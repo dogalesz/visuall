@@ -636,6 +636,7 @@ void Codegen::generate(const ast::Program& program) {
         auto* entry = llvm::BasicBlock::Create(*context_, "entry", initFn);
         builder_->SetInsertPoint(entry);
         currentFunction_ = initFn;
+        moduleInitFn_ = initFn;
         pushScope();
 
         collectBoxedVarsFromStmts(program.statements);
@@ -677,6 +678,7 @@ void Codegen::generate(const ast::Program& program) {
             *context_, "entry", initFn);
         builder_->SetInsertPoint(initEntry);
         currentFunction_ = initFn;
+        moduleInitFn_ = initFn;
         pushScope();
 
         bool hasNonFuncStmts = false;
@@ -3168,6 +3170,36 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
 
         auto* existing = lookupVar(ident->name);
         if (existing) {
+            // If the existing alloca is in a different function, we must
+            // update the module-level GlobalVariable (if one exists) so
+            // other functions see the new value.  Local allocas are only
+            // valid within their parent function.
+            bool crossFunc = (existing->getParent()->getParent() != currentFunction_);
+
+            if (crossFunc) {
+                // Write to the module-level global variable.
+                auto git = moduleGlobals_.find(ident->name);
+                if (git != moduleGlobals_.end()) {
+                    builder_->CreateStore(val, git->second);
+                } else {
+                    // First cross-function write: promote to a global.
+                    auto* global = new llvm::GlobalVariable(
+                        *module_, allocaTy, false,
+                        llvm::GlobalValue::InternalLinkage,
+                        llvm::Constant::getNullValue(allocaTy),
+                        ident->name);
+                    builder_->CreateStore(val, global);
+                    moduleGlobals_[ident->name] = global;
+                }
+                // Also create a local alloca in this function so subsequent
+                // reads inside the same function use the local copy.
+                auto* alloca = createEntryBlockAlloca(
+                    currentFunction_, ident->name, allocaTy);
+                builder_->CreateStore(val, alloca);
+                declareVar(ident->name, alloca);
+                return;
+            }
+
             // If the alloca type matches, store directly.
             if (existing->getAllocatedType() == allocaTy) {
                 builder_->CreateStore(val, existing);
@@ -3183,6 +3215,18 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
                 currentFunction_, ident->name, allocaTy);
             builder_->CreateStore(val, alloca);
             declareVar(ident->name, alloca);
+
+            // Module-level variables: also create a GlobalVariable so
+            // functions can access them without cross-function alloca refs.
+            if (currentFunction_ == moduleInitFn_) {
+                auto* global = new llvm::GlobalVariable(
+                    *module_, allocaTy, false,
+                    llvm::GlobalValue::InternalLinkage,
+                    llvm::Constant::getNullValue(allocaTy),
+                    ident->name);
+                builder_->CreateStore(val, global);
+                moduleGlobals_[ident->name] = global;
+            }
         }
     }
 
@@ -3463,6 +3507,32 @@ llvm::Value* Codegen::codegenNullLiteral(const ast::NullLiteral& /*node*/) {
 llvm::Value* Codegen::codegenIdentifier(const ast::Identifier& node) {
     auto* alloca = lookupVar(node.name);
     if (alloca) {
+        // ── Cross-function reference ─────────────────────────────────
+        // If the alloca lives in a different function (e.g. module-init vs
+        // user-defined function), we must read from the module-level
+        // GlobalVariable instead.  LLVM does not allow referencing an
+        // alloca from a function it does not belong to.
+        bool crossFunc = (alloca->getParent()->getParent() !=
+                          builder_->GetInsertBlock()->getParent());
+        if (crossFunc) {
+            auto git = moduleGlobals_.find(node.name);
+            if (git != moduleGlobals_.end()) {
+                return builder_->CreateLoad(
+                    git->second->getValueType(), git->second, node.name);
+            }
+            // Fall through: if there's no global yet, try to create one
+            // from the alloca type (shouldn't happen in practice since
+            // codegenAssignStmt creates globals at module level).
+            auto* global = new llvm::GlobalVariable(
+                *module_, alloca->getAllocatedType(), false,
+                llvm::GlobalValue::InternalLinkage,
+                llvm::Constant::getNullValue(alloca->getAllocatedType()),
+                node.name);
+            moduleGlobals_[node.name] = global;
+            return builder_->CreateLoad(
+                global->getValueType(), global, node.name);
+        }
+
         // Boxed variable: alloca holds an i8* → load box ptr → load payload.
         if (boxedVars_.count(node.name)) {
             auto* i8Ptr  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));

@@ -3,14 +3,38 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_installer:
+        description: 'Build and verify Windows installer'
+        type: boolean
+        default: false
 
 jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Ubuntu: build + test
+  # ═══════════════════════════════════════════════════════════════════════════
   build-ubuntu:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache LLVM 17
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/lib/llvm-17
+            /usr/bin/llvm-*
+            /usr/bin/clang-17
+            /usr/bin/clang++-17
+            /usr/bin/opt-17
+            /usr/bin/llc-17
+          key: llvm-17-ubuntu-22.04-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            llvm-17-ubuntu-22.04-
 
       - name: Install LLVM 17
         run: |
@@ -31,6 +55,9 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Windows: build + test + conditional installer
+  # ═══════════════════════════════════════════════════════════════════════════
   build-windows:
     runs-on: windows-2022
     defaults:
@@ -43,6 +70,7 @@ jobs:
         with:
           msystem: MINGW64
           update: true
+          cache: true
           install: >-
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
@@ -64,11 +92,291 @@ jobs:
           export PATH="/mingw64/bin:$PATH"
           ctest --test-dir build --output-on-failure
 
+      # Only build installer on tags or manual dispatch
       - name: Build NSIS installer
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_installer)
         run: makensis installer.nsi
 
+      - name: Verify installer contents
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_installer)
+        run: |
+          set -e
+          INSTALLER=$(ls visuallc-v*-windows-x86_64-installer.exe)
+          echo "Verifying installer: $INSTALLER"
+          mkdir -p install_verify
+          7z x "$INSTALLER" -oinstall_verify -y
+          cd install_verify
+          echo "=== Checking critical files ==="
+          for f in \
+            visuallc.exe \
+            vslpkg.exe \
+            libvisuall_runtime.a \
+            _deps/yyjson-build/libyyjson.a \
+            ld.lld.exe \
+            mingw_libs/crt2.o \
+            stdlib/io.vsl \
+            stdlib/math.vsl \
+            stdlib/string.vsl \
+            stdlib/collections.vsl \
+            stdlib/datetime.vsl \
+            stdlib/json.vsl \
+            stdlib/network.vsl \
+            stdlib/random.vsl \
+            stdlib/sys.vsl \
+            README.md \
+            LICENSE \
+            CHANGELOG.md; do
+            if [ -f "$f" ]; then
+              echo "  OK: $f"
+            else
+              echo "  MISSING: $f"
+              exit 1
+            fi
+          done
+          # Verify executables are valid PE files and print version
+          echo "=== visuallc.exe --version ==="
+          ./visuallc.exe --version || true
+          echo "=== vslpkg.exe --help ==="
+          ./vslpkg.exe --help || true
+          echo "=== Installer verification PASSED ==="
+
       - name: Upload installer artifact
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_installer)
         uses: actions/upload-artifact@v4
         with:
           name: visuallc-installer
           path: visuallc-v*-windows-x86_64-installer.exe
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Fuzzer: build + smoke test (libFuzzer via Clang)
+  # ═══════════════════════════════════════════════════════════════════════════
+  fuzz-ubuntu:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache LLVM 17 + Clang
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/lib/llvm-17
+            /usr/bin/llvm-*
+            /usr/bin/clang-17
+            /usr/bin/clang++-17
+          key: llvm-17-clang-ubuntu-22.04-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            llvm-17-clang-ubuntu-22.04-
+
+      - name: Install LLVM 17 + Clang
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get install -y llvm-17-dev clang-17 ninja-build
+
+      - name: Configure with Clang + libFuzzer
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER=clang-17 \
+            -DCMAKE_CXX_COMPILER=clang++-17 \
+            -DLLVM_DIR=/usr/lib/llvm-17/lib/cmake/llvm \
+            -DVISUALL_BUILD_FUZZER=ON \
+            -DBUILD_LSP=OFF
+
+      - name: Build fuzzers
+        run: cmake --build build --target visuall-fuzzer-frontend visuall-fuzzer-full --parallel
+
+      - name: Smoke-test shallow fuzzer (60 seconds)
+        run: |
+          mkdir -p crash_artifacts_shallow
+          ./build/visuall-fuzzer-frontend \
+            -max_total_time=60 \
+            -runs=100000 \
+            -artifact_prefix=crash_artifacts_shallow/ \
+            build/tests/fuzzing/corpus/
+
+      - name: Smoke-test full-pipeline fuzzer (60 seconds)
+        run: |
+          mkdir -p crash_artifacts_full
+          ./build/visuall-fuzzer-full \
+            -max_total_time=60 \
+            -runs=100000 \
+            -artifact_prefix=crash_artifacts_full/ \
+            build/tests/fuzzing/corpus/
+
+      - name: Check for new crashes
+        run: |
+          SHALLOW_CRASHES=$(ls crash_artifacts_shallow/* 2>/dev/null | wc -l)
+          FULL_CRASHES=$(ls crash_artifacts_full/* 2>/dev/null | wc -l)
+          TOTAL=$((SHALLOW_CRASHES + FULL_CRASHES))
+          if [ "$TOTAL" -gt 0 ]; then
+            echo "WARNING: $TOTAL fuzzer crash artifacts found"
+            echo "Shallow: $SHALLOW_CRASHES, Full: $FULL_CRASHES"
+            ls -la crash_artifacts_shallow/ 2>/dev/null || true
+            ls -la crash_artifacts_full/ 2>/dev/null || true
+          else
+            echo "OK: No crash artifacts found"
+          fi
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # End-to-end smoke test: extract installer, compile, run (tags only)
+  # ═══════════════════════════════════════════════════════════════════════════
+  e2e-windows:
+    runs-on: windows-2022
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      # MSYS2 needed for MinGW runtime DLLs (to run compiled binaries)
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          cache: true
+          install: >-
+            mingw-w64-x86_64-gcc-libs
+            mingw-w64-x86_64-winpthreads
+
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: visuallc-installer
+
+      - name: Extract and smoke test
+        run: |
+          set -e
+          INSTALLER=$(ls visuallc-v*-windows-x86_64-installer.exe)
+          echo "Extracting: $INSTALLER"
+          7z x "$INSTALLER" -oe2e_test -y
+          cd e2e_test
+
+          echo "=== Test 1: --emit-ir compilation ==="
+          echo 'x = 42' > test_emit.vsl
+          ./visuallc.exe --emit-ir test_emit.vsl -o test_emit.ll
+          if [ -f test_emit.ll ]; then
+            echo "PASS: --emit-ir produced output"
+          else
+            echo "FAIL: --emit-ir produced no output"
+            exit 1
+          fi
+
+          echo "=== Test 2: Compile hello world ==="
+          echo 'print("Hello from Visuall!")' > hello_e2e.vsl
+          ./visuallc.exe hello_e2e.vsl -o hello_e2e.exe
+          if [ -f hello_e2e.exe ]; then
+            echo "PASS: Native compilation produced binary"
+          else
+            echo "FAIL: Native compilation failed"
+            exit 1
+          fi
+
+          echo "=== Test 3: Run compiled binary ==="
+          export PATH="/mingw64/bin:$PATH"
+          OUTPUT=$(./hello_e2e.exe 2>&1) || true
+          echo "Output: '$OUTPUT'"
+          if echo "$OUTPUT" | grep -q "Hello from Visuall!"; then
+            echo "PASS: Compiled binary printed expected message"
+          else
+            echo "FAIL: Unexpected output"
+            exit 1
+          fi
+
+          echo "=== E2E smoke test PASSED ==="
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Version consistency check (tags only)
+  # ═══════════════════════════════════════════════════════════════════════════
+  version-check:
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version consistency
+        run: |
+          set -e
+          TAG_VERSION="${{ github.ref_name }}"
+          # Strip 'v' prefix
+          EXPECTED="${TAG_VERSION#v}"
+          echo "Expected version: $EXPECTED (from tag $TAG_VERSION)"
+
+          # Check CMakeLists.txt
+          CMAKE_VER=$(grep -oP 'project\(\s*visuall\s+VERSION\s+\K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt)
+          echo "CMakeLists.txt: $CMAKE_VER"
+          [ "$CMAKE_VER" = "$EXPECTED" ] || { echo "MISMATCH: CMakeLists.txt"; exit 1; }
+
+          # Check include/version.h
+          HEADER_VER=$(grep -oP '#define\s+VISUALL_VERSION\s+"\K[0-9]+\.[0-9]+\.[0-9]+' include/version.h)
+          echo "include/version.h: $HEADER_VER"
+          [ "$HEADER_VER" = "$EXPECTED" ] || { echo "MISMATCH: include/version.h"; exit 1; }
+
+          # Check installer.nsi
+          NSI_VER=$(grep -oP '!define\s+PRODUCT_VERSION\s+"\K[0-9]+\.[0-9]+\.[0-9]+' installer.nsi)
+          echo "installer.nsi: $NSI_VER"
+          [ "$NSI_VER" = "$EXPECTED" ] || { echo "MISMATCH: installer.nsi"; exit 1; }
+
+          # Check LSP initialize.cpp
+          LSP_VER=$(grep -oP '\{"version",\s*"\K[0-9]+\.[0-9]+\.[0-9]+' tools/visuall-lsp/src/handlers/initialize.cpp)
+          echo "LSP initialize.cpp: $LSP_VER"
+          [ "$LSP_VER" = "$EXPECTED" ] || { echo "MISMATCH: LSP initialize.cpp"; exit 1; }
+
+          echo "=== Version consistency check PASSED: $EXPECTED ==="
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # GitHub Release (tags only, after all other jobs pass)
+  # ═══════════════════════════════════════════════════════════════════════════
+  release:
+    runs-on: ubuntu-22.04
+    needs: [build-ubuntu, build-windows, fuzz-ubuntu, e2e-windows, version-check]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: visuallc-installer
+
+      - name: Extract changelog for this version
+        run: |
+          set -e
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          python3 -c "
+          import re
+          with open('CHANGELOG.md') as f:
+              content = f.read()
+          pattern = rf'## \[{re.escape(VERSION)}\](.*?)(?=\n## |\Z)'
+          match = re.search(pattern, content, re.DOTALL)
+          if match:
+              with open('release_notes.md', 'w') as out:
+                  out.write(match.group(1).strip())
+              print(f'Extracted changelog for v{VERSION}')
+          else:
+              print(f'Warning: no changelog section for v{VERSION}')
+              with open('release_notes.md', 'w') as out:
+                  out.write(f'Visuall {VERSION} release.')
+          "
+
+      - name: Create source archive
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          git archive --format=tar.gz -o "visuallc-v${VERSION}-source.tar.gz" HEAD
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Visuall ${{ github.ref_name }}"
+          body_path: release_notes.md
+          files: |
+            visuallc-v*-windows-x86_64-installer.exe
+            visuallc-v*-source.tar.gz
+          generate_release_notes: false

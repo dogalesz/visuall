@@ -131,6 +131,14 @@ private:
     // Current function being generated
     llvm::Function* currentFunction_ = nullptr;
 
+    // Module-level init function (for detecting cross-function variable refs).
+    // When codegen accesses a variable whose alloca lives in a different
+    // function, it switches to a GlobalVariable so LLVM verifier is happy.
+    llvm::Function* moduleInitFn_ = nullptr;
+
+    // Module-level variables promoted to GlobalVariable for cross-function access.
+    std::unordered_map<std::string, llvm::GlobalVariable*> moduleGlobals_;
+
     // ── Loop control ────────────────────────────────────────────────────
     // Stack of (loopHeader, loopExit) blocks for break/continue.
     std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> loopStack_;

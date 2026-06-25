@@ -1363,6 +1363,16 @@ void TypeChecker::visit(const ast::BinaryExpr& e) {
 
         case ast::BinOp::Eq:
         case ast::BinOp::Neq:
+            // Allow: same types, numeric cross-type (int/float), null with anything.
+            if (lt->isNumeric() && rt->isNumeric()) { exprResult_ = makeBool(); return; }
+            if (lt->kind == rt->kind) { exprResult_ = makeBool(); return; }
+            if (lt->kind == TypeNode::Null || rt->kind == TypeNode::Null) {
+                exprResult_ = makeBool(); return;
+            }
+            if (!lt->isUnknown() && !rt->isUnknown()) {
+                error("Cannot compare " + lt->toString() + " and " + rt->toString(),
+                      e.line, e.column);
+            }
             exprResult_ = makeBool(); return;
 
         case ast::BinOp::Lt:
