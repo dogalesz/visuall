@@ -275,7 +275,7 @@ if(WIN32)
             # System import libraries needed for a minimal Windows .exe
             set(_sys_libs
                 libmingw32.a libmingwex.a libmoldname.a
-                libgcc.a libgcc_eh.a libgcc_s.a
+                libgcc_s.a
                 libmsvcrt.a libkernel32.a libntdll.a
                 libadvapi32.a libshell32.a libuser32.a
                 libws2_32.a libm.a
@@ -286,6 +286,15 @@ if(WIN32)
                          DESTINATION "${CMAKE_BINARY_DIR}/mingw_libs")
                 endif()
             endforeach()
+            # libgcc.a / libgcc_eh.a live in a GCC-versioned subdirectory;
+            # glob them out of gcc/<triple>/*/ so we don't hardcode the version.
+            file(GLOB _gcc_libs
+                "${MINGW_CRT_DIR}/gcc/*/*/libgcc.a"
+                "${MINGW_CRT_DIR}/gcc/*/*/libgcc_eh.a"
+            )
+            if(_gcc_libs)
+                file(COPY ${_gcc_libs} DESTINATION "${CMAKE_BINARY_DIR}/mingw_libs")
+            endif()
             message(STATUS "Copied MinGW CRT + import libs to build/mingw_libs/")
         else()
             message(WARNING "MinGW CRT directory not found — bundled linker may not work")
