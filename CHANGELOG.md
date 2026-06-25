@@ -6,17 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.3.4] - 2026-06-20
+## [1.3.4] - 2026-06-26
 
 ### Fixed
-- Include runtime lib and yyjson in Windows installer (NSIS packaging fix
-  ensuring the installer delivers all required runtime components).
+- **== and != type validation**: the type checker now rejects equality comparisons
+  between values of incompatible types.
+- **Cross-function variable access**: variables defined in one function body are no
+  longer visible inside another function's body.
+- **Fuzzer crash (oversized integer literal)**: `std::stoll` exceptions from
+  over-large integer/float literals are now caught and reported as `ParseError`
+  instead of crashing the compiler.
+- **Windows installer linker dependency chain**: `libxml2-16.dll` (transitive
+  dependency of `libLLVM-20.dll`) and `libgcc.a`/`libgcc_eh.a` (in GCC-versioned
+  subdirectory) are now included in the installer so `ld.lld` can link user
+  programs without missing-library errors.
+- **Dangling StringRef in linker argument builder**: CRT path strings and
+  linker flags declared inside `if` blocks were going out of scope before
+  `ExecuteAndWait()` ran, corrupting the linker command line and producing
+  `undefined symbol: mainCRTStartup` errors on Windows. All argument strings
+  are now hoisted to function scope.
 - Remove `-static-libgcc -static-libstdc++` from `visuall_tests` link flags to
   prevent CI segfault (follow-up to the same fix applied to `visuallc`).
 
 ### Changed
 - LSP server version string updated from `1.3.0` to `1.3.4` to match the
   compiler version.
+- CI now verifies Windows installer contents, runs end-to-end smoke tests, and
+  automatically creates GitHub Releases on tag push.
 
 ## [1.3.3] - 2026-06-17
 
