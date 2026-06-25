@@ -1449,14 +1449,26 @@ ast::ExprPtr Parser::parsePrimary() {
 
     // ── Literals ───────────────────────────────────────────────────────
     if (match(TokenType::INT_LITERAL)) {
-        auto node = std::make_unique<ast::IntLiteral>(std::stoll(previous().lexeme));
-        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
-        return node;
+        try {
+            auto node = std::make_unique<ast::IntLiteral>(std::stoll(previous().lexeme));
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
+            return node;
+        } catch (const std::out_of_range&) {
+            throw ParseError("Integer literal is too large", filename_, ln, col);
+        } catch (const std::invalid_argument&) {
+            throw ParseError("Invalid integer literal", filename_, ln, col);
+        }
     }
     if (match(TokenType::FLOAT_LITERAL)) {
-        auto node = std::make_unique<ast::FloatLiteral>(std::stod(previous().lexeme));
-        node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
-        return node;
+        try {
+            auto node = std::make_unique<ast::FloatLiteral>(std::stod(previous().lexeme));
+            node->line = ln; node->column = col; node->endLine = previous().line; node->endCol = previous().column;
+            return node;
+        } catch (const std::out_of_range&) {
+            throw ParseError("Float literal is too large", filename_, ln, col);
+        } catch (const std::invalid_argument&) {
+            throw ParseError("Invalid float literal", filename_, ln, col);
+        }
     }
     if (match(TokenType::STRING_LITERAL)) {
         auto node = std::make_unique<ast::StringLiteral>(previous().lexeme);

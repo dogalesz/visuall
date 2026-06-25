@@ -395,6 +395,31 @@ static void testVariadicMustBeLast() {
     expect(!caught, "variadic-ok: ... as last param parses successfully");
 }
 
+// ── 15. Oversized integer literal produces ParseError ─────────────────────────
+static void testOversizedIntegerLiteral() {
+    // A value far beyond the range of long long should produce a ParseError,
+    // not crash with std::out_of_range from std::stoll.
+    bool caught = false;
+    try {
+        parseSource("x = 99999999999999999999999999999999999999999999999999\n");
+    } catch (const ParseError& e) {
+        caught = true;
+        std::string msg = e.what();
+        expect(msg.find("Integer literal is too large") != std::string::npos,
+               "oversized-int: error says 'Integer literal is too large'");
+    }
+    expect(caught, "oversized-int: oversized integer literal throws ParseError");
+
+    // Max int64 value (9223372036854775807) should still parse fine.
+    caught = false;
+    try {
+        auto prog = parseSource("x = 9223372036854775807\n");
+    } catch (const ParseError&) {
+        caught = true;
+    }
+    expect(!caught, "oversized-int: max int64 value parses successfully");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Test-suite entry point (called from tests/test_main.cpp).
 // ════════════════════════════════════════════════════════════════════════════
@@ -415,6 +440,7 @@ int runParserTests() {
     testUnclosedBlock();        // 12
     testEmptyFile();            // 13 (VSL-003)
     testVariadicMustBeLast();   // 14 (VSL-012)
+    testOversizedIntegerLiteral(); // 15
 
     return failures;
 }
