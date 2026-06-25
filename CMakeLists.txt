@@ -215,6 +215,7 @@ if(WIN32)
         file(GLOB _llvm_dlls
             "${VISUALL_LLVM_BIN}/libLLVM*.dll"
             "${VISUALL_LLVM_BIN}/libffi*.dll"
+            "${VISUALL_LLVM_BIN}/libxml2*.dll"
         )
         if(_llvm_dlls)
             file(COPY ${_llvm_dlls} DESTINATION "${CMAKE_BINARY_DIR}")
