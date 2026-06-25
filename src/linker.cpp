@@ -285,9 +285,11 @@ int Linker::linkToBinary(const std::string& objPath,
     }
 
     // ── Build argument vector (NO shell — each argv entry is separate) ──
-    // NOTE: Every concatenated string is stored in a named local variable.
-    // Do NOT push temporary "-L" + libDir directly — StringRef is non-owning
-    // and the temporary would dangle, causing garbage arguments or a crash.
+    // CRITICAL: Every string whose data a StringRef points to MUST remain
+    // alive until ExecuteAndWait() returns.  Declare ALL of them here at
+    // function scope so they don't go out of scope inside an if-block,
+    // which would leave dangling StringRefs and produce corrupted linker
+    // command lines or crashes.
 
     // ── Resolve linker executable ──────────────────────────────────────────
     std::string linker = spec.linkerExe();
@@ -309,6 +311,23 @@ int Linker::linkToBinary(const std::string& objPath,
         }
     }
 
+    // ── All argument strings live here so StringRefs don't dangle ─────────
+    std::string mFlagStr        = "-m";
+    std::string archFlagStr     = "i386pep";
+    std::string crt2Path;
+    std::string crtbeginPath;
+    std::string crtendPath;
+    std::string libLFlag        = "-L" + libDir;
+    std::string yyjsonLFlag     = "-L" + yyjsonDir;
+    std::string mingwLFlag      = "-L" + mingwLibDir;  // only used when usingBundledLld
+    std::string dashO           = "-o";
+
+    if (usingBundledLld) {
+        crt2Path     = mingwLibDir + "/crt2.o";
+        crtbeginPath = mingwLibDir + "/crtbegin.o";
+        crtendPath   = mingwLibDir + "/crtend.o";
+    }
+
     llvm::SmallVector<llvm::StringRef, 32> args;
     args.push_back(linker);
 
@@ -316,13 +335,8 @@ int Linker::linkToBinary(const std::string& objPath,
     // CRT startup objects (order matters: crtbegin before user objects,
     // crtend after), followed by the .o, then system libraries.
     if (usingBundledLld) {
-        std::string mFlag = "-m";
-        args.push_back(mFlag);
-        std::string archFlag = "i386pep";   // x86_64 Windows PE/COFF
-        args.push_back(archFlag);
-
-        std::string crt2Path     = mingwLibDir + "/crt2.o";
-        std::string crtbeginPath = mingwLibDir + "/crtbegin.o";
+        args.push_back(mFlagStr);
+        args.push_back(archFlagStr);
         args.push_back(crt2Path);
         args.push_back(crtbeginPath);
     }
@@ -330,19 +344,16 @@ int Linker::linkToBinary(const std::string& objPath,
     args.push_back(objPath);
 
     if (usingBundledLld) {
-        std::string crtendPath = mingwLibDir + "/crtend.o";
         args.push_back(crtendPath);
     }
 
-    args.push_back("-o");
+    args.push_back(dashO);
     args.push_back(outPath);
 
-    std::string libFlag = "-L" + libDir;
-    args.push_back(libFlag);
+    args.push_back(libLFlag);
     args.push_back("-lvisuall_runtime");
 
-    std::string yyjsonFlag = "-L" + yyjsonDir;
-    args.push_back(yyjsonFlag);
+    args.push_back(yyjsonLFlag);
     args.push_back("-lyyjson");
 
     // ── System libraries ───────────────────────────────────────────────────
@@ -350,7 +361,6 @@ int Linker::linkToBinary(const std::string& objPath,
 
     if (usingBundledLld) {
         // ld.lld needs explicit -L for the bundled MinGW import libs.
-        std::string mingwLFlag = "-L" + mingwLibDir;
         args.push_back(mingwLFlag);
 
         // Standard MinGW system library order for a working PE executable.
