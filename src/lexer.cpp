@@ -880,10 +880,13 @@ std::vector<Token> Lexer::tokenize() {
         }
     }
 
-    // Safety net: each source byte produces at most 1 token (plus END_OF_FILE).
-    // Catch regressions in debug builds without limiting valid inputs.
-    assert(tokens.size() <= source_.size() + 1 &&
-           "lexer produced more tokens than source bytes — possible infinite loop");
+    // Safety net: synthetic INDENT/DEDENT tokens have no corresponding source
+    // bytes, and normalizeIndentation() can shrink source (spaces → tabs).
+    // Each byte can produce at most one content token plus one synthetic token
+    // in the worst case.  The * 2 + 1 bound still catches real infinite loops
+    // (which would blow way past it) while allowing valid inputs through.
+    assert(tokens.size() <= source_.size() * 2 + 1 &&
+           "lexer produced excessive tokens — possible infinite loop");
 
     // ── 10. EOF: flush remaining DEDENTs ──────────────────────────────
     while (indentStack_.top() > 0) {

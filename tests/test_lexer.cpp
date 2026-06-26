@@ -363,6 +363,23 @@ static void testUnicodeSurrogateRejected() {
     expect(caught, "unicode-surrogate-U: \\Uxxxxxxxx surrogate throws LexError");
 }
 
+// ── 20. Regression: token count assertion with synthetic INDENT/DEDENT ────────
+static void testSyntheticTokensAssertion() {
+    // Fuzzer-found crash in v1.3.4 CI: normalizeIndentation shrinks source
+    // (spaces → tabs) while the token stream includes synthetic INDENT/DEDENT
+    // tokens that have no corresponding source bytes.  16 raw bytes produce
+    // 16 tokens from 14 normalized bytes — the old assertion expected ≤ 15.
+    std::string src = "  0\ny(=\n  0\ny(=\n";
+    Lexer lexer(src, "test.vsl");
+    bool ok = false;
+    try {
+        auto tokens = lexer.tokenize();
+        ok = !tokens.empty() &&
+             tokens.back().type == TokenType::END_OF_FILE;
+    } catch (...) {}
+    expect(ok, "synthetic-tokens: 2-space indented input tokenizes without assertion failure");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Test-suite entry point (called from tests/test_main.cpp).
 // ════════════════════════════════════════════════════════════════════════════
@@ -388,6 +405,7 @@ int runLexerTests() {
     testEofFlushesDedents();            // 17
     testUnicodeBeyondMax();             // 18 (VSL-004)
     testUnicodeSurrogateRejected();     // 19 (VSL-005)
+    testSyntheticTokensAssertion();     // 20
 
     return failures;
 }
