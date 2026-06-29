@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(visuall VERSION 1.3.4 LANGUAGES C CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -245,6 +247,11 @@ if(WIN32)
         if(_lld_candidates)
             file(COPY ${_lld_candidates} DESTINATION "${CMAKE_BINARY_DIR}")
             message(STATUS "Copied lld linker to build directory")
+        else()
+            message(WARNING
+                "ld.lld.exe not found in ${VISUALL_LLVM_BIN}. "
+                "Native compilation (visuallc -> .exe) will NOT work. "
+                "Install mingw-w64-x86_64-lld to resolve this.")
         endif()
     endif()
 
@@ -511,3 +518,60 @@ if(BUILD_LSP)
         file(COPY ${_runtime_dlls} DESTINATION "${CMAKE_BINARY_DIR}/tools/visuall-lsp")
     endif()
 endif()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Installation rules
+#
+# Layout (Linux / POSIX):
+#   <prefix>/
+#     bin/
+#       visuallc          -> ../lib/visuall/visuallc   (symlink)
+#       vslpkg            -> ../lib/visuall/vslpkg     (symlink)
+#       visuall-lsp       -> ../lib/visuall/visuall-lsp (symlink)
+#     lib/visuall/
+#       visuallc              (real binary)
+#       vslpkg                (real binary)
+#       visuall-lsp           (real binary)
+#       libvisuall_runtime.a  (runtime static library)
+#       libyyjson.a           (JSON library)
+#       stdlib/               (standard library .vsl modules)
+#
+# The symlink layout works because getExeDirectory() resolves /proc/self/exe
+# so the binary finds stdlib/ and .a files in the real install dir.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+set(_INSTALL_BASE "${CMAKE_INSTALL_LIBDIR}/visuall")
+
+# ── Compiler, package manager, LSP (real binaries live in lib/visuall/) ────
+install(TARGETS visuallc vslpkg DESTINATION "${_INSTALL_BASE}")
+if(BUILD_LSP)
+    install(TARGETS visuall-lsp DESTINATION "${_INSTALL_BASE}")
+endif()
+
+# ── Runtime static libraries (linked into compiled .vsl programs) ──────────
+install(FILES "${CMAKE_BINARY_DIR}/libvisuall_runtime.a"
+        DESTINATION "${_INSTALL_BASE}")
+if(TARGET yyjson)
+    install(TARGETS yyjson DESTINATION "${_INSTALL_BASE}")
+endif()
+
+# ── Standard library .vsl modules ──────────────────────────────────────────
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/stdlib/"
+        DESTINATION "${_INSTALL_BASE}/stdlib"
+        FILES_MATCHING PATTERN "*.vsl")
+
+# ── Symlinks in bin/ -> lib/visuall/ (resolved by getExeDirectory) ─────────
+install(CODE "
+    set(destdir \"\$ENV{DESTDIR}\")
+    set(bindir \"\${destdir}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}\")
+    set(realdir \"\${destdir}\${CMAKE_INSTALL_PREFIX}/${_INSTALL_BASE}\")
+    set(link_target \"../${_INSTALL_BASE}/\")
+    file(MAKE_DIRECTORY \"\${bindir}\")
+    foreach(tool visuallc vslpkg visuall-lsp)
+        if(EXISTS \"\${realdir}/\${tool}\")
+            file(CREATE_LINK \"\${link_target}\${tool}\"
+                 \"\${bindir}/\${tool}\" SYMBOLIC)
+            message(STATUS \"Installing: \${bindir}/\${tool} -> \${link_target}\${tool}\")
+        endif()
+    endforeach()
+")
