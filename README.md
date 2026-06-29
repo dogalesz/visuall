@@ -168,11 +168,16 @@ sudo ./llvm.sh 17
 sudo apt install llvm-17-dev
 ```
 
+**Linux (Fedora):**
+```bash
+sudo dnf install llvm-devel
+```
+
 **macOS (Homebrew):**
 ```bash
-brew install llvm@17
-export PATH="/opt/homebrew/opt/llvm@17/bin:$PATH"
-export LLVM_DIR="/opt/homebrew/opt/llvm@17/lib/cmake/llvm"
+brew install llvm
+export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
+export LLVM_DIR="/opt/homebrew/opt/llvm/lib/cmake/llvm"
 ```
 
 **Windows (prebuilt):**
@@ -196,10 +201,33 @@ cmake --build .
 
 If LLVM is in a non-standard location:
 ```bash
-cmake .. -DLLVM_DIR=/opt/homebrew/opt/llvm@17/lib/cmake/llvm
+cmake .. -DLLVM_DIR=/opt/homebrew/opt/llvm/lib/cmake/llvm
 ```
 
 The compiler binary `visuallc` will be in the `build/` directory.
+
+### System-wide Installation (Linux)
+
+To install Visuall system-wide so it's available from any terminal:
+
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+sudo cmake --install build --prefix /usr/local
+```
+
+This installs:
+- **Binaries** (`visuallc`, `vslpkg`, `visuall-lsp`) into `/usr/local/lib/visuall/` with symlinks in `/usr/local/bin/`
+- **Standard library** `.vsl` modules into `/usr/local/lib/visuall/stdlib/`
+- **Runtime static libraries** for linking compiled programs
+
+After installation, `visuallc` works from anywhere — it resolves its real location to find stdlib and runtime libraries.
+
+To uninstall:
+```bash
+sudo rm -rf /usr/local/bin/visuallc /usr/local/bin/vslpkg /usr/local/bin/visuall-lsp
+sudo rm -rf /usr/local/lib/visuall
+```
 
 ## Usage
 

@@ -12,7 +12,7 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 - **CMake** 3.20 or later
 - **Ninja** (recommended) or Make
-- **LLVM 17** or later (development packages)
+- **LLVM 17+** (development packages; tested through LLVM 22)
 - **C++17 compiler**: GCC 12+, Clang 15+, or MSVC 2022+
 
 ### Building from Source
@@ -22,6 +22,21 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 ```bash
 # Install dependencies
 sudo apt-get install -y llvm-17-dev ninja-build cmake g++
+
+# Build
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+
+# Build with LSP
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LSP=ON
+cmake --build build --parallel
+```
+
+**Linux (Fedora):**
+
+```bash
+# Install dependencies
+sudo dnf install cmake gcc-c++ llvm-devel ninja-build git lld
 
 # Build
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -47,11 +62,11 @@ cmake --build build --parallel
 
 ```bash
 # Install dependencies
-brew install llvm@17 ninja cmake
+brew install llvm ninja cmake
 
 # Build
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DLLVM_DIR=$(brew --prefix llvm@17)/lib/cmake/llvm
+  -DLLVM_DIR=$(brew --prefix llvm)/lib/cmake/llvm
 cmake --build build --parallel
 ```
 
