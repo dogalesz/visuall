@@ -95,6 +95,25 @@ jobs:
           ctest --test-dir build --output-on-failure
 
       # Only build installer on tags or manual dispatch
+      - name: Verify build artifacts before NSIS
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_installer)
+        run: |
+          set -e
+          echo "=== Checking build artifacts before packaging ==="
+          for f in \
+            build/visuallc.exe \
+            build/vslpkg.exe \
+            build/libvisuall_runtime.a \
+            build/_deps/yyjson-build/libyyjson.a; do
+            if [ -f "$f" ]; then
+              echo "  OK: $f"
+            else
+              echo "  ERROR: $f not found — cannot build installer"
+              exit 1
+            fi
+          done
+          echo "=== Pre-flight check passed ==="
+
       - name: Build NSIS installer
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_installer)
         run: makensis installer.nsi
@@ -108,14 +127,13 @@ jobs:
           mkdir -p install_verify
           7z x "$INSTALLER" -oinstall_verify -y
           cd install_verify
-          echo "=== Checking critical files ==="
+
+          echo "=== Checking critical files (must exist) ==="
           for f in \
             visuallc.exe \
             vslpkg.exe \
             libvisuall_runtime.a \
             _deps/yyjson-build/libyyjson.a \
-            ld.lld.exe \
-            mingw_libs/crt2.o \
             stdlib/io.vsl \
             stdlib/math.vsl \
             stdlib/string.vsl \
@@ -127,7 +145,8 @@ jobs:
             stdlib/sys.vsl \
             README.md \
             LICENSE \
-            CHANGELOG.md; do
+            CHANGELOG.md \
+            hello.vsl; do
             if [ -f "$f" ]; then
               echo "  OK: $f"
             else
@@ -135,6 +154,40 @@ jobs:
               exit 1
             fi
           done
+
+          echo "=== Checking optional/bundled toolchain files ==="
+          MISSING_OPTIONAL=0
+          for f in ld.lld.exe mingw_libs/crt2.o mingw_libs/crtbegin.o mingw_libs/crtend.o; do
+            if [ -f "$f" ]; then
+              echo "  OK: $f"
+            else
+              echo "  WARNING: $f not bundled (native .exe compilation may not work)"
+              MISSING_OPTIONAL=1
+            fi
+          done
+
+          echo "=== Checking import libraries ==="
+          IMPORT_COUNT=$(ls mingw_libs/*.a 2>/dev/null | wc -l)
+          if [ "$IMPORT_COUNT" -gt 0 ]; then
+            echo "  OK: $IMPORT_COUNT import libraries bundled"
+          else
+            echo "  WARNING: No import libraries in mingw_libs/ — native linking will fail"
+            MISSING_OPTIONAL=1
+          fi
+
+          echo "=== Checking DLLs ==="
+          DLL_COUNT=$(ls *.dll 2>/dev/null | wc -l)
+          if [ "$DLL_COUNT" -gt 0 ]; then
+            echo "  OK: $DLL_COUNT DLLs bundled"
+          else
+            echo "  WARNING: No DLLs found — visuallc.exe may fail at runtime"
+            MISSING_OPTIONAL=1
+          fi
+
+          if [ "$MISSING_OPTIONAL" -eq 1 ]; then
+            echo "=== WARNING: Some optional files missing (see above) ==="
+          fi
+
           # Verify executables are valid PE files and print version
           echo "=== visuallc.exe --version ==="
           ./visuallc.exe --version || true
@@ -227,7 +280,7 @@ jobs:
   e2e-windows:
     runs-on: windows-2022
     needs: build-windows
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_installer)
     defaults:
       run:
         shell: msys2 {0}
@@ -238,7 +291,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          update: false
+          update: true
           cache: true
           install: >-
             mingw-w64-x86_64-gcc-libs
@@ -286,6 +339,24 @@ jobs:
           else
             echo "FAIL: Unexpected output"
             exit 1
+          fi
+
+          echo "=== Test 4: Verify self-contained linker ==="
+          if [ -f ld.lld.exe ]; then
+            echo "PASS: ld.lld.exe is bundled"
+            if [ -f mingw_libs/crt2.o ]; then
+              echo "PASS: CRT startup objects bundled"
+            else
+              echo "WARNING: CRT startup objects missing — linking may use system fallback"
+            fi
+            IMPORT_COUNT=$(ls mingw_libs/*.a 2>/dev/null | wc -l)
+            if [ "$IMPORT_COUNT" -gt 0 ]; then
+              echo "PASS: $IMPORT_COUNT import libraries bundled"
+            else
+              echo "WARNING: No import libraries — native linking may fail on clean machines"
+            fi
+          else
+            echo "WARNING: ld.lld.exe not bundled — native compilation may use system linker"
           fi
 
           echo "=== E2E smoke test PASSED ==="

@@ -326,6 +326,31 @@ if(WIN32)
     endif()
 endif()
 
+# ── Post-build verification: bundled artifacts for installer ──────────────
+if(WIN32 AND NOT MSVC)
+    # Check that at least one DLL was copied (catches GLOB mismatch)
+    file(GLOB _bundled_dlls "${CMAKE_BINARY_DIR}/*.dll")
+    list(LENGTH _bundled_dlls _dll_count)
+    if(_dll_count EQUAL 0)
+        message(WARNING "No DLLs found in build directory. "
+                        "The installer will be missing runtime DLLs. "
+                        "Check MSYS2 LLVM and GCC installations.")
+    else()
+        message(STATUS "Bundled ${_dll_count} DLL(s) for installer")
+    endif()
+
+    # Verify mingw_libs has at least CRT objects or import libraries
+    file(GLOB _mingw_files "${CMAKE_BINARY_DIR}/mingw_libs/*")
+    list(LENGTH _mingw_files _mingw_count)
+    if(_mingw_count EQUAL 0)
+        message(WARNING "mingw_libs/ is empty. "
+                        "Native .exe compilation from the installed compiler will fail. "
+                        "Install mingw-w64-x86_64-gcc and mingw-w64-x86_64-lld in MSYS2.")
+    else()
+        message(STATUS "Bundled ${_mingw_count} MinGW file(s) for installer")
+    endif()
+endif()
+
 add_executable(visuall_tests
     tests/test_main.cpp
     tests/manifest_test.cpp
