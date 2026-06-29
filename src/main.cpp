@@ -13,15 +13,24 @@
 #include "vsl_manifest.h"
 #include "version.h"
 
+// Platform headers — must come before C++ STL to avoid the MinGW-w64
+// extern "C" header-ordering bug (windows.h wraps standard headers in
+// extern "C" via minwindef.h → winnt.h, breaking C++ linkage).
+#ifdef __linux__
+#include <unistd.h>
+#endif
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
-
-#ifdef __linux__
-#include <unistd.h>
-#endif
 
 static std::string readFile(const std::string& path) {
     std::ifstream file(path);
@@ -82,14 +91,12 @@ static std::string getExeDirectory(const char* argv0) {
         exePath = buf;
     }
 #elif defined(__APPLE__)
-    #include <mach-o/dyld.h>
     uint32_t size = 4096;
     char buf[size];
     if (_NSGetExecutablePath(buf, &size) == 0) {
         exePath = buf;
     }
 #elif defined(_WIN32)
-    #include <windows.h>
     char buf[MAX_PATH];
     DWORD len = GetModuleFileNameA(NULL, buf, MAX_PATH);
     if (len > 0 && len < MAX_PATH) {
