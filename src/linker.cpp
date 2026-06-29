@@ -260,11 +260,17 @@ int Linker::linkToBinary(const std::string& objPath,
         }
     }
 
+    // yyjson lookup: prefer _deps/yyjson-build/ (dev build layout),
+    // fall back to libDir/libyyjson.a (installed layout via cmake --install).
     std::string yyjsonDir = libDir + "/_deps/yyjson-build";
+    std::string yyjsonLibName = yyjsonDir + "/libyyjson.a";
+    if (!llvm::sys::fs::exists(yyjsonLibName)) {
+        yyjsonLibName = libDir + "/libyyjson.a";
+        yyjsonDir = libDir;
+    }
 
     // ── Pre-link existence check: fail early with a clear message ──
     std::string rtLibName = libDir + "/libvisuall_runtime.a";
-    std::string yyjsonLibName = yyjsonDir + "/libyyjson.a";
     if (!llvm::sys::fs::exists(rtLibName)) {
         std::cerr << "error: runtime library not found: " << rtLibName << "\n"
                   << "hint: build the runtime for this target, or use"
