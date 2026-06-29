@@ -42,7 +42,7 @@ static llvm::Function* getOrDeclareExtern(llvm::Module& mod,
 void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     auto* i64  = llvm::Type::getInt64Ty(ctx);
     auto* f64  = llvm::Type::getDoubleTy(ctx);
-    auto* i8p  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(ctx));
+    auto* i8p  = llvm::PointerType::get(ctx, 0);
     auto* voidTy = llvm::Type::getVoidTy(ctx);
     auto* i32  = llvm::Type::getInt32Ty(ctx);
 
@@ -72,7 +72,7 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
 
     /* ── f-string builder ────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_fstring_build", i8p,
-                       {llvm::PointerType::getUnqual(i8p), i32});
+                       {llvm::PointerType::get(ctx, 0), i32});
 
     /* ── String comparison ────────────────────────────────────────────── */
     getOrDeclareExtern(mod, ctx, "__visuall_str_eq", i64, {i8p, i8p});
@@ -227,7 +227,7 @@ void declareRuntimeFunctions(llvm::Module& mod, llvm::LLVMContext& ctx) {
     auto* i8 = llvm::Type::getInt8Ty(ctx);
     getOrDeclareExtern(mod, ctx, "__visuall_alloc",             i8p,    {i64, i8});
     getOrDeclareExtern(mod, ctx, "__visuall_alloc_object",      i8p,    {i64, i32, i8p});
-    getOrDeclareExtern(mod, ctx, "__visuall_register_global",   voidTy, {llvm::PointerType::getUnqual(i8p)});
+    getOrDeclareExtern(mod, ctx, "__visuall_register_global",   voidTy, {llvm::PointerType::get(ctx, 0)});
     getOrDeclareExtern(mod, ctx, "__visuall_collect",           voidTy, {});
     getOrDeclareExtern(mod, ctx, "__visuall_gc_init",           voidTy, {i8p});
     getOrDeclareExtern(mod, ctx, "__visuall_gc_shutdown",       voidTy, {});

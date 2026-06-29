@@ -216,9 +216,9 @@ llvm::Type* Codegen::getLLVMType(const std::string& typeName) {
     if (baseName == "float") return llvm::Type::getDoubleTy(*context_);
     if (baseName == "bool")  return llvm::Type::getInt1Ty(*context_);
     if (baseName == "str" || baseName == "string")
-        return llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        return llvm::PointerType::get(*context_, 0);
     if (baseName == "list" || baseName == "dict" || baseName == "tuple")
-        return llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        return llvm::PointerType::get(*context_, 0);
     if (baseName == "void")  return llvm::Type::getVoidTy(*context_);
     // Function types: "(int)->int" etc. map to the closure struct type.
     if (!typeName.empty() && typeName[0] == '(') {
@@ -226,7 +226,7 @@ llvm::Type* Codegen::getLLVMType(const std::string& typeName) {
     }
     // Class types: instances are heap-allocated i8* pointers
     if (classFields_.count(baseName)) {
-        return llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        return llvm::PointerType::get(*context_, 0);
     }
     // Default: i64
     return llvm::Type::getInt64Ty(*context_);
@@ -266,7 +266,7 @@ llvm::Value* Codegen::toBool(llvm::Value* v) {
 // ════════════════════════════════════════════════════════════════════════════
 void Codegen::declarePrintfAndBuiltins() {
     // int printf(const char* fmt, ...)
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* printfType = llvm::FunctionType::get(
         llvm::Type::getInt32Ty(*context_), {i8Ptr}, /*isVarArg=*/true);
     llvm::Function::Create(printfType, llvm::Function::ExternalLinkage,
@@ -590,15 +590,14 @@ void Codegen::generate(const ast::Program& program) {
             // Generator functions always return i8* (VisualList*)
             bool isGenerator = stmtListContainsYield(f->body);
             llvm::Type* retTy = isGenerator
-                ? llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))
+                ? llvm::PointerType::get(*context_, 0)
                 : (f->returnType.empty()
                     ? llvm::Type::getVoidTy(*context_)
                     : getLLVMType(f->returnType));
             std::vector<llvm::Type*> paramTys;
             for (const auto& p : f->params) {
                 if (p.isVariadic || p.isKwargs)
-                    paramTys.push_back(llvm::PointerType::getUnqual(
-                        llvm::Type::getInt8Ty(*context_)));
+                    paramTys.push_back(llvm::PointerType::get(*context_, 0));
                 else
                     paramTys.push_back(
                         p.typeAnnotation.empty() ? llvm::Type::getInt64Ty(*context_)
@@ -725,8 +724,7 @@ void Codegen::generate(const ast::Program& program) {
 
         // ── GC init: __visuall_gc_init(&stack_anchor) ──────────────────
         {
-            auto* i8Ptr = llvm::PointerType::getUnqual(
-                llvm::Type::getInt8Ty(*context_));
+            auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
             // Create a stack anchor alloca (address near bottom of the
             // C stack) and pass it to gc_init.
@@ -871,15 +869,14 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
     if (!fn) {
         // Not forward-declared — happens for nested/class functions.
         llvm::Type* retTy = isGenerator
-            ? llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))
+            ? llvm::PointerType::get(*context_, 0)
             : (node.returnType.empty()
                 ? llvm::Type::getVoidTy(*context_)
                 : getLLVMType(node.returnType));
         std::vector<llvm::Type*> paramTys;
         for (const auto& p : node.params) {
             if (p.isVariadic || p.isKwargs)
-                paramTys.push_back(llvm::PointerType::getUnqual(
-                    llvm::Type::getInt8Ty(*context_)));
+                paramTys.push_back(llvm::PointerType::get(*context_, 0));
             else
                 paramTys.push_back(
                     p.typeAnnotation.empty() ? llvm::Type::getInt64Ty(*context_)
@@ -937,8 +934,7 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
 
     // ── User-defined main(): inject GC init + __visuall_init call ──────
     if (hasUserMain_ && node.name == "main") {
-        auto* i8Ptr = llvm::PointerType::getUnqual(
-            llvm::Type::getInt8Ty(*context_));
+        auto* i8Ptr = llvm::PointerType::get(*context_, 0);
         auto* anchor = createEntryBlockAlloca(
             fn, "gc.anchor", llvm::Type::getInt8Ty(*context_));
         auto* anchorPtr = builder_->CreateBitCast(anchor, i8Ptr, "gc.anchor.ptr");
@@ -961,7 +957,7 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
     // Emit traceback_push for stack-trace support.
     if (auto* tbPushFn = module_->getFunction("__visuall_traceback_push")) {
         auto* nameStr = builder_->CreateGlobalString(node.name, "fn.name");
-        auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        auto* i8Ptr = llvm::PointerType::get(*context_, 0);
         auto* namePtr = builder_->CreateBitCast(nameStr, i8Ptr, "fn.name.ptr");
         builder_->CreateCall(tbPushFn, {namePtr});
     }
@@ -996,7 +992,7 @@ void Codegen::codegenFuncDef(const ast::FuncDef& node) {
             generatorList_ = builder_->CreateCall(listNewFn, {}, "gen.list");
         else
             generatorList_ = llvm::ConstantPointerNull::get(
-                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+                llvm::PointerType::get(*context_, 0));
     }
 
     codegenStmtList(node.body);
@@ -1042,10 +1038,10 @@ void Codegen::codegenExternFuncDef(const ast::FuncDef& node) {
     } else if (node.returnType == "bool") {
         retTy = llvm::Type::getInt32Ty(*context_); // C ABI: bool → int
     } else if (node.returnType == "str" || node.returnType == "string") {
-        retTy = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        retTy = llvm::PointerType::get(*context_, 0);
     } else if (node.returnType == "void*" || node.returnType == "char*" ||
                (node.returnType.size() >= 2 && node.returnType.back() == '*')) {
-        retTy = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        retTy = llvm::PointerType::get(*context_, 0);
     } else {
         // Default for unknown types (should be caught by typechecker)
         retTy = llvm::Type::getInt64Ty(*context_);
@@ -1063,11 +1059,11 @@ void Codegen::codegenExternFuncDef(const ast::FuncDef& node) {
             paramTys.push_back(llvm::Type::getInt32Ty(*context_));
         } else if (ta == "str" || ta == "string") {
             paramTys.push_back(
-                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+                llvm::PointerType::get(*context_, 0));
         } else if (ta == "void*" || ta == "char*" ||
                    (ta.size() >= 2 && ta.back() == '*')) {
             paramTys.push_back(
-                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+                llvm::PointerType::get(*context_, 0));
         } else {
             paramTys.push_back(llvm::Type::getInt64Ty(*context_));
         }
@@ -1122,7 +1118,7 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
     // Forward-declare the constructor wrapper (ClassName(...) -> i8*) so that
     // static methods emitted below can call it (e.g. factory methods).
     if (!module_->getFunction(node.name)) {
-        auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        auto* i8Ptr = llvm::PointerType::get(*context_, 0);
         // Find init params (if any) to determine constructor signature
         std::vector<llvm::Type*> ctorParamTys;
         for (const auto& s : node.body) {
@@ -1255,7 +1251,7 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
                 : getLLVMType(m->returnType);
             std::vector<llvm::Type*> paramTys;
             paramTys.push_back(
-                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+                llvm::PointerType::get(*context_, 0));
             for (const auto& p : m->params)
                 paramTys.push_back(
                     p.typeAnnotation.empty() ? llvm::Type::getInt64Ty(*context_)
@@ -1323,7 +1319,7 @@ void Codegen::codegenClassDef(const ast::ClassDef& node) {
             }
         }
 
-        auto* i8Ptr  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        auto* i8Ptr  = llvm::PointerType::get(*context_, 0);
         auto* i32Ty  = llvm::Type::getInt32Ty(*context_);
         auto* i64Ty  = llvm::Type::getInt64Ty(*context_);
         auto* ctorTy = llvm::FunctionType::get(i8Ptr, ctorParamTys, false);
@@ -1416,7 +1412,7 @@ void Codegen::codegenInitDef(const ast::InitDef& node) {
     if (!currentClassName_.empty())
         classInitParamsMap_[currentClassName_] = &node;
 
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     std::vector<llvm::Type*> paramTys = {i8Ptr}; // this
     for (const auto& p : node.params)
         paramTys.push_back(
@@ -1543,7 +1539,7 @@ void Codegen::codegenForStmt(const ast::ForStmt& node) {
     auto* fn = builder_->GetInsertBlock()->getParent();
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     auto* i1Ty  = llvm::Type::getInt1Ty(*context_);
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     // for...else: alloca to track if a break was taken (0 = normal exit, 1 = break).
     llvm::AllocaInst* didBreakAlloca = nullptr;
@@ -2071,7 +2067,7 @@ void Codegen::codegenYieldStmt(const ast::YieldStmt& node) {
         {
             auto* yldGenTy = getGenContextType();
             auto* yldGenPtr = builder_->CreateBitCast(
-                genContext_, llvm::PointerType::getUnqual(yldGenTy),
+                genContext_, llvm::PointerType::get(*context_, 0),
                 "gen.ctx.typed");
             // Field 0: state
             auto* yldStatePtr = builder_->CreateStructGEP(
@@ -2121,7 +2117,7 @@ void Codegen::codegenYieldStmt(const ast::YieldStmt& node) {
     llvm::Value* val = codegenExpr(*node.value);
     auto* pushFn = module_->getFunction("__visuall_list_push");
     if (!pushFn) return;
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     llvm::Value* asInt = val;
     if (val->getType()->isPointerTy())
@@ -2145,7 +2141,7 @@ void Codegen::codegenReturnStmt(const ast::ReturnStmt& node) {
         // GEP into field 0 (state) and store -1 to mark generator exhausted.
         auto* retGenTy = getGenContextType();
         auto* retGenPtr = builder_->CreateBitCast(
-            genContext_, llvm::PointerType::getUnqual(retGenTy),
+            genContext_, llvm::PointerType::get(*context_, 0),
             "gen.ctx.typed");
         auto* retStatePtr = builder_->CreateStructGEP(
             retGenTy, retGenPtr, 0, "state.ptr");
@@ -2203,7 +2199,7 @@ void Codegen::codegenReturnStmt(const ast::ReturnStmt& node) {
 void Codegen::codegenTryStmt(const ast::TryStmt& node) {
     auto* fn  = builder_->GetInsertBlock()->getParent();
     auto& ctx = *context_;
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(ctx));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* i32Ty = llvm::Type::getInt32Ty(ctx);
     // { i8*, i32 } — the landingpad value type (exception ptr + selector).
     auto* lpTy  = llvm::StructType::get(ctx, {i8Ptr, i32Ty});
@@ -2314,8 +2310,8 @@ void Codegen::codegenTryStmt(const ast::TryStmt& node) {
                     if (!strcmpFn) {
                         auto* strcmpTy = llvm::FunctionType::get(
                             llvm::Type::getInt32Ty(*context_),
-                            {llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)),
-                             llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))},
+                            {llvm::PointerType::get(*context_, 0),
+                             llvm::PointerType::get(*context_, 0)},
                             false);
                         strcmpFn = llvm::Function::Create(
                             strcmpTy, llvm::Function::ExternalLinkage, "strcmp", module_.get());
@@ -2434,7 +2430,7 @@ void Codegen::codegenTryStmt(const ast::TryStmt& node) {
 void Codegen::codegenWithStmt(const ast::WithStmt& node) {
     auto* fn  = builder_->GetInsertBlock()->getParent();
     auto& ctx = *context_;
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(ctx));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* i64Ty = llvm::Type::getInt64Ty(ctx);
     auto* i32Ty = llvm::Type::getInt32Ty(ctx);
     auto* lpTy  = llvm::StructType::get(ctx, {i8Ptr, i32Ty});
@@ -2575,7 +2571,7 @@ void Codegen::codegenThrowStmt(const ast::ThrowStmt& node) {
     if (auto* tbFn = module_->getFunction("__visuall_print_traceback"))
         builder_->CreateCall(tbFn, {});
 
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     // ── 1. Evaluate the exception message expression ────────────────────
     llvm::Value* msgVal;
@@ -2730,7 +2726,7 @@ void Codegen::codegenMatchStmt(const ast::MatchStmt& node) {
     auto* fn    = builder_->GetInsertBlock()->getParent();
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     auto* i32Ty = llvm::Type::getInt32Ty(*context_);
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     // Evaluate subject once and spill to an alloca.
     llvm::Value* subjectVal    = codegenExpr(*node.subject);
@@ -2887,7 +2883,7 @@ void Codegen::codegenDelStmt(const ast::DelStmt& node) {
         int fieldIdx = findFieldIndex(mem->member);
 
         if (fieldIdx >= 0 && obj->getType()->isPointerTy()) {
-            auto* i64PtrTy = llvm::PointerType::getUnqual(i64Ty);
+            auto* i64PtrTy = llvm::PointerType::get(*context_, 0);
             auto* objTyped = builder_->CreateBitCast(obj, i64PtrTy, "obj.i64p");
             auto* gep = builder_->CreateGEP(
                 i64Ty, objTyped,
@@ -2901,7 +2897,7 @@ void Codegen::codegenDelStmt(const ast::DelStmt& node) {
 
 // ── GoExpr / ChanSendStmt / ChanRecvExpr ──────────────────────────────────
 void Codegen::codegenGoExpr(const ast::GoExpr& node) {
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
 
     // Evaluate the callee and get function pointer.
@@ -2924,7 +2920,7 @@ void Codegen::codegenGoExpr(const ast::GoExpr& node) {
             {byteSize, llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 10)},
             "go.args");
         auto* argsI64 = builder_->CreateBitCast(argsPtr,
-            llvm::PointerType::getUnqual(i64Ty), "args.i64p");
+            llvm::PointerType::get(*context_, 0), "args.i64p");
         for (size_t i = 0; i < argCount; i++) {
             llvm::Value* val = codegenExpr(*node.args[i]);
             val = coerceToI64(val);
@@ -2944,7 +2940,7 @@ void Codegen::codegenGoExpr(const ast::GoExpr& node) {
          llvm::ConstantInt::get(llvm::Type::getInt8Ty(*context_), 10)},
         "task.raw");
     auto* taskPtr = builder_->CreateBitCast(taskRaw,
-        llvm::PointerType::getUnqual(taskTy), "task.ptr");
+        llvm::PointerType::get(*context_, 0), "task.ptr");
 
     // Fill task fields.
     builder_->CreateStore(fnPtr,
@@ -2970,7 +2966,7 @@ void Codegen::codegenGoExpr(const ast::GoExpr& node) {
 
 void Codegen::codegenChanSendStmt(const ast::ChanSendStmt& node) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     llvm::Value* chan = codegenExpr(*node.channel);
     llvm::Value* val  = codegenExpr(*node.value);
@@ -2992,7 +2988,7 @@ void Codegen::codegenChanSendStmt(const ast::ChanSendStmt& node) {
 
 llvm::Value* Codegen::codegenChanRecvExpr(const ast::ChanRecvExpr& node) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     llvm::Value* chan = codegenExpr(*node.channel);
     if (!chan->getType()->isPointerTy())
@@ -3122,9 +3118,9 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
         // All reads/writes go through the box so that the heap-allocated
         // cell outlives the stack frame and is shared with closures.
         if (boxedVars_.count(ident->name)) {
-            auto* i8Ptr  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+            auto* i8Ptr  = llvm::PointerType::get(*context_, 0);
             auto* i64Ty  = llvm::Type::getInt64Ty(*context_);
-            auto* i64Ptr = llvm::PointerType::getUnqual(i64Ty);
+            auto* i64Ptr = llvm::PointerType::get(*context_, 0);
 
             // Normalize val to i64 for box storage.
             // Record original type so the read path can reverse the conversion.
@@ -3258,7 +3254,7 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
     if (auto* mem = dynamic_cast<const ast::MemberExpr*>(node.target.get())) {
         llvm::Value* obj = codegenExpr(*mem->object);
         auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-        auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+        auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
         // ── @property setter: obj.prop = val → ClassName_prop_setter(self, val)
         auto trySetterFor = [&](const std::string& className) -> bool {
@@ -3296,7 +3292,7 @@ void Codegen::codegenAssignStmt(const ast::AssignStmt& node) {
 
         if (fieldIdx >= 0 && obj->getType()->isPointerTy()) {
             // Cast i8* to i64*, GEP to field offset, store
-            auto* i64PtrTy = llvm::PointerType::getUnqual(i64Ty);
+            auto* i64PtrTy = llvm::PointerType::get(*context_, 0);
             auto* objTyped = builder_->CreateBitCast(obj, i64PtrTy, "obj.i64p");
             auto* gep = builder_->CreateGEP(
                 i64Ty, objTyped,
@@ -3378,7 +3374,7 @@ llvm::Value* Codegen::codegenFStringLiteral(const ast::FStringLiteral& node) {
 }
 
 llvm::Value* Codegen::codegenFStringExpr(const ast::FStringExpr& node) {
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* intToStrFn = module_->getFunction("__visuall_int_to_str");
     auto* floatToStrFn = module_->getFunction("__visuall_float_to_str");
     auto* boolToStrFn = module_->getFunction("__visuall_bool_to_str");
@@ -3501,7 +3497,7 @@ llvm::Value* Codegen::codegenBoolLiteral(const ast::BoolLiteral& node) {
 
 llvm::Value* Codegen::codegenNullLiteral(const ast::NullLiteral& /*node*/) {
     return llvm::ConstantPointerNull::get(
-        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+        llvm::PointerType::get(*context_, 0));
 }
 
 llvm::Value* Codegen::codegenIdentifier(const ast::Identifier& node) {
@@ -3535,9 +3531,9 @@ llvm::Value* Codegen::codegenIdentifier(const ast::Identifier& node) {
 
         // Boxed variable: alloca holds an i8* → load box ptr → load payload.
         if (boxedVars_.count(node.name)) {
-            auto* i8Ptr  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+            auto* i8Ptr  = llvm::PointerType::get(*context_, 0);
             auto* i64Ty  = llvm::Type::getInt64Ty(*context_);
-            auto* i64Ptr = llvm::PointerType::getUnqual(i64Ty);
+            auto* i64Ptr = llvm::PointerType::get(*context_, 0);
             auto* boxPtr = builder_->CreateLoad(i8Ptr, alloca,
                                                  node.name + ".boxptr");
             auto* boxPayload = builder_->CreateBitCast(boxPtr, i64Ptr, "box.payload");
@@ -3681,7 +3677,7 @@ llvm::Value* Codegen::codegenBinaryExpr(const ast::BinaryExpr& node) {
         }
         if (R->getType()->isPointerTy()) {
             auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-            auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+            auto* i8Ptr = llvm::PointerType::get(*context_, 0);
             auto* getTagFn = module_->getFunction("__visuall_get_tag");
             auto* listContainsFn = module_->getFunction("__visuall_list_contains");
             auto* dictContainsFn = module_->getFunction("__visuall_dict_has");
@@ -3862,7 +3858,7 @@ llvm::Value* Codegen::codegenUnaryExpr(const ast::UnaryExpr& node) {
 
 // ── CallExpr ───────────────────────────────────────────────────────────────
 llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
 
     // Handle print() / println() builtins.
@@ -3915,7 +3911,7 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
 
                 // Cast fn_raw from i8* to the correct function pointer type.
                 auto* fnPtr = builder_->CreateBitCast(
-                    fnRaw, llvm::PointerType::getUnqual(callFnTy), "fn.ptr");
+                    fnRaw, llvm::PointerType::get(*context_, 0), "fn.ptr");
 
                 return builder_->CreateCall(callFnTy, fnPtr, argsWithEnv, "closure.call");
             }
@@ -4034,7 +4030,7 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
                     // Ensure spreadList is a pointer (may need ptrtoint→cast)
                     if (spreadList->getType()->isIntegerTy())
                         spreadList = builder_->CreateIntToPtr(spreadList,
-                            llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)),
+                            llvm::PointerType::get(*context_, 0),
                             "spread.ptr");
                     if (variadicFuncs_.count(funcName)) {
                         // For variadic: push all spread elements into extra args vector;
@@ -4134,7 +4130,7 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
                 if (fparams[i].isKwargs) {
                     // No **kwargs dict passed — supply null pointer.
                     args.push_back(llvm::ConstantPointerNull::get(
-                        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))));
+                        llvm::PointerType::get(*context_, 0)));
                     break;
                 }
                 if (!fparams[i].defaultValue)
@@ -4150,7 +4146,7 @@ llvm::Value* Codegen::codegenCallExpr(const ast::CallExpr& node) {
                 size_t i = args.size();
                 if (iparams[i].isKwargs) {
                     args.push_back(llvm::ConstantPointerNull::get(
-                        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_))));
+                        llvm::PointerType::get(*context_, 0)));
                     break;
                 }
                 if (!iparams[i].defaultValue)
@@ -4408,7 +4404,7 @@ llvm::Value* Codegen::codegenMemberExpr(const ast::MemberExpr& node) {
     int fieldIdx = findFieldIndex(node.member);
 
     if (fieldIdx >= 0 && obj->getType()->isPointerTy()) {
-        auto* i64PtrTy = llvm::PointerType::getUnqual(i64Ty);
+        auto* i64PtrTy = llvm::PointerType::get(*context_, 0);
         auto* objTyped = builder_->CreateBitCast(obj, i64PtrTy, "obj.i64p");
         auto* gep = builder_->CreateGEP(
             i64Ty, objTyped,
@@ -4473,14 +4469,14 @@ llvm::Value* Codegen::codegenIndexExpr(const ast::IndexExpr& node) {
 llvm::StructType* Codegen::getClosureType() {
     auto* existing = llvm::StructType::getTypeByName(*context_, "__visuall_closure");
     if (existing) return existing;
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     return llvm::StructType::create(*context_, {i8Ptr, i8Ptr}, "__visuall_closure");
 }
 
 llvm::Function* Codegen::getOrDeclareMalloc() {
     auto* fn = module_->getFunction("malloc");
     if (fn) return fn;
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* mallocTy = llvm::FunctionType::get(i8Ptr,
         {llvm::Type::getInt64Ty(*context_)}, false);
     return llvm::Function::Create(mallocTy, llvm::Function::ExternalLinkage,
@@ -4490,7 +4486,7 @@ llvm::Function* Codegen::getOrDeclareMalloc() {
 llvm::Function* Codegen::getOrDeclareAllocObject() {
     auto* fn = module_->getFunction("__visuall_alloc_object");
     if (fn) return fn;
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     auto* i32Ty = llvm::Type::getInt32Ty(*context_);
     auto* fnTy  = llvm::FunctionType::get(i8Ptr, {i64Ty, i32Ty, i8Ptr}, false);
@@ -4501,7 +4497,7 @@ llvm::Function* Codegen::getOrDeclareAllocObject() {
 llvm::Function* Codegen::getOrDeclareVisualAlloc() {
     auto* fn = module_->getFunction("__visuall_alloc");
     if (fn) return fn;
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* allocTy = llvm::FunctionType::get(i8Ptr,
         {llvm::Type::getInt64Ty(*context_),
          llvm::Type::getInt8Ty(*context_)}, false);
@@ -4558,7 +4554,7 @@ llvm::Value* Codegen::codegenLambdaExpr(const ast::LambdaExpr& node) {
     static int lambdaCounter = 0;
     std::string name = "__lambda_" + std::to_string(lambdaCounter++);
 
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
 
     bool hasCaptures = !node.captures.empty();
@@ -4628,7 +4624,7 @@ llvm::Value* Codegen::codegenLambdaExpr(const ast::LambdaExpr& node) {
     if (hasCaptures) {
         llvm::Value* envPtr = &*fn->arg_begin();
         llvm::Value* envCast = builder_->CreateBitCast(
-            envPtr, llvm::PointerType::getUnqual(envStructTy), "env");
+            envPtr, llvm::PointerType::get(*context_, 0), "env");
 
         for (size_t i = 0; i < node.captures.size(); i++) {
             auto* gep = builder_->CreateStructGEP(envStructTy, envCast,
@@ -4710,7 +4706,7 @@ llvm::Value* Codegen::codegenLambdaExpr(const ast::LambdaExpr& node) {
     }
 
     auto* envTyped = builder_->CreateBitCast(
-        envRaw, llvm::PointerType::getUnqual(envStructTy), "env.typed");
+        envRaw, llvm::PointerType::get(*context_, 0), "env.typed");
 
     // Store each captured variable into the environment struct.
     for (size_t i = 0; i < node.captures.size(); i++) {
@@ -4727,7 +4723,7 @@ llvm::Value* Codegen::codegenLambdaExpr(const ast::LambdaExpr& node) {
             // VSL_TAG_BOXED GC allocation, so it outlives this stack frame.
             // capturedAlloca holds the i8* box pointer.
             auto* boxPtr = builder_->CreateLoad(
-                llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)),
+                llvm::PointerType::get(*context_, 0),
                 capturedAlloca, node.captures[i].name + ".boxptr");
             storeVal = builder_->CreatePtrToInt(boxPtr, i64Ty, "cap.box.ptoi");
         } else {
@@ -4766,14 +4762,14 @@ llvm::Value* Codegen::codegenLambdaExpr(const ast::LambdaExpr& node) {
 // ── ListExpr / DictExpr / TupleExpr ────────────────────────────────────────
 llvm::Value* Codegen::codegenListExpr(const ast::ListExpr& node) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-    auto* i8Ptr  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr  = llvm::PointerType::get(*context_, 0);
 
     bool canStackAlloc = escapeInfo_ && escapeInfo_->count(&node)
                          && escapeInfo_->at(&node);
 
     if (canStackAlloc) {
         // VisualList C struct: { int64_t* data; int64_t length; int64_t capacity; }
-        auto* dataPtrTy = llvm::PointerType::getUnqual(i64Ty);
+        auto* dataPtrTy = llvm::PointerType::get(*context_, 0);
         auto* listTy = llvm::StructType::get(*context_, {dataPtrTy, i64Ty, i64Ty});
         auto* stackList = createEntryBlockAlloca(currentFunction_, "list.stack", listTy);
 
@@ -4834,7 +4830,7 @@ llvm::Value* Codegen::codegenListExpr(const ast::ListExpr& node) {
 
 llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& node) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     bool canStackAlloc = escapeInfo_ && escapeInfo_->count(&node)
                          && escapeInfo_->at(&node);
@@ -4920,14 +4916,14 @@ llvm::Value* Codegen::codegenDictExpr(const ast::DictExpr& node) {
 
 llvm::Value* Codegen::codegenTupleExpr(const ast::TupleExpr& node) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     bool canStackAlloc = escapeInfo_ && escapeInfo_->count(&node)
                          && escapeInfo_->at(&node);
 
     if (canStackAlloc) {
         // Tuples reuse VisualList: { int64_t* data; int64_t length; int64_t capacity; }
-        auto* dataPtrTy = llvm::PointerType::getUnqual(i64Ty);
+        auto* dataPtrTy = llvm::PointerType::get(*context_, 0);
         auto* listTy = llvm::StructType::get(*context_, {dataPtrTy, i64Ty, i64Ty});
         auto* stackTup = createEntryBlockAlloca(currentFunction_, "tuple.stack", listTy);
 
@@ -5372,7 +5368,7 @@ void Codegen::codegenEnumDef(const ast::EnumDef& node) {
 llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallExpr& node) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     auto* f64Ty = llvm::Type::getDoubleTy(*context_);
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     // ── input(prompt) ──────────────────────────────────────────────────
     if (name == "input") {
@@ -5746,7 +5742,7 @@ llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallEx
         auto* mapCallTy = llvm::FunctionType::get(
             i64Ty, {i8Ptr, i64Ty}, false);
         auto* fnPtr = builder_->CreateBitCast(
-            fnRaw, llvm::PointerType::getUnqual(mapCallTy), "map.fn.ptr");
+            fnRaw, llvm::PointerType::get(*context_, 0), "map.fn.ptr");
 
         // Allocate result list.
         llvm::Value* result = builder_->CreateCall(listNewFn, {}, "map.result");
@@ -5819,7 +5815,7 @@ llvm::Value* Codegen::emitBuiltinCall(const std::string& name, const ast::CallEx
         auto* fltCallTy = llvm::FunctionType::get(
             i64Ty, {i8Ptr, i64Ty}, false);
         auto* fnPtr = builder_->CreateBitCast(
-            fnRaw, llvm::PointerType::getUnqual(fltCallTy), "flt.fn.ptr");
+            fnRaw, llvm::PointerType::get(*context_, 0), "flt.fn.ptr");
 
         // Allocate result list.
         llvm::Value* result = builder_->CreateCall(listNewFn, {}, "flt.result");
@@ -6080,7 +6076,7 @@ void Codegen::visit(const ast::ThisExpr&) {
         return;
     }
     valueResult_ = llvm::ConstantPointerNull::get(
-        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+        llvm::PointerType::get(*context_, 0));
 }
 
 void Codegen::visit(const ast::SuperExpr&) {
@@ -6092,7 +6088,7 @@ void Codegen::visit(const ast::SuperExpr&) {
         return;
     }
     valueResult_ = llvm::ConstantPointerNull::get(
-        llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_)));
+        llvm::PointerType::get(*context_, 0));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -6108,7 +6104,7 @@ llvm::StructType* Codegen::getGenContextType() {
     if (genContextStructTy_) return genContextStructTy_;
     auto* i32Ty  = llvm::Type::getInt32Ty(*context_);
     auto* i64Ty  = llvm::Type::getInt64Ty(*context_);
-    auto* i8Ptr  = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr  = llvm::PointerType::get(*context_, 0);
     // [0 x i64] is LLVM's idiom for a variable-length trailing array.
     // GEP into element i of a zero-length array is legal and produces
     // the correct byte-offset pointer at runtime.
@@ -6128,7 +6124,7 @@ void Codegen::emitGenSaveVars() {
     auto* genTy  = getGenContextType();
     auto* genPtr = builder_->CreateBitCast(
         genContext_,
-        llvm::PointerType::getUnqual(genTy), "gen.ctx.typed");
+        llvm::PointerType::get(*context_, 0), "gen.ctx.typed");
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     auto* i32Ty = llvm::Type::getInt32Ty(*context_);
 
@@ -6160,7 +6156,7 @@ void Codegen::emitGenRestoreVars() {
     auto* genTy  = getGenContextType();
     auto* genPtr = builder_->CreateBitCast(
         genContext_,
-        llvm::PointerType::getUnqual(genTy), "gen.ctx.typed");
+        llvm::PointerType::get(*context_, 0), "gen.ctx.typed");
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     auto* i32Ty = llvm::Type::getInt32Ty(*context_);
 
@@ -6189,7 +6185,7 @@ llvm::Function* Codegen::codegenGeneratorFuncLowering(
     const ast::FuncDef& node, llvm::Function*) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     auto* i32Ty = llvm::Type::getInt32Ty(*context_);
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     genTrackedVars_.clear();
     genYieldCount_ = 0;
@@ -6230,7 +6226,7 @@ llvm::Function* Codegen::codegenGeneratorFuncLowering(
     // GEP into field 0 (state) instead of calling __visuall_gen_get_state.
     auto* genTy = getGenContextType();
     auto* genPtr = builder_->CreateBitCast(
-        genContext_, llvm::PointerType::getUnqual(genTy), "gen.ctx.typed");
+        genContext_, llvm::PointerType::get(*context_, 0), "gen.ctx.typed");
     auto* statePtr = builder_->CreateStructGEP(genTy, genPtr, 0, "state.ptr");
     llvm::Value* state = builder_->CreateLoad(i32Ty, statePtr, "state");
     auto* doneBB = llvm::BasicBlock::Create(*context_, "gen.done", resumeFn);
@@ -6264,7 +6260,7 @@ llvm::Function* Codegen::codegenGeneratorFuncLowering(
     {
         auto* doneGenTy = getGenContextType();
         auto* doneGenPtr = builder_->CreateBitCast(
-            genContext_, llvm::PointerType::getUnqual(doneGenTy), "gen.ctx.typed");
+            genContext_, llvm::PointerType::get(*context_, 0), "gen.ctx.typed");
         auto* doneStatePtr = builder_->CreateStructGEP(
             doneGenTy, doneGenPtr, 0, "state.ptr");
         builder_->CreateStore(
@@ -6288,7 +6284,7 @@ void Codegen::codegenGeneratorWrapper(const ast::FuncDef& node,
                                        llvm::Function* resumeFn) {
     auto* i64Ty = llvm::Type::getInt64Ty(*context_);
     auto* i32Ty = llvm::Type::getInt32Ty(*context_);
-    auto* i8Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(*context_));
+    auto* i8Ptr = llvm::PointerType::get(*context_, 0);
 
     // Reuse the existing entry block (already created by codegenFuncDef setup).
     auto* entryBB = &wrapperFn->getEntryBlock();
@@ -6327,7 +6323,7 @@ void Codegen::codegenGeneratorWrapper(const ast::FuncDef& node,
     {
         auto* wrapGenTy = getGenContextType();
         auto* wrapGenPtr = builder_->CreateBitCast(
-            ctx, llvm::PointerType::getUnqual(wrapGenTy), "gen.ctx.typed");
+            ctx, llvm::PointerType::get(*context_, 0), "gen.ctx.typed");
         int numParams = (int)paramInfo.size();
         for (int i = 0; i < numParams; i++) {
             llvm::Value* val = builder_->CreateLoad(
