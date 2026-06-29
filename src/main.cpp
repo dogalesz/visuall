@@ -19,6 +19,10 @@
 #include <string>
 #include <vector>
 
+#ifdef __linux__
+#include <unistd.h>
+#endif
+
 static std::string readFile(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
@@ -62,11 +66,50 @@ static std::string formatDiag(visuall::Diagnostic diag,
     return diag.format();
 }
 
+/// Resolve the directory containing the running executable.
+/// Uses platform-native APIs so that symlinks (e.g. /usr/bin/visuallc ->
+/// /usr/lib/visuall/visuallc) resolve to the real binary location.
+/// Falls back to stripping the directory from argv[0].
 static std::string getExeDirectory(const char* argv0) {
-    std::string path(argv0);
-    auto pos = path.find_last_of("/\\");
+    std::string exePath;
+
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__sun)
+    // readlink("/proc/self/exe") gives the real path, resolving any symlinks.
+    char buf[4096];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len != -1) {
+        buf[len] = '\0';
+        exePath = buf;
+    }
+#elif defined(__APPLE__)
+    #include <mach-o/dyld.h>
+    uint32_t size = 4096;
+    char buf[size];
+    if (_NSGetExecutablePath(buf, &size) == 0) {
+        exePath = buf;
+    }
+#elif defined(_WIN32)
+    #include <windows.h>
+    char buf[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, buf, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        exePath.assign(buf, len);
+    }
+#endif
+
+    // Fallback: use argv[0] if platform lookup failed.
+    if (exePath.empty()) {
+        exePath = argv0;
+    }
+
+    // Normalize backslashes to forward slashes.
+    for (auto& c : exePath) {
+        if (c == '\\') c = '/';
+    }
+
+    auto pos = exePath.find_last_of('/');
     if (pos == std::string::npos) return ".";
-    return path.substr(0, pos);
+    return exePath.substr(0, pos);
 }
 
 static void printUsage(const char* progName) {
