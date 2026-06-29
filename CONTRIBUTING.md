@@ -81,18 +81,25 @@ All tests must pass before a PR can be merged.
 
 ## Development Workflow
 
+Visuall uses a **two-branch model**:
+
+- **`dev`** — active development branch. All feature branches and PRs target `dev`. CI runs on every push and PR.
+- **`main`** — stable release branch. Merges only via PR from `dev` when CI is green and changes are reviewed. Releases are tagged from `main`.
+
 1. **Fork** the repository and clone it locally
-2. **Create a branch** from `main` for your change:
+2. **Create a branch** from `dev` for your change:
    ```bash
-   git checkout -b feat/my-feature
+   git checkout -b feat/my-feature dev
    ```
 3. **Make your changes** and add tests as needed
 4. **Run the test suite** to verify nothing is broken:
    ```bash
+   cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+   cmake --build build --parallel
    cd build && ctest --output-on-failure
    ```
 5. **Commit** using Conventional Commits (see below)
-6. **Push** your branch and open a pull request against `main`
+6. **Push** your branch and open a pull request against `dev`
 
 ### Commit Conventions
 
