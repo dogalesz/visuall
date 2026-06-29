@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.3.4] - 2026-06-26
+## [1.3.4] - 2026-06-29
 
 ### Fixed
 - **== and != type validation**: the type checker now rejects equality comparisons
@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are now hoisted to function scope.
 - Remove `-static-libgcc -static-libstdc++` from `visuall_tests` link flags to
   prevent CI segfault (follow-up to the same fix applied to `visuallc`).
+- **`ld.lld.exe` missing from Windows installer**: the `mingw-w64-x86_64-lld`
+  MSYS2 package was not installed in CI, so the LLVM linker binary was never
+  bundled into the installer. Added the package to CI dependencies.
+- **Lexer token-count assertion**: relaxed assertion for synthetic INDENT/DEDENT
+  tokens that could trigger on certain input patterns.
+- **CMake defense-in-depth**: emitted a `WARNING` at configure time when
+  `ld.lld.exe` cannot be located, so the root cause is immediately visible
+  in CI logs (follows the existing pattern for missing MinGW CRT directory).
 
 ### Changed
 - LSP server version string updated from `1.3.0` to `1.3.4` to match the
