@@ -263,8 +263,11 @@ if(WIN32)
         # Also check the per-target subdir (e.g. x86_64-w64-mingw32/lib)
         set(_mingw_target_lib "${_msys2_prefix}/x86_64-w64-mingw32/lib")
 
+        # Find the system library directory (flat dir with import libraries).
+        # crt2.o may NOT live here on newer MSYS2 — it can be in a
+        # GCC-versioned subdirectory (handled via GLOB below).
         foreach(_libdir "${_mingw_lib}" "${_mingw_target_lib}")
-            if(EXISTS "${_libdir}/crt2.o")
+            if(EXISTS "${_libdir}")
                 set(MINGW_CRT_DIR "${_libdir}")
                 break()
             endif()
@@ -279,6 +282,20 @@ if(WIN32)
                          DESTINATION "${CMAKE_BINARY_DIR}/mingw_libs")
                 endif()
             endforeach()
+            # If crt2.o wasn't found in the flat lib dir, search GCC-versioned
+            # subdirectories (e.g. lib/gcc/x86_64-w64-mingw32/14.2.0/).
+            # Same pattern used for libgcc.a below.
+            if(NOT EXISTS "${CMAKE_BINARY_DIR}/mingw_libs/crt2.o")
+                file(GLOB _gcc_crt_objects
+                    "${MINGW_CRT_DIR}/gcc/*/*/crt2.o"
+                    "${MINGW_CRT_DIR}/gcc/*/*/crtbegin.o"
+                    "${MINGW_CRT_DIR}/gcc/*/*/crtend.o"
+                )
+                if(_gcc_crt_objects)
+                    file(COPY ${_gcc_crt_objects}
+                         DESTINATION "${CMAKE_BINARY_DIR}/mingw_libs")
+                endif()
+            endif()
             # System import libraries needed for a minimal Windows .exe
             set(_sys_libs
                 libmingw32.a libmingwex.a libmoldname.a
